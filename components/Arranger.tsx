@@ -69,7 +69,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Interaction State
   const [dragState, setDragState] = useState<{
       clipId: string;
-      mode: 'MOVE' | 'TRIM_START' | 'TRIM_END';
+      mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT';
       startX: number;
       startY: number;
       original: Clip;
@@ -164,10 +164,9 @@ const Arranger: React.FC<ArrangerProps> = ({
     });
   };
 
-  const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END') => {
+  const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
     
-    // Check if right click
     if (e.button === 2) {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
@@ -204,19 +203,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     });
   };
 
-  // Touch Long Press for Mobile Context Menu
-  const handleClipTouchStart = (e: React.TouchEvent, clip: Clip) => {
-      // Don't stop propagation, allow scroll if needed, but start timer
-      const touch = e.touches[0];
-      const startX = touch.clientX;
-      const startY = touch.clientY;
-
-      longPressTimer.current = setTimeout(() => {
-        setContextMenu({ x: startX, y: startY, clipId: clip.id });
-        setDragState(null); // Cancel potential drag
-      }, 500); // 500ms long press
-  };
-
   const handleGlobalMove = (e: React.MouseEvent) => {
     if (isScrubbing) {
         onSeek(calculateSeekTime(e.clientX, e.shiftKey));
@@ -229,7 +215,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         const deltaX = (e.clientX - dragState.startX);
         const deltaSeconds = deltaX / zoom;
         const { original } = dragState;
-        const bufferDuration = getBufferDuration(original.bufferKey);
         
         let updatedClip = { ...original };
         const activeSnapBeats = e.shiftKey ? 0 : snapGrid; 
@@ -263,9 +248,15 @@ const Arranger: React.FC<ArrangerProps> = ({
             let newEnd = original.start + original.duration + deltaSeconds;
             if (activeSnapSeconds > 0) newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
             const newDuration = newEnd - original.start;
-            // Allow extending beyond buffer duration (Looping)
-            const minDuration = 0.1;
-            updatedClip.duration = Math.max(minDuration, newDuration);
+            updatedClip.duration = Math.max(0.1, newDuration);
+        }
+        else if (dragState.mode === 'FADE_IN') {
+             const fadeChange = deltaSeconds;
+             updatedClip.fadeIn = Math.max(0, Math.min(original.duration - original.fadeOut, original.fadeIn + fadeChange));
+        }
+        else if (dragState.mode === 'FADE_OUT') {
+             const fadeChange = -deltaSeconds; // Move left to increase fade out
+             updatedClip.fadeOut = Math.max(0, Math.min(original.duration - original.fadeIn, original.fadeOut + fadeChange));
         }
 
         setProject(prev => ({
@@ -275,7 +266,7 @@ const Arranger: React.FC<ArrangerProps> = ({
     } else if (loopDrag) {
         const deltaX = (e.clientX - loopDrag.startX);
         const deltaSeconds = deltaX / zoom;
-        const snapBeats = snapGrid === 0 ? 4 : snapGrid; // Default loop snap to bar
+        const snapBeats = snapGrid === 0 ? 4 : snapGrid; 
         const activeSnapSeconds = snapBeats * secondsPerBeat;
         
         let newStart = loopDrag.originalLoopStart;
@@ -312,7 +303,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   // Pinch Zoom Handlers
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current); // Clear if user taps elsewhere
+    if (longPressTimer.current) clearTimeout(longPressTimer.current); 
     for (let i = 0; i < e.targetTouches.length; i++) {
         touchCache.current.set(e.targetTouches[i].identifier, {
             clientX: e.targetTouches[i].clientX,
@@ -322,7 +313,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current); // Move cancels long press
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
     if (e.targetTouches.length === 2) {
         e.preventDefault(); 
         const t1 = e.targetTouches[0];
@@ -347,6 +338,17 @@ const Arranger: React.FC<ArrangerProps> = ({
      if (e.targetTouches.length < 2) {
          prevDiff.current = -1;
      }
+  };
+
+  const handleClipTouchStart = (e: React.TouchEvent, clip: Clip) => {
+    const touch = e.touches[0];
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+
+    longPressTimer.current = setTimeout(() => {
+      setContextMenu({ x: startX, y: startY, clipId: clip.id });
+      setDragState(null); 
+    }, 500); 
   };
 
   const handleContextMenuAction = (action: string) => {
@@ -604,6 +606,42 @@ const Arranger: React.FC<ArrangerProps> = ({
                                          </div>
                                     ))}
                                 </div>
+
+                                {/* Fade Overlays */}
+                                <svg className="absolute inset-0 pointer-events-none z-20" width="100%" height="100%" preserveAspectRatio="none">
+                                    {/* Fade In Curve */}
+                                    {clip.fadeIn > 0 && (
+                                        <path 
+                                            d={`M 0 ${TRACK_HEIGHT-16} L ${clip.fadeIn * zoom} 0`} 
+                                            stroke="white" 
+                                            strokeWidth="1.5" 
+                                            fill="none" 
+                                            className="opacity-80" 
+                                        />
+                                    )}
+                                    {/* Fade Out Curve */}
+                                    {clip.fadeOut > 0 && (
+                                        <path 
+                                            d={`M ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} ${TRACK_HEIGHT-16}`} 
+                                            stroke="white" 
+                                            strokeWidth="1.5" 
+                                            fill="none" 
+                                            className="opacity-80" 
+                                        />
+                                    )}
+                                </svg>
+                                
+                                {/* Fade Handles (Clickable) */}
+                                <div 
+                                    className="absolute top-0 w-3 h-3 bg-white rounded-full shadow border border-black cursor-ew-resize z-40 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-125"
+                                    style={{ left: (clip.fadeIn || 0) * zoom - 6 }}
+                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_IN')}
+                                />
+                                <div 
+                                    className="absolute top-0 w-3 h-3 bg-white rounded-full shadow border border-black cursor-ew-resize z-40 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-125"
+                                    style={{ right: (clip.fadeOut || 0) * zoom - 6 }}
+                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_OUT')}
+                                />
 
                                 <div 
                                     className="absolute left-0 top-0 bottom-0 w-4 bg-transparent hover:bg-white/10 cursor-ew-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"

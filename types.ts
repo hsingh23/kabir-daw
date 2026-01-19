@@ -7,6 +7,8 @@ export interface Clip {
   duration: number; // Duration of the clip
   bufferKey: string; // IDB key for the audio buffer
   color?: string;
+  fadeIn: number; // Duration of fade in seconds
+  fadeOut: number; // Duration of fade out seconds
 }
 
 export interface Track {
