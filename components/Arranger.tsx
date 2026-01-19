@@ -6,7 +6,7 @@ import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare, Maximize, AlignStartVertical, Split } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare, Maximize, AlignStartVertical, Split, Gauge, MoreVertical } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -65,17 +65,30 @@ const TrackIcon = ({ name, color }: { name: string, color: string }) => {
 const LoopMarkers = ({ clip, zoom }: { clip: Clip, zoom: number }) => {
     const buffer = audio.buffers.get(clip.bufferKey);
     if (!buffer) return null;
-    const B = buffer.duration;
-    if (B === 0) return null;
-    const O = clip.offset;
-    const D = clip.duration;
+    
+    const speed = clip.speed || 1;
+    const effectiveBufferDuration = buffer.duration / speed;
+    
+    if (effectiveBufferDuration === 0) return null;
+    
+    const O = clip.offset; // offset in buffer seconds
+    // effective offset in timeline seconds
+    const effectiveOffset = O / speed;
+    
+    const D = clip.duration; // Timeline duration
     
     const markers = [];
-    let time = B - (O % B); 
+    // Calculate first loop point relative to clip start
+    let k = Math.ceil(effectiveOffset / effectiveBufferDuration);
+    if (k * effectiveBufferDuration - effectiveOffset <= 0.001) k++; 
+    
+    let time = k * effectiveBufferDuration - effectiveOffset;
+    
     while (time < D) {
         markers.push(time);
-        time += B;
+        time += effectiveBufferDuration;
     }
+
     if (markers.length === 0) return null;
 
     return (
@@ -114,6 +127,8 @@ const Arranger: React.FC<ArrangerProps> = ({
     onRenameTrack
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const trackHeaderRef = useRef<HTMLDivElement>(null);
+
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [snapGrid, setSnapGrid] = useState(1); 
@@ -198,8 +213,12 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (!rect) return 0;
     const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
     const contentX = clientX - rect.left + scrollLeft;
-    const timelineX = contentX - headerWidth;
-    const time = Math.max(0, timelineX / zoom);
+    const timelineX = contentX - headerWidth; // Actually header is separate now, layout logic changed
+    // Wait, in the layout below, scrollContainer is the right pane.
+    // So clientX - rect.left + scrollLeft is correct coordinate in pixels inside timeline.
+    // But header is outside scrollContainer in X axis.
+    // So time = (contentX) / zoom
+    const time = Math.max(0, (clientX - rect.left + scrollLeft) / zoom);
     
     if (snap && snapGrid > 0) {
         const snapSeconds = snapGrid * secondsPerBeat;
@@ -423,9 +442,10 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (trackDrag && trackDrag.pointerId === e.pointerId && onMoveTrack) {
         const scrollContainer = scrollContainerRef.current;
         if (!scrollContainer) return;
-        const rect = scrollContainer.getBoundingClientRect();
-        const scrollTop = scrollContainer.scrollTop;
-        const relativeY = (e.clientY - rect.top) + scrollTop - 32;
+        const rect = scrollContainer.getBoundingClientRect(); // Using container rect for logic
+        // But headers are in separate container. 
+        // We can approximate by Y position on screen.
+        const relativeY = (e.clientY - rect.top) + scrollContainer.scrollTop - 32; // -32 for ruler
         const newIndex = Math.max(0, Math.min(project.tracks.length - 1, Math.floor(relativeY / TRACK_HEIGHT)));
         
         if (newIndex !== trackDrag.currentIndex) {
@@ -484,9 +504,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                 const maxDelta = original.duration - 0.1;
                 const minDelta = -original.offset;
                 const clampedDelta = Math.min(maxDelta, Math.max(minDelta, effectiveDelta));
+                
+                const speed = original.speed || 1;
+                const bufferDelta = clampedDelta * speed;
 
                 updatedClip.start = original.start + clampedDelta;
-                updatedClip.offset = original.offset + clampedDelta;
+                updatedClip.offset = original.offset + bufferDelta;
                 updatedClip.duration = original.duration - clampedDelta;
             } 
             else if (dragState.mode === 'TRIM_END') {
@@ -554,8 +577,13 @@ const Arranger: React.FC<ArrangerProps> = ({
             const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
             const scrollTop = scrollContainerRef.current?.scrollTop || 0;
             
-            const x1 = Math.min(selectionBox.startX, selectionBox.currentX) - rect.left + scrollLeft - headerWidth;
-            const x2 = Math.max(selectionBox.startX, selectionBox.currentX) - rect.left + scrollLeft - headerWidth;
+            // Adjust coordinates because headerWidth is outside scroll container
+            // In handleBackgroundPointerDown, startX was clientX. 
+            // We need to convert clientX to timeline X (time * zoom).
+            // contentX = clientX - rect.left + scrollLeft.
+            
+            const x1 = Math.min(selectionBox.startX, selectionBox.currentX) - rect.left + scrollLeft;
+            const x2 = Math.max(selectionBox.startX, selectionBox.currentX) - rect.left + scrollLeft;
             const y1 = Math.min(selectionBox.startY, selectionBox.currentY) - rect.top + scrollTop;
             const y2 = Math.max(selectionBox.startY, selectionBox.currentY) - rect.top + scrollTop;
             
@@ -680,16 +708,34 @@ const Arranger: React.FC<ArrangerProps> = ({
       }
   };
 
+  const handleChangeSpeed = () => {
+      if (contextMenu) {
+          const clip = project.clips.find(c => c.id === contextMenu.clipId);
+          if (clip) {
+              const currentSpeed = clip.speed || 1;
+              const newSpeedStr = prompt("Playback Speed (e.g. 0.5, 1, 1.5, 2):", currentSpeed.toString());
+              if (newSpeedStr !== null) {
+                  const newSpeed = parseFloat(newSpeedStr);
+                  if (!isNaN(newSpeed) && newSpeed > 0) {
+                      setProject(prev => ({
+                          ...prev,
+                          clips: prev.clips.map(c => c.id === clip.id ? { ...c, speed: newSpeed } : c)
+                      }));
+                  }
+              }
+          }
+          setContextMenu(null);
+      }
+  };
+
   const handleSplitContextMenu = () => {
       if (contextMenu) {
-          // Calculate time based on click X relative to timeline
-          // We stored clientX in contextMenu.x
-          // We need container scrollLeft and rect
           const container = scrollContainerRef.current;
           if (container) {
               const rect = container.getBoundingClientRect();
               const scrollLeft = container.scrollLeft;
-              const clickX = contextMenu.x - rect.left + scrollLeft - headerWidth;
+              // X in container
+              const clickX = contextMenu.x - rect.left + scrollLeft;
               const time = Math.max(0, clickX / zoom);
               onSplit(contextMenu.clipId, time);
           }
@@ -709,7 +755,7 @@ const Arranger: React.FC<ArrangerProps> = ({
       const end = Math.max(...project.clips.map(c => c.start + c.duration), project.loopEnd);
       if (end === 0) return;
       
-      const containerWidth = window.innerWidth - headerWidth - 40; // padding
+      const containerWidth = window.innerWidth - headerWidth - 40; 
       const newZoom = containerWidth / end;
       setZoom(Math.max(10, Math.min(400, newZoom)));
   };
@@ -762,230 +808,276 @@ const Arranger: React.FC<ArrangerProps> = ({
              <button onClick={() => setShowBacking(!showBacking)} className={`flex items-center space-x-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 hover:text-white transition-colors ${showBacking ? 'border-studio-accent text-studio-accent' : ''}`}>
                 <Music2 size={14} />
              </button>
-             <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded-md transition-all ${project.isLooping ? 'text-yellow-400 bg-yellow-400/10' : 'text-zinc-500'}`}>
+             <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded-md transition-all ${project.isLooping ? 'text-yellow-500' : 'text-zinc-500 hover:text-zinc-300'}`}>
                 <Repeat size={16} />
-            </button>
+             </button>
          </div>
       </div>
-      
-      {showBacking && (
-          <div className="absolute top-14 right-4 z-50 w-80 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 flex flex-col space-y-4 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
-                  <h3 className="font-bold text-sm text-zinc-200">Backing Instruments</h3>
-                  <button onClick={() => setShowBacking(false)} className="text-zinc-500 hover:text-white"><X size={16} /></button>
-              </div>
-              <div className="space-y-4 overflow-y-auto max-h-[60vh]">
-                  <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />
-                  <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />
-              </div>
-          </div>
-      )}
 
-      <div 
-        ref={scrollContainerRef}
-        className="flex-1 overflow-auto bg-zinc-900 relative overscroll-contain"
-        style={{ touchAction: multiSelectMode ? 'none' : 'pan-x pan-y' }}
-        onWheel={handleWheel}
-        onPointerDown={handleBackgroundPointerDown}
-      >
-        <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + headerWidth }}>
-           
-            {/* 1. Sticky Top Ruler with Markers */}
-            <div className="sticky top-0 z-40 flex h-10 bg-zinc-900 border-b border-zinc-800 shadow-sm">
-                <div 
-                    className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800 shadow-md" 
-                    style={{ width: headerWidth }}
-                >
-                    <span className="text-[10px] font-bold text-zinc-600 tracking-widest">TRACKS</span>
-                </div>
-
-                <div 
-                    className="relative flex-1 bg-zinc-900 cursor-pointer touch-none group"
-                    onPointerDown={handleRulerPointerDown}
-                >
-                     {/* Loop Region */}
-                     <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Track Headers (Left Pane) */}
+        <div 
+             ref={trackHeaderRef}
+             className="flex-none bg-zinc-900 border-r border-zinc-800 z-20 flex flex-col" 
+             style={{ width: headerWidth }}
+        >
+             <div className="h-8 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-center">
+                 <span className="text-[10px] text-zinc-500 font-bold">TRACKS</span>
+             </div> 
+             <div className="flex-1 overflow-hidden relative">
+                 <div style={{ transform: `translateY(-${scrollContainerRef.current?.scrollTop || 0}px)` }}>
+                    {project.tracks.map((track, i) => (
                         <div 
-                            className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 ${project.isLooping ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-                            style={{ left: project.loopStart * zoom, width: Math.max(1, (project.loopEnd - project.loopStart) * zoom) }}
+                            key={track.id} 
+                            className={`border-b border-zinc-800 relative group transition-colors select-none ${selectedTrackId === track.id ? 'bg-zinc-800' : 'bg-transparent'}`}
+                            style={{ height: TRACK_HEIGHT }}
+                            onPointerDown={(e) => {
+                                onSelectTrack(track.id);
+                                if (e.target === e.currentTarget) {
+                                    // Drag reorder logic could start here if clicking empty space
+                                }
+                            }}
+                            onDoubleClick={() => onOpenInspector(track.id)}
                         >
-                             <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => handleLoopPointerDown(e, 'move')} />
-                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onPointerDown={(e) => handleLoopPointerDown(e, 'start')} />
-                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onPointerDown={(e) => handleLoopPointerDown(e, 'end')} />
+                            <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
+                            <div className="p-2 pl-3 flex flex-col h-full justify-between">
+                                <div className="flex items-center space-x-2">
+                                    <div className="cursor-grab text-zinc-600 hover:text-zinc-400" onPointerDown={(e) => handleTrackDragStart(e, track.id, i)}>
+                                        <GripVertical size={14} />
+                                    </div>
+                                    <TrackIcon name={track.name} color={track.color} />
+                                    <span 
+                                        className="font-bold text-zinc-300 truncate w-20 cursor-text"
+                                        onDoubleClick={(e) => handleTrackNameDoubleClick(e, track.id, track.name)}
+                                    >
+                                        {track.name}
+                                    </span>
+                                </div>
+                                <div className="flex space-x-1">
+                                    <div className={`text-[9px] px-1 rounded ${track.muted ? 'bg-red-900 text-red-300' : 'bg-zinc-800 text-zinc-500'}`}>M</div>
+                                    <div className={`text-[9px] px-1 rounded ${track.solo ? 'bg-yellow-900 text-yellow-300' : 'bg-zinc-800 text-zinc-500'}`}>S</div>
+                                    <div className="text-[9px] text-zinc-500 ml-auto">{Math.round(track.volume * 100)}%</div>
+                                </div>
+                            </div>
                         </div>
-                     </div>
+                    ))}
+                    {/* Ghost track for drag */}
+                    {trackDrag && (
+                        <div 
+                            className="absolute left-0 right-0 bg-studio-accent/20 border-t-2 border-studio-accent pointer-events-none z-50"
+                            style={{ height: TRACK_HEIGHT, top: trackDrag.currentIndex * TRACK_HEIGHT }}
+                        />
+                    )}
+                 </div>
+             </div>
+        </div>
 
-                     {/* Grid Numbers */}
-                     {[...Array(totalBars)].map((_, i) => (
-                        <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-700 pl-1 select-none h-5 flex items-end pb-1 font-medium" style={{ left: i * pixelsPerBar }}>
-                            {i + 1}
-                        </div>
-                     ))}
-
-                     {/* Markers */}
-                     {project.markers.map(marker => (
-                         <div 
-                            key={marker.id}
-                            className="absolute top-0 h-full z-30 group"
-                            style={{ left: marker.time * zoom }}
-                            onPointerDown={(e) => handleMarkerPointerDown(e, marker)}
-                            onDoubleClick={(e) => handleMarkerDoubleClick(e, marker)}
-                         >
-                             <div className="relative flex flex-col items-center">
-                                 <Bookmark size={12} fill={marker.color} color={marker.color} className="drop-shadow-sm transform translate-y-0.5" />
-                                 <span className="text-[10px] font-bold text-white bg-zinc-800/80 px-1 rounded -mt-0.5 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute top-4">{marker.text}</span>
-                             </div>
-                             <div className="w-px h-screen bg-white/20 absolute top-3 left-1.5 pointer-events-none" />
-                         </div>
-                     ))}
-                     
-                     {/* Playhead Cap */}
-                     <div 
-                        className="absolute top-0 h-full z-50 pointer-events-none flex flex-col items-center justify-end pb-1"
-                        style={{ left: currentTime * zoom, transform: 'translateX(-50%)' }}
-                     >
-                        <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-red-500 drop-shadow-md" />
-                     </div>
-                </div>
-            </div>
-
-            {/* 2. Tracks Container */}
-            <div className="relative">
+        {/* Timeline (Right Pane) */}
+        <div 
+            ref={scrollContainerRef}
+            className="flex-1 overflow-auto relative bg-zinc-950/50"
+            onPointerDown={handleBackgroundPointerDown}
+            onWheel={handleWheel}
+            onScroll={() => {
+                if (trackHeaderRef.current) {
+                    // Force update for sync scrolling if needed, or rely on state
+                    // Here we rely on React re-render of transform or we can directly manipulate DOM for perf
+                    const scrollTop = scrollContainerRef.current?.scrollTop || 0;
+                    // Directly manipulating header container for perf
+                    const container = trackHeaderRef.current.querySelector('div[style*="translateY"]');
+                    if (container) (container as HTMLElement).style.transform = `translateY(-${scrollTop}px)`;
+                }
+            }}
+        >
+            <div style={{ width: totalWidth, minWidth: '100%', height: project.tracks.length * TRACK_HEIGHT + 32 }}>
+                {/* Grid */}
                 <div 
-                    className="absolute inset-0 z-0 pointer-events-none" 
-                    style={{
-                        left: headerWidth,
+                    className="absolute inset-0 pointer-events-none" 
+                    style={{ 
+                        backgroundSize: gridSize, 
                         backgroundImage: gridImage,
-                        backgroundSize: gridSize
+                        top: 32 // below ruler
                     }} 
                 />
 
-                {project.tracks.map((track, index) => (
-                    <div key={track.id} className="flex relative z-10 group" style={{ height: TRACK_HEIGHT }}>
-                        
-                        {/* Sticky Track Header */}
-                        <div 
-                            role="button"
-                            tabIndex={0}
-                            className={`sticky left-0 z-30 bg-studio-panel border-r border-zinc-800 border-b border-zinc-800/50 shrink-0 flex flex-col p-2 relative transition-colors ${selectedTrackId === track.id ? 'bg-zinc-800' : ''}`}
-                            style={{ width: headerWidth }}
-                            onClick={() => onSelectTrack(track.id)}
-                            onDoubleClick={() => onOpenInspector(track.id)}
-                        >
-                             <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center space-x-2 overflow-hidden">
-                                    <div 
-                                        className="cursor-grab active:cursor-grabbing text-zinc-600 hover:text-zinc-400 p-0.5"
-                                        onPointerDown={(e) => handleTrackDragStart(e, track.id, index)}
-                                    >
-                                        <GripVertical size={12} />
-                                    </div>
-
-                                    <div className="w-6 h-6 rounded bg-zinc-900 flex items-center justify-center shadow-inner shrink-0" style={{ color: track.color }}>
-                                        <TrackIcon name={track.name} color={track.color} />
-                                    </div>
-                                    <span className="font-bold text-xs truncate cursor-text text-zinc-400" onDoubleClick={(e) => handleTrackNameDoubleClick(e, track.id, track.name)}>{track.name}</span>
-                                </div>
-                                <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 md:block hidden"><Sliders size={12} /></button>
-                             </div>
-                             
-                             <div className="flex space-x-1 mt-auto">
-                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.muted ? 'bg-red-500 text-white' : 'bg-zinc-700 text-zinc-400'}`}>M</button>
-                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.solo ? 'bg-yellow-400 text-black' : 'bg-zinc-700 text-zinc-400'}`}>S</button>
-                             </div>
-
-                             <div className="mt-2 h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden">
-                                <LevelMeter trackId={track.id} vertical={false} />
-                             </div>
-                             
-                             {headerWidth > 120 && (
-                                <div className="mt-1 flex items-center space-x-2">
-                                    <input type="range" min="0" max="1" step="0.01" value={track.volume} onClick={(e) => e.stopPropagation()} onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} className="w-full h-1 bg-zinc-900 rounded-lg appearance-none cursor-pointer accent-zinc-500" />
-                                </div>
-                             )}
-                             <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
+                {/* Ruler */}
+                <div 
+                    className="sticky top-0 h-8 bg-zinc-900/90 backdrop-blur z-20 border-b border-zinc-700 cursor-pointer text-[10px] text-zinc-500 select-none"
+                    onPointerDown={handleRulerPointerDown}
+                >
+                    {Array.from({ length: totalBars }).map((_, i) => (
+                        <div key={i} className="absolute top-0 bottom-0 border-l border-zinc-700 pl-1 pt-1" style={{ left: i * pixelsPerBar }}>
+                            {i + 1}
                         </div>
-
-                        {/* Track Lane */}
-                        <div className="relative flex-1 border-b border-zinc-800/30 bg-zinc-900/20">
-                            {isRecording && selectedTrackId === track.id && (
-                                <div className="absolute rounded-lg overflow-hidden z-20 shadow-xl opacity-80 border-2 border-red-500 bg-red-900/40" style={{ left: recordingStartTime * zoom, width: Math.max(10, (currentTime - recordingStartTime) * zoom), top: 4, bottom: 4 }}>
-                                     <div className="absolute top-2 left-2 flex items-center space-x-2"><div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /><span className="text-[10px] font-bold text-red-200">Recording...</span></div>
-                                </div>
-                            )}
-
-                            {project.clips.filter(c => c.trackId === track.id).map(clip => {
-                                const isSelected = selectedClipIds.includes(clip.id);
-                                const clipColor = clip.color || track.color;
-                                const isMuted = track.muted || (project.tracks.some(t => t.solo) && !track.solo);
-
-                                return (
-                                    <div
-                                        key={clip.id}
-                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none touch-none transition-all ${isSelected ? 'ring-2 ring-white z-20 shadow-xl' : 'hover:brightness-110 z-10 shadow-md'} ${isMuted ? 'opacity-50 grayscale' : ''}`}
-                                        style={{ left: clip.start * zoom, width: clip.duration * zoom, top: 4, bottom: 4, backgroundColor: '#18181b', borderLeft: `4px solid ${clipColor}` }}
-                                        onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
-                                    >
-                                        <LoopMarkers clip={clip} zoom={zoom} />
-                                        <div className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate relative z-10" style={{ backgroundColor: clipColor }}>
-                                            <span className="truncate">{clip.name}</span>
-                                        </div>
-                                        <div className="absolute inset-0 top-5 bottom-0 bg-black/40 pointer-events-none"><Waveform bufferKey={clip.bufferKey} color={clipColor} /></div>
-                                        <div className={`absolute inset-y-0 left-0 w-6 -ml-3 cursor-w-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')} />
-                                        <div className={`absolute inset-y-0 right-0 w-6 -mr-3 cursor-e-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')} />
-                                        <div className={`absolute top-0 w-4 h-4 -ml-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ left: clip.fadeIn * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_IN')} />
-                                        <div className={`absolute top-0 w-4 h-4 -mr-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ right: clip.fadeOut * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_OUT')} />
-                                    </div>
-                                )
-                            })}
-                        </div>
-                    </div>
-                ))}
-                
-                <div className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]" style={{ left: headerWidth + (currentTime * zoom) }} />
-                
-                {/* Marquee Selection Overlay */}
-                {selectionBox && (
-                    <div 
-                        className="fixed border border-blue-500 bg-blue-500/20 z-50 pointer-events-none"
-                        style={{
-                            left: Math.min(selectionBox.startX, selectionBox.currentX),
-                            top: Math.min(selectionBox.startY, selectionBox.currentY),
-                            width: Math.abs(selectionBox.currentX - selectionBox.startX),
-                            height: Math.abs(selectionBox.currentY - selectionBox.startY)
-                        }}
-                    />
-                )}
-            </div>
-        </div>
-      </div>
-
-      <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center space-x-6 bg-zinc-900/90 backdrop-blur-xl px-8 py-3 rounded-2xl border border-zinc-700/50 shadow-2xl">
-            <button onClick={onStop} className="group"><div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner"><Square fill="currentColor" size={12} className="text-zinc-400 group-hover:text-white" /></div></button>
-            <button onClick={onRecord} className="group relative"><div className={`w-14 h-14 rounded-full flex items-center justify-center group-active:scale-95 transition-all shadow-lg border-4 border-zinc-800 ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-500'}`}><Circle fill="white" size={16} className="text-white" /></div></button>
-            <button onClick={onPlayPause} className="group"><div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">{isPlaying ? <Pause fill="currentColor" size={14} className="text-zinc-200" /> : <Play fill="currentColor" size={14} className="text-zinc-200 ml-0.5" />}</div></button>
-      </div>
-      
-      {contextMenu && (
-        <div className="fixed inset-0 z-[100]" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if(e.key === 'Escape') setContextMenu(null) }} role="presentation">
-            <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1" style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
-                <div className="px-4 py-2 flex items-center justify-between gap-1 border-b border-zinc-700/50">
-                    {CLIP_COLORS.map(color => (
-                        <button key={color} onClick={(e) => { e.stopPropagation(); handleColorChange(color); }} className="w-5 h-5 rounded-full hover:scale-110 transition-transform shadow-sm" style={{ backgroundColor: color }} />
                     ))}
+                    
+                    {/* Markers */}
+                    {project.markers.map(marker => (
+                        <div 
+                            key={marker.id}
+                            className="absolute top-0 h-8 flex items-center group z-30"
+                            style={{ left: marker.time * zoom }}
+                            onPointerDown={(e) => handleMarkerPointerDown(e, marker)}
+                            onDoubleClick={(e) => handleMarkerDoubleClick(e, marker)}
+                        >
+                            <div className="w-0.5 h-full bg-yellow-500/50 group-hover:bg-yellow-500" />
+                            <div className="bg-yellow-500/20 px-1 rounded text-yellow-500 font-bold truncate max-w-[100px] border border-yellow-500/50 text-[9px]">
+                                {marker.text}
+                            </div>
+                        </div>
+                    ))}
+
+                    {/* Loop Bracket */}
+                    {project.isLooping && (
+                        <>
+                            <div 
+                                className="absolute top-0 h-4 bg-zinc-400/30 border-l-2 border-zinc-400 cursor-ew-resize z-40"
+                                style={{ left: project.loopStart * zoom, width: (project.loopEnd - project.loopStart) * zoom }}
+                                onPointerDown={(e) => handleLoopPointerDown(e, 'move')}
+                            >
+                                <div className="absolute inset-0 bg-blue-500/10 pointer-events-none" />
+                            </div>
+                            <div 
+                                className="absolute top-0 h-8 w-4 -ml-2 cursor-ew-resize z-50 group flex justify-center"
+                                style={{ left: project.loopStart * zoom }}
+                                onPointerDown={(e) => handleLoopPointerDown(e, 'start')}
+                            >
+                                <div className="w-0.5 h-full bg-blue-400 group-hover:bg-blue-300" />
+                            </div>
+                            <div 
+                                className="absolute top-0 h-8 w-4 -ml-2 cursor-ew-resize z-50 group flex justify-center"
+                                style={{ left: project.loopEnd * zoom }}
+                                onPointerDown={(e) => handleLoopPointerDown(e, 'end')}
+                            >
+                                <div className="w-0.5 h-full bg-blue-400 group-hover:bg-blue-300" />
+                            </div>
+                        </>
+                    )}
                 </div>
-                <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Copy size={14} /> <span>Duplicate</span></button>
-                <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button onClick={handleQuantize} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><AlignStartVertical size={14} /> <span>Quantize Start</span></button>
-                <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button onClick={handleSplitContextMenu} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Split size={14} /> <span>Split Here</span></button>
-                <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button onClick={handleRename} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Edit2 size={14} /> <span>Rename</span></button>
-                <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button onClick={handleDelete} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2"><Trash2 size={14} /> <span>Delete</span></button>
+
+                {/* Tracks Area */}
+                <div className="relative" style={{ height: project.tracks.length * TRACK_HEIGHT }}>
+                    {project.tracks.map((track, i) => (
+                         <div key={track.id} className="absolute w-full border-b border-zinc-800/30" style={{ top: i * TRACK_HEIGHT, height: TRACK_HEIGHT }}>
+                              {project.clips.filter(c => c.trackId === track.id).map(clip => {
+                                  const isSelected = selectedClipIds.includes(clip.id);
+                                  return (
+                                      <div 
+                                        key={clip.id}
+                                        className={`absolute top-1 bottom-1 rounded-md overflow-hidden border transition-colors ${isSelected ? 'border-white ring-1 ring-white z-10' : 'border-black/20 hover:border-white/50'}`}
+                                        style={{ 
+                                            left: clip.start * zoom, 
+                                            width: clip.duration * zoom,
+                                            backgroundColor: clip.color || CLIP_COLORS[Math.abs(clip.name.length) % CLIP_COLORS.length] 
+                                        }}
+                                        onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
+                                      >
+                                          {/* Waveform Background */}
+                                          <div className="absolute inset-0 opacity-40 pointer-events-none">
+                                               <Waveform bufferKey={clip.bufferKey} color="#000" />
+                                          </div>
+                                          
+                                          {/* Clip Info */}
+                                          <div className="absolute inset-0 p-1 flex flex-col justify-between pointer-events-none">
+                                              <span className="text-[10px] font-bold text-black/70 truncate shadow-sm">{clip.name}</span>
+                                          </div>
+                                          
+                                          {/* Loop Indicators */}
+                                          <LoopMarkers clip={clip} zoom={zoom} />
+
+                                          {/* Resize Handles */}
+                                          {isSelected && (
+                                              <>
+                                                <div 
+                                                    className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/20 z-20"
+                                                    onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')}
+                                                />
+                                                <div 
+                                                    className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/20 z-20"
+                                                    onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')}
+                                                />
+                                                {/* Fade Handles */}
+                                                <div 
+                                                    className="absolute top-0 left-0 w-4 h-4 bg-white/50 rounded-br cursor-ne-resize z-20 opacity-0 group-hover:opacity-100"
+                                                    style={{ transform: `translateX(${clip.fadeIn * zoom}px)` }}
+                                                    onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_IN')}
+                                                />
+                                                <div 
+                                                    className="absolute top-0 right-0 w-4 h-4 bg-white/50 rounded-bl cursor-nw-resize z-20 opacity-0 group-hover:opacity-100"
+                                                    style={{ transform: `translateX(-${clip.fadeOut * zoom}px)` }}
+                                                    onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_OUT')}
+                                                />
+                                              </>
+                                          )}
+                                      </div>
+                                  );
+                              })}
+                         </div>
+                    ))}
+                    
+                    {/* Playhead */}
+                    <div 
+                        className="absolute top-0 bottom-0 w-px bg-red-500 z-30 pointer-events-none"
+                        style={{ left: currentTime * zoom }}
+                    >
+                         <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-red-500 transform rotate-45 shadow-sm" />
+                    </div>
+
+                    {/* Backing Instruments Visual Overlay (Optional) */}
+                    {showBacking && (
+                         <div className="absolute bottom-0 left-0 right-0 h-2 bg-gradient-to-r from-blue-500/20 to-purple-500/20 pointer-events-none border-t border-white/10 flex items-center justify-center">
+                             <span className="text-[9px] text-white/50 tracking-widest uppercase">Backing Track Active</span>
+                         </div>
+                    )}
+                </div>
             </div>
         </div>
-      )}
+
+        {/* Floating Context Menu */}
+        {contextMenu && (
+             <div 
+                className="fixed bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 py-1 min-w-[140px] flex flex-col"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+             >
+                 <button onClick={handleRename} className="px-4 py-2 text-left hover:bg-zinc-700 flex items-center space-x-2"><Edit2 size={14} /> <span>Rename</span></button>
+                 <button onClick={handleDuplicate} className="px-4 py-2 text-left hover:bg-zinc-700 flex items-center space-x-2"><Copy size={14} /> <span>Duplicate</span></button>
+                 <button onClick={handleSplitContextMenu} className="px-4 py-2 text-left hover:bg-zinc-700 flex items-center space-x-2"><Split size={14} /> <span>Split</span></button>
+                 <button onClick={handleQuantize} className="px-4 py-2 text-left hover:bg-zinc-700 flex items-center space-x-2"><AlignStartVertical size={14} /> <span>Quantize</span></button>
+                 <button onClick={handleChangeSpeed} className="px-4 py-2 text-left hover:bg-zinc-700 flex items-center space-x-2"><Gauge size={14} /> <span>Speed</span></button>
+                 
+                 <div className="border-t border-zinc-700 my-1" />
+                 
+                 <div className="px-4 py-2 flex flex-wrap gap-1">
+                     {CLIP_COLORS.map(c => (
+                         <button 
+                            key={c} 
+                            className="w-4 h-4 rounded-full border border-black/20" 
+                            style={{ backgroundColor: c }}
+                            onClick={() => handleColorChange(c)}
+                         />
+                     ))}
+                 </div>
+                 
+                 <div className="border-t border-zinc-700 my-1" />
+                 
+                 <button onClick={handleDelete} className="px-4 py-2 text-left hover:bg-red-900/50 text-red-400 flex items-center space-x-2"><Trash2 size={14} /> <span>Delete</span></button>
+             </div>
+        )}
+        
+        {/* Selection Box */}
+        {selectionBox && (
+            <div 
+                className="absolute border border-blue-400 bg-blue-400/10 pointer-events-none z-50"
+                style={{
+                    left: Math.min(selectionBox.startX, selectionBox.currentX) - (scrollContainerRef.current?.getBoundingClientRect().left || 0) + (scrollContainerRef.current?.scrollLeft || 0) - headerWidth,
+                    top: Math.min(selectionBox.startY, selectionBox.currentY) - (scrollContainerRef.current?.getBoundingClientRect().top || 0) + (scrollContainerRef.current?.scrollTop || 0),
+                    width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                    height: Math.abs(selectionBox.currentY - selectionBox.startY)
+                }}
+            />
+        )}
+
+      </div>
     </div>
   );
 };

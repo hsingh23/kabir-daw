@@ -421,6 +421,9 @@ class AudioEngine {
     ) {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
+    
+    const speed = clip.speed || 1;
+    source.playbackRate.value = speed;
 
     // Envelope Gain for Fades
     const envelope = ctx.createGain();
@@ -455,14 +458,27 @@ class AudioEngine {
         const timeRemaining = playDuration;
         envelope.gain.linearRampToValueAtTime(0, when + timeRemaining);
     }
-
-    if (offset + playDuration > buffer.duration) {
+    
+    // Calculate if we need to loop
+    // Timeline duration needed: playDuration
+    // Buffer duration consumed: playDuration * speed
+    // Buffer available from offset: buffer.duration - (offset % buffer.duration)
+    
+    // Normalize offset to buffer length to be safe
+    const bufferOffset = offset % buffer.duration;
+    
+    // Check if the required audio exceeds the buffer end
+    if (bufferOffset + (playDuration * speed) > buffer.duration) {
         source.loop = true;
         source.loopStart = 0;
         source.loopEnd = buffer.duration;
     }
 
-    source.start(when, offset, playDuration);
+    source.start(when, bufferOffset, playDuration);
+    // Explicitly schedule stop to ensure it doesn't loop infinitely if duration is short
+    // MDN says duration param does this, but for safety with loops:
+    source.stop(when + playDuration);
+
     if (ctx === this.ctx) {
         this.activeSources.set(clip.id + Math.random(), source as AudioBufferSourceNode);
     }
