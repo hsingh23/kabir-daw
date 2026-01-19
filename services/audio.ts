@@ -8,6 +8,7 @@ class AudioEngine {
   delayNode: DelayNode;
   delayGain: GainNode;
   compressor: DynamicsCompressorNode;
+  metronomeGain: GainNode;
   
   buffers: Map<string, AudioBuffer> = new Map();
   activeSources: Map<string, AudioBufferSourceNode> = new Map();
@@ -18,6 +19,12 @@ class AudioEngine {
   private _isPlaying: boolean = false;
   private _startTime: number = 0;
   private _pauseTime: number = 0;
+
+  // Metronome State
+  public bpm: number = 120;
+  public metronomeEnabled: boolean = false;
+  private nextNoteTime: number = 0;
+  private currentBeat: number = 0;
 
   // Recording
   private mediaRecorder: MediaRecorder | null = null;
@@ -35,6 +42,10 @@ class AudioEngine {
     this.delayNode = this.ctx.createDelay();
     this.delayGain = this.ctx.createGain();
 
+    // Metronome
+    this.metronomeGain = this.ctx.createGain();
+    this.metronomeGain.gain.value = 0.5;
+
     this.setupRouting();
     this.loadImpulseResponse();
   }
@@ -51,6 +62,9 @@ class AudioEngine {
     // Connect FX to Master
     this.delayNode.connect(this.delayGain);
     this.delayGain.connect(this.masterGain);
+
+    // Connect Metronome directly to destination (bypass fx/master if desired, but let's go through master for volume control)
+    this.metronomeGain.connect(this.masterGain);
   }
 
   async loadImpulseResponse() {
@@ -118,6 +132,14 @@ class AudioEngine {
     this._isPlaying = true;
     this._startTime = this.ctx.currentTime - startTime;
     this._pauseTime = startTime;
+
+    // Reset Metronome Scheduling
+    const secondsPerBeat = 60.0 / this.bpm;
+    // Calculate current beat based on seek time
+    this.currentBeat = Math.ceil(startTime / secondsPerBeat);
+    // Calculate when that next beat should happen
+    const nextBeatTimeRelative = this.currentBeat * secondsPerBeat;
+    this.nextNoteTime = this.ctx.currentTime + (nextBeatTimeRelative - startTime);
 
     // Ensure all track channels are ready and synced
     this.syncTracks(tracks);
@@ -204,6 +226,41 @@ class AudioEngine {
   
   get isPlaying() {
       return this._isPlaying;
+  }
+
+  // --- Metronome ---
+
+  scheduleClick(beatNumber: number, time: number) {
+    const osc = this.ctx.createOscillator();
+    const env = this.ctx.createGain();
+
+    // High pitch for downbeat (beat 0 in a bar of 4)
+    // Assuming 4/4 signature for now
+    osc.frequency.value = beatNumber % 4 === 0 ? 1000 : 800;
+    
+    env.gain.value = 1;
+    env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+
+    osc.connect(env);
+    env.connect(this.metronomeGain);
+
+    osc.start(time);
+    osc.stop(time + 0.05);
+  }
+
+  scheduler() {
+      // Lookahead scheduler
+      if (!this.metronomeEnabled || !this._isPlaying) return;
+
+      const lookahead = 0.1; // How far ahead to schedule audio (sec)
+
+      while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
+          this.scheduleClick(this.currentBeat, this.nextNoteTime);
+          
+          const secondsPerBeat = 60.0 / this.bpm;
+          this.nextNoteTime += secondsPerBeat;
+          this.currentBeat++;
+      }
   }
 
   // --- Recording ---

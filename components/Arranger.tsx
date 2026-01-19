@@ -2,13 +2,17 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy, Triangle, Play, Pause, Square, Circle } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
   setProject: React.Dispatch<React.SetStateAction<ProjectState>>;
   currentTime: number;
   isPlaying: boolean;
+  isRecording: boolean;
+  onPlayPause: () => void;
+  onStop: () => void;
+  onRecord: () => void;
   onSeek: (time: number) => void;
   onSplit: (clipId: string, time: number) => void;
   zoom: number;
@@ -42,7 +46,11 @@ const Arranger: React.FC<ArrangerProps> = ({
     project, 
     setProject, 
     currentTime, 
-    isPlaying, 
+    isPlaying,
+    isRecording,
+    onPlayPause,
+    onStop,
+    onRecord, 
     onSeek, 
     onSplit,
     zoom,
@@ -381,6 +389,7 @@ const Arranger: React.FC<ArrangerProps> = ({
             
             <div className="w-px h-6 bg-zinc-700 shrink-0" />
 
+            {/* Snap */}
             <div className="flex items-center space-x-2 bg-zinc-800 rounded px-2 h-8 shrink-0">
                 <Grid size={14} className="text-zinc-400" />
                 <select 
@@ -396,6 +405,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             <div className="w-px h-6 bg-zinc-700 shrink-0" />
 
+            {/* BPM & Metronome */}
             <div className="flex items-center space-x-1 bg-zinc-800 rounded px-2 h-8 shrink-0">
                 <Activity size={14} className="text-zinc-400" />
                 <input 
@@ -404,7 +414,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                     onChange={(e) => setProject(p => ({...p, bpm: parseInt(e.target.value) || 120}))}
                     className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium w-8 text-center"
                 />
-                <span className="text-[9px] text-zinc-500">BPM</span>
+                <button 
+                    onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))}
+                    className={`ml-1 p-0.5 rounded ${project.metronomeOn ? 'text-blue-400' : 'text-zinc-600'}`}
+                >
+                    <Triangle size={10} fill={project.metronomeOn ? "currentColor" : "none"} className="transform rotate-90" />
+                </button>
             </div>
 
             <button 
@@ -613,6 +628,29 @@ const Arranger: React.FC<ArrangerProps> = ({
 
              </div>
         </div>
+
+        {/* Floating Transport Control */}
+        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-40 flex items-center space-x-4 bg-zinc-900/90 backdrop-blur-md px-6 py-3 rounded-full border border-zinc-700 shadow-2xl">
+            <button 
+                onClick={onStop}
+                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center active:scale-95 hover:bg-zinc-700 text-zinc-400"
+            >
+                <Square fill="currentColor" size={14} />
+            </button>
+            <button 
+                onClick={onRecord}
+                className={`w-12 h-12 rounded-full border-2 border-zinc-800 flex items-center justify-center active:scale-95 hover:brightness-110 ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-700'}`}
+            >
+                <Circle fill="white" size={16} className="text-white" />
+            </button>
+            <button 
+                onClick={onPlayPause}
+                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center active:scale-95 hover:bg-zinc-700 text-zinc-200"
+            >
+                 {isPlaying ? <Pause fill="currentColor" size={16} /> : <Play fill="currentColor" size={16} className="ml-0.5" />}
+            </button>
+        </div>
+
 
         {/* Context Menu Overlay */}
         {contextMenu && (
