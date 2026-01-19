@@ -1,21 +1,26 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-/* Custom Scrollbar Utility - kept for mobile cleanliness */
-@layer utilities {
-  .no-scrollbar::-webkit-scrollbar {
+@theme {
+  --color-studio-bg: #1a1a1a;
+  --color-studio-panel: #252525;
+  --color-studio-accent: #ef4444;
+  --color-knob-metal: #404040;
+
+  --shadow-knob: 0 4px 6px -1px rgba(0, 0, 0, 0.5), inset 0 2px 4px 0 rgba(255, 255, 255, 0.1);
+  --shadow-inset-track: inset 0 2px 4px 0 rgba(0, 0, 0, 0.6);
+}
+
+/* Custom Utilities */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
     display: none;
   }
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  
-  /* Safe area padding for newer iOS devices */
-  .pb-safe {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 body {
