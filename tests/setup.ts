@@ -1,3 +1,4 @@
+
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
@@ -10,6 +11,7 @@ class AudioContextMock {
   createDelay() { return { connect: vi.fn(), delayTime: { value: 0 } }; }
   createStereoPanner() { return { connect: vi.fn(), pan: { value: 0, setTargetAtTime: vi.fn() } }; }
   createBiquadFilter() { return { connect: vi.fn(), gain: { value: 0, setTargetAtTime: vi.fn() }, frequency: { value: 0 }, Q: { value: 0 }, type: 'lowpass' }; }
+  createAnalyser() { return { connect: vi.fn(), fftSize: 2048, frequencyBinCount: 1024, getByteTimeDomainData: vi.fn(), getFloatTimeDomainData: vi.fn(), smoothingTimeConstant: 0.8 }; }
   createBuffer() { return { getChannelData: vi.fn(() => new Float32Array(1024)) }; }
   decodeAudioData() { return Promise.resolve({}); }
   resume() { return Promise.resolve(); }
