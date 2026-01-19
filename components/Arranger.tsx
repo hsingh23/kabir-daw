@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy, Triangle, Play, Pause, Square, Circle, Sliders } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy, Play, Pause, Square, Circle, Sliders } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -24,7 +24,8 @@ interface ArrangerProps {
   onOpenInspector: (trackId: string) => void;
 }
 
-const TRACK_HEIGHT = 96; 
+const TRACK_HEIGHT = 110; 
+const HEADER_WIDTH = 180; // Fixed width for sticky headers
 
 const SNAP_OPTIONS = [
     { label: 'Off', value: 0 },
@@ -63,8 +64,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     onOpenInspector
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const trackHeaderContainerRef = useRef<HTMLDivElement>(null);
-  const trackContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
   const [snapGrid, setSnapGrid] = useState(1); 
   
@@ -79,8 +78,6 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number } | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
-
-  // Context Menu
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
   const longPressTimer = useRef<number | null>(null);
 
@@ -104,21 +101,20 @@ const Arranger: React.FC<ArrangerProps> = ({
   const totalBars = Math.ceil(maxTime / secondsPerBar) + 2;
   const totalWidth = totalBars * pixelsPerBar;
 
+  // Auto-scroll during playback
   useEffect(() => {
     if (isPlaying && scrollContainerRef.current) {
-        const x = currentTime * zoom;
+        // Calculate playhead position relative to scroll container
+        // Playhead is at (currentTime * zoom) + HEADER_WIDTH
+        const playheadX = (currentTime * zoom) + HEADER_WIDTH;
         const container = scrollContainerRef.current;
-        if (x > container.scrollLeft + container.clientWidth * 0.8) {
-            container.scrollLeft = x - container.clientWidth * 0.2;
+        
+        // If playhead is near the right edge of view
+        if (playheadX > container.scrollLeft + container.clientWidth * 0.9) {
+            container.scrollLeft = playheadX - HEADER_WIDTH - (container.clientWidth * 0.1);
         }
     }
   }, [currentTime, isPlaying, zoom]);
-
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-      if (trackHeaderContainerRef.current) {
-          trackHeaderContainerRef.current.scrollTop = e.currentTarget.scrollTop;
-      }
-  };
 
   const updateTrack = (id: string, updates: Partial<Track>) => {
     setProject(prev => ({
@@ -127,15 +123,16 @@ const Arranger: React.FC<ArrangerProps> = ({
     }));
   };
 
-  const getBufferDuration = (key: string) => {
-      return audio.buffers.get(key)?.duration || 10;
-  };
-
   const calculateSeekTime = (clientX: number, snap: boolean) => {
     const rect = scrollContainerRef.current?.getBoundingClientRect();
     if (!rect) return 0;
-    const x = clientX - rect.left + (scrollContainerRef.current?.scrollLeft || 0);
-    const time = Math.max(0, x / zoom);
+
+    const containerLeft = rect.left;
+    const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
+    const contentX = clientX - containerLeft + scrollLeft;
+    const timelineX = contentX - HEADER_WIDTH;
+    
+    const time = Math.max(0, timelineX / zoom);
     
     if (snap && snapGrid > 0) {
         const snapSeconds = snapGrid * secondsPerBeat;
@@ -147,13 +144,6 @@ const Arranger: React.FC<ArrangerProps> = ({
   const handleRulerMouseDown = (e: React.MouseEvent) => {
     setIsScrubbing(true);
     onSeek(calculateSeekTime(e.clientX, e.shiftKey));
-  };
-
-  const handleBackgroundMouseDown = (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget || e.target === trackContainerRef.current) {
-        onSelectClip(null);
-        setContextMenu(null);
-      }
   };
 
   const handleLoopMouseDown = (e: React.MouseEvent, type: 'start' | 'end' | 'move') => {
@@ -168,13 +158,11 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
-    
     if (e.button === 2) {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
         return;
     }
-
     onSelectTrack(clip.trackId);
     onSelectClip(clip.id);
     setContextMenu(null);
@@ -187,10 +175,7 @@ const Arranger: React.FC<ArrangerProps> = ({
         return;
     }
     if (tool === ToolMode.ERASER) {
-        setProject(prev => ({
-            ...prev,
-            clips: prev.clips.filter(c => c.id !== clip.id)
-        }));
+        setProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== clip.id) }));
         onSelectClip(null);
         return;
     }
@@ -226,11 +211,14 @@ const Arranger: React.FC<ArrangerProps> = ({
             if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
             updatedClip.start = Math.max(0, newStart);
 
-            if (trackContainerRef.current) {
-                const rect = trackContainerRef.current.getBoundingClientRect();
-                const relativeY = e.clientY - rect.top; 
+            // Calculate track drop
+            if (scrollContainerRef.current) {
+                const containerRect = scrollContainerRef.current.getBoundingClientRect();
+                const relativeY = e.clientY - containerRect.top + scrollContainerRef.current.scrollTop - 40; // -40 for ruler height roughly
                 const trackIndex = Math.floor(relativeY / TRACK_HEIGHT);
-                if (trackIndex >= 0 && trackIndex < project.tracks.length) updatedClip.trackId = project.tracks[trackIndex].id;
+                if (trackIndex >= 0 && trackIndex < project.tracks.length) {
+                    updatedClip.trackId = project.tracks[trackIndex].id;
+                }
             }
         } 
         else if (dragState.mode === 'TRIM_START') {
@@ -302,75 +290,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   };
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current); 
-    for (let i = 0; i < e.targetTouches.length; i++) {
-        touchCache.current.set(e.targetTouches[i].identifier, {
-            clientX: e.targetTouches[i].clientX,
-            clientY: e.targetTouches[i].clientY
-        });
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
-    if (e.targetTouches.length === 2) {
-        e.preventDefault(); 
-        const t1 = e.targetTouches[0];
-        const t2 = e.targetTouches[1];
-        const dx = t1.clientX - t2.clientX;
-        const dy = t1.clientY - t2.clientY;
-        const curDiff = Math.sqrt(dx*dx + dy*dy);
-        
-        if (prevDiff.current > 0) {
-            const delta = curDiff - prevDiff.current;
-            const zoomFactor = delta * 0.5; 
-            setZoom(Math.min(300, Math.max(10, zoom + zoomFactor)));
-        }
-        prevDiff.current = curDiff;
-    }
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-     for (let i = 0; i < e.changedTouches.length; i++) {
-         touchCache.current.delete(e.changedTouches[i].identifier);
-     }
-     if (e.targetTouches.length < 2) {
-         prevDiff.current = -1;
-     }
-  };
-
-  const handleClipTouchStart = (e: React.TouchEvent, clip: Clip) => {
-    const touch = e.touches[0];
-    const startX = touch.clientX;
-    const startY = touch.clientY;
-
-    longPressTimer.current = setTimeout(() => {
-      setContextMenu({ x: startX, y: startY, clipId: clip.id });
-      setDragState(null); 
-    }, 500); 
-  };
-
-  const handleContextMenuAction = (action: string) => {
-      if (!contextMenu) return;
-      const { clipId } = contextMenu;
-      
-      switch(action) {
-          case 'DELETE':
-            setProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== clipId) }));
-            break;
-          case 'DUPLICATE':
-            const clip = project.clips.find(c => c.id === clipId);
-            if (clip) {
-                const newClip = { ...clip, id: crypto.randomUUID(), start: clip.start + clip.duration };
-                setProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
-            }
-            break;
-      }
-      setContextMenu(null);
-  };
-
-
   return (
     <div 
         className="flex flex-col h-full bg-studio-bg text-xs select-none touch-none"
@@ -380,18 +299,18 @@ const Arranger: React.FC<ArrangerProps> = ({
         onContextMenu={(e) => e.preventDefault()}
     >
       {/* Toolbar */}
-      <div className="h-12 border-b border-zinc-700 bg-studio-panel flex items-center px-4 justify-between shrink-0 z-30 space-x-4 overflow-x-auto no-scrollbar">
+      <div className="h-12 border-b border-zinc-800 bg-studio-panel flex items-center px-4 justify-between shrink-0 z-30 space-x-4 overflow-x-auto no-scrollbar shadow-lg">
          <div className="flex space-x-3 items-center">
-            <div className="flex bg-zinc-800 rounded p-1 space-x-1 shrink-0">
-                <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded ${tool === ToolMode.POINTER ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><MousePointer size={16} /></button>
-                <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded ${tool === ToolMode.SPLIT ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><Scissors size={16} /></button>
-                <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded ${tool === ToolMode.ERASER ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><Trash2 size={16} /></button>
+            <div className="flex bg-zinc-900 rounded-lg p-1 space-x-1 shrink-0 border border-zinc-800">
+                <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded-md transition-all ${tool === ToolMode.POINTER ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><MousePointer size={16} /></button>
+                <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded-md transition-all ${tool === ToolMode.SPLIT ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><Scissors size={16} /></button>
+                <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded-md transition-all ${tool === ToolMode.ERASER ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><Trash2 size={16} /></button>
             </div>
             
-            <div className="w-px h-6 bg-zinc-700 shrink-0" />
+            <div className="w-px h-6 bg-zinc-800 shrink-0" />
 
-            <div className="flex items-center space-x-2 bg-zinc-800 rounded px-2 h-8 shrink-0">
-                <Grid size={14} className="text-zinc-400" />
+            <div className="flex items-center space-x-2 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
+                <Grid size={14} className="text-zinc-500" />
                 <select 
                     value={snapGrid} 
                     onChange={(e) => setSnapGrid(parseFloat(e.target.value))}
@@ -403,311 +322,233 @@ const Arranger: React.FC<ArrangerProps> = ({
                 </select>
             </div>
 
-            <div className="w-px h-6 bg-zinc-700 shrink-0" />
-
-            <div className="flex items-center space-x-1 bg-zinc-800 rounded px-2 h-8 shrink-0">
-                <Activity size={14} className="text-zinc-400" />
+            <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
+                <Activity size={14} className="text-zinc-500" />
                 <input 
                     type="number" 
                     value={project.bpm} 
                     onChange={(e) => setProject(p => ({...p, bpm: parseInt(e.target.value) || 120}))}
                     className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium w-8 text-center"
                 />
-                <button 
-                    onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))}
-                    className={`ml-1 p-0.5 rounded ${project.metronomeOn ? 'text-blue-400' : 'text-zinc-600'}`}
-                >
-                    <Triangle size={10} fill={project.metronomeOn ? "currentColor" : "none"} className="transform rotate-90" />
-                </button>
             </div>
-
-            <button 
-                onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} 
-                className={`flex items-center justify-center w-8 h-8 rounded bg-zinc-800 shrink-0 ${project.isLooping ? 'text-yellow-400' : 'text-zinc-500'}`}
-            >
-                <Repeat size={16} />
-            </button>
          </div>
 
          <div className="flex items-center space-x-3 shrink-0">
-             <div className="text-zinc-400 font-mono flex items-center bg-black/40 px-2 py-1 rounded border border-zinc-700/50">
-                 <span className="text-white">{Math.floor(currentTime / secondsPerBar) + 1}</span>
-                 <span className="text-zinc-600 mx-0.5">.</span>
+             <div className="text-zinc-400 font-mono flex items-center bg-black/40 px-3 py-1.5 rounded-md border border-zinc-800/50 shadow-inner">
+                 <span className="text-white font-bold">{Math.floor(currentTime / secondsPerBar) + 1}</span>
+                 <span className="text-zinc-600 mx-1">.</span>
                  <span className="text-white">{Math.floor((currentTime % secondsPerBar) / secondsPerBeat) + 1}</span>
-                 <span className="text-zinc-600 mx-0.5">.</span>
+                 <span className="text-zinc-600 mx-1">.</span>
                  <span className="text-zinc-500 text-[10px]">{Math.floor(((currentTime % secondsPerBeat) / secondsPerBeat) * 4) + 1}</span>
              </div>
-             
-             <div className="flex bg-zinc-800 rounded p-1 space-x-1 h-8 items-center">
-                <button onClick={() => setZoom(Math.max(10, zoom - 10))} className="p-1.5 rounded text-zinc-400 hover:text-white"><ZoomOut size={16} /></button>
-                <button onClick={() => setZoom(Math.min(300, zoom + 10))} className="p-1.5 rounded text-zinc-400 hover:text-white"><ZoomIn size={16} /></button>
+             <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded-md transition-all ${project.isLooping ? 'text-yellow-400 bg-yellow-400/10' : 'text-zinc-500'}`}>
+                <Repeat size={16} />
+            </button>
+             <div className="flex bg-zinc-900 rounded-lg p-1 space-x-1 h-8 items-center border border-zinc-800">
+                <button onClick={() => setZoom(Math.max(10, zoom - 10))} className="p-1.5 rounded text-zinc-500 hover:text-white"><ZoomOut size={16} /></button>
+                <button onClick={() => setZoom(Math.min(300, zoom + 10))} className="p-1.5 rounded text-zinc-500 hover:text-white"><ZoomIn size={16} /></button>
              </div>
          </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Track Headers */}
-        <div 
-            className="w-36 md:w-48 bg-studio-panel border-r border-zinc-800 flex-shrink-0 z-20 shadow-xl overflow-hidden relative"
-            ref={trackHeaderContainerRef}
-        >
-            <div className="h-8 border-b border-zinc-800 bg-zinc-900 flex items-center justify-center text-zinc-500 font-medium sticky top-0 z-30 text-[10px] uppercase tracking-wider">Tracks</div> 
-            {project.tracks.map(track => (
+      {/* Main Single Scroll Container */}
+      <div 
+        ref={scrollContainerRef}
+        className="flex-1 overflow-auto bg-zinc-900 relative"
+      >
+        <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + HEADER_WIDTH }}>
+           
+            {/* 1. Sticky Top Ruler Row */}
+            <div className="sticky top-0 z-40 flex h-8 bg-zinc-900 border-b border-zinc-800 shadow-sm">
+                {/* 1a. Sticky Left Corner */}
                 <div 
-                    key={track.id} 
-                    onClick={() => onSelectTrack(track.id)}
-                    onDoubleClick={() => onOpenInspector(track.id)}
-                    className={`border-b border-zinc-800 p-2 flex flex-col justify-center relative group cursor-pointer transition-colors ${selectedTrackId === track.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}
-                    style={{ height: TRACK_HEIGHT }}
+                    className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800" 
+                    style={{ width: HEADER_WIDTH }}
                 >
-                    <div className="flex items-center mb-1">
-                        <div className="w-5 h-5 mr-2 rounded flex items-center justify-center bg-zinc-700/50">
-                            <TrackIcon name={track.name} color={selectedTrackId === track.id ? track.color : '#71717a'} />
-                        </div>
-                        <div className={`font-bold truncate text-[11px] ${selectedTrackId === track.id ? 'text-white' : 'text-zinc-400'}`}>{track.name}</div>
-                    </div>
-                    <div className="flex items-center justify-between mb-2 px-1">
-                         <div className="flex space-x-1">
-                             <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold border border-transparent ${track.muted ? 'bg-red-500 text-white' : 'bg-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>M</button>
-                             <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold border border-transparent ${track.solo ? 'bg-yellow-400 text-black' : 'bg-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>S</button>
-                         </div>
-                         <button 
-                            onClick={(e) => { e.stopPropagation(); onOpenInspector(track.id); }} 
-                            className="text-zinc-500 hover:text-white p-1 rounded hover:bg-zinc-600"
-                        >
-                             <Sliders size={12} />
-                         </button>
-                    </div>
-                    <div className="flex items-center space-x-2 px-1">
-                        <input type="range" min="0" max="1" step="0.01" value={track.volume} onClick={(e) => e.stopPropagation()} onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} className="w-full h-1 bg-zinc-600 rounded-lg appearance-none cursor-pointer" />
-                    </div>
-                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${selectedTrackId === track.id ? 'shadow-[0_0_8px_currentColor]' : ''}`} style={{ backgroundColor: track.color, color: track.color }}></div>
+                    <span className="text-[10px] font-bold text-zinc-600 tracking-widest">TRACKS</span>
                 </div>
-            ))}
-            <div className="w-full p-2 bg-studio-panel">
-                <button className="w-full py-2 text-zinc-500 hover:text-zinc-300 flex items-center justify-center space-x-1 border border-dashed border-zinc-700 rounded hover:bg-zinc-800/50" onClick={() => { /* add track */ }}>
-                    <Plus size={14} /> <span>Add</span>
-                </button>
-            </div>
-            <div className="h-48"></div>
-        </div>
 
-        {/* Timeline Content */}
-        <div 
-            className="flex-1 overflow-x-auto overflow-y-auto relative no-scrollbar bg-zinc-900 touch-pan-x"
-            ref={scrollContainerRef}
-            onScroll={handleScroll}
-            onMouseDown={handleBackgroundMouseDown}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-        >
-             <div className="relative min-w-full" style={{ width: totalWidth }}>
-                
-                {/* Sticky Rulers */}
-                <div className="sticky top-0 z-30 bg-zinc-900 shadow-sm">
-                    <div className="h-4 bg-zinc-950 border-b border-zinc-800 relative">
+                {/* 1b. Ruler Timeline */}
+                <div 
+                    className="relative flex-1 bg-zinc-900 cursor-pointer"
+                    onMouseDown={handleRulerMouseDown}
+                >
+                     {/* Loop Region Indicator */}
+                     <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
                         <div 
-                            className={`absolute top-0 bottom-0 bg-yellow-400/20 border-l border-r border-yellow-400/50 ${project.isLooping ? 'opacity-100' : 'opacity-30'}`}
+                            className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 pointer-events-auto group ${project.isLooping ? 'opacity-100' : 'opacity-0'}`}
                             style={{ left: project.loopStart * zoom, width: Math.max(1, (project.loopEnd - project.loopStart) * zoom) }}
                         >
-                            <div className="absolute inset-0 cursor-move hover:bg-yellow-400/10" onMouseDown={(e) => handleLoopMouseDown(e, 'move')} />
-                            <div className="absolute left-0 top-0 bottom-0 w-4 -ml-2 cursor-ew-resize hover:bg-white/10" onMouseDown={(e) => handleLoopMouseDown(e, 'start')} />
-                            <div className="absolute right-0 top-0 bottom-0 w-4 -mr-2 cursor-ew-resize hover:bg-white/10" onMouseDown={(e) => handleLoopMouseDown(e, 'end')} />
+                             <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onMouseDown={(e) => handleLoopMouseDown(e, 'move')} />
+                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onMouseDown={(e) => handleLoopMouseDown(e, 'start')} />
+                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onMouseDown={(e) => handleLoopMouseDown(e, 'end')} />
                         </div>
-                    </div>
-                    <div 
-                        className="h-8 bg-zinc-800 border-b border-zinc-700 relative cursor-pointer overflow-hidden group" 
-                        onMouseDown={handleRulerMouseDown}
-                    >
-                        {[...Array(totalBars)].map((_, i) => (
-                            <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-600 pl-1 select-none h-4" style={{ left: i * pixelsPerBar }}>
-                                {i + 1}
-                            </div>
-                        ))}
-                        {pixelsPerBeat > 20 && [...Array(totalBars * 4)].map((_, i) => {
-                             if (i % 4 === 0) return null; 
-                             return (
-                                <div key={i} className="absolute bottom-0 border-l border-zinc-700 h-2" style={{ left: i * pixelsPerBeat }} />
-                             )
-                        })}
-                    </div>
-                </div>
+                     </div>
 
-                <div 
-                    className="relative" 
-                    ref={trackContainerRef}
-                    style={{ height: project.tracks.length * TRACK_HEIGHT + 200 }} 
-                >
-                    {/* Grid */}
-                    <div className="absolute inset-0 z-0 pointer-events-none">
-                         {project.isLooping && (
-                            <div className="absolute top-0 bottom-0 bg-white/5" style={{ left: project.loopStart * zoom, width: (project.loopEnd - project.loopStart) * zoom }} />
-                         )}
-                         {[...Array(totalBars)].map((_, i) => (
-                            <div key={`bar-${i}`} className="absolute top-0 bottom-0 border-r border-zinc-700/50" style={{ left: i * pixelsPerBar }}></div>
-                         ))}
-                         {pixelsPerBeat > 15 && [...Array(totalBars * 4)].map((_, i) => (
-                            i % 4 !== 0 && (
-                                <div key={`beat-${i}`} className="absolute top-0 bottom-0 border-r border-zinc-800/30" style={{ left: i * pixelsPerBeat }}></div>
-                            )
-                         ))}
-                         {project.tracks.map((_, i) => (
-                            <div key={i} className="absolute w-full border-b border-zinc-800/50" style={{ top: (i + 1) * TRACK_HEIGHT, height: 0 }}></div>
-                         ))}
-                    </div>
-
-                    {/* Clips */}
-                    {project.clips.map(clip => {
-                        const trackIndex = project.tracks.findIndex(t => t.id === clip.trackId);
-                        if (trackIndex === -1) return null;
-                        
-                        const track = project.tracks[trackIndex];
-                        const isDragging = dragState?.clipId === clip.id;
-                        const isSelected = selectedClipId === clip.id;
-                        const bufferDuration = getBufferDuration(clip.bufferKey);
-                        const isLooping = clip.duration > (bufferDuration - clip.offset);
-
-                        const repeatCount = Math.ceil(clip.duration / bufferDuration);
-                        const waveformWidth = bufferDuration * zoom;
-
-                        return (
-                            <div
-                                key={clip.id}
-                                className={`absolute rounded-md overflow-hidden cursor-pointer group transition-shadow ${
-                                    isDragging ? 'z-50 opacity-90 shadow-2xl' : 'z-10 shadow-md'
-                                } ${
-                                    isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-zinc-900' : 'border border-white/10 hover:border-white/30'
-                                }`}
-                                style={{
-                                    left: clip.start * zoom,
-                                    width: clip.duration * zoom,
-                                    top: trackIndex * TRACK_HEIGHT + 8, 
-                                    height: TRACK_HEIGHT - 16,
-                                    backgroundColor: track.color
-                                }}
-                                onMouseDown={(e) => handleClipMouseDown(e, clip, 'MOVE')}
-                                onTouchStart={(e) => handleClipTouchStart(e, clip)}
-                            >
-                                <div className="absolute top-0 left-0 right-0 h-4 bg-black/20 text-[10px] px-2 text-white/90 truncate flex justify-between items-center select-none z-20 backdrop-blur-sm">
-                                    <span className="truncate mr-2 font-medium drop-shadow-md">{clip.name}</span>
-                                    {tool === ToolMode.SPLIT && <Scissors size={10} className="text-white" />}
-                                </div>
-                                
-                                <div className="absolute inset-0 top-4 z-10 overflow-hidden pointer-events-none flex">
-                                    <div 
-                                        className="flex-shrink-0 h-full relative"
-                                        style={{ width: waveformWidth, transform: `translateX(-${clip.offset * zoom}px)` }}
-                                    >
-                                        <Waveform bufferKey={clip.bufferKey} color="rgba(255,255,255,0.9)" />
-                                    </div>
-                                    {isLooping && [...Array(repeatCount)].map((_, i) => (
-                                         <div key={i} className="flex-shrink-0 h-full relative border-l border-white/30 opacity-60" style={{ width: waveformWidth }}>
-                                            <Waveform bufferKey={clip.bufferKey} color="rgba(255,255,255,0.9)" />
-                                         </div>
-                                    ))}
-                                </div>
-
-                                <svg className="absolute inset-0 pointer-events-none z-20" width="100%" height="100%" preserveAspectRatio="none">
-                                    {clip.fadeIn > 0 && (
-                                        <path 
-                                            d={`M 0 ${TRACK_HEIGHT-16} L ${clip.fadeIn * zoom} 0`} 
-                                            stroke="white" 
-                                            strokeWidth="1.5" 
-                                            fill="none" 
-                                            className="opacity-80" 
-                                        />
-                                    )}
-                                    {clip.fadeOut > 0 && (
-                                        <path 
-                                            d={`M ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} ${TRACK_HEIGHT-16}`} 
-                                            stroke="white" 
-                                            strokeWidth="1.5" 
-                                            fill="none" 
-                                            className="opacity-80" 
-                                        />
-                                    )}
-                                </svg>
-                                
-                                <div 
-                                    className="absolute top-0 w-3 h-3 bg-white rounded-full shadow border border-black cursor-ew-resize z-40 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-125"
-                                    style={{ left: (clip.fadeIn || 0) * zoom - 6 }}
-                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_IN')}
-                                />
-                                <div 
-                                    className="absolute top-0 w-3 h-3 bg-white rounded-full shadow border border-black cursor-ew-resize z-40 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-125"
-                                    style={{ right: (clip.fadeOut || 0) * zoom - 6 }}
-                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_OUT')}
-                                />
-
-                                <div 
-                                    className="absolute left-0 top-0 bottom-0 w-4 bg-transparent hover:bg-white/10 cursor-ew-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_START')}
-                                ></div>
-                                <div 
-                                    className="absolute right-0 top-0 bottom-0 w-4 bg-transparent hover:bg-white/10 cursor-ew-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_END')}
-                                ></div>
-                            </div>
-                        );
-                    })}
-                </div>
-
-                <div 
-                    className="absolute top-0 bottom-0 w-px bg-red-500 z-40 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.5)]"
-                    style={{ left: currentTime * zoom, height: '100%' }}
-                >
-                    <div className="w-4 h-4 bg-red-500 -ml-2 rotate-45 transform -translate-y-2 shadow-sm sticky top-7 z-50"></div>
-                </div>
-
-             </div>
-        </div>
-
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-40 flex items-center space-x-4 bg-zinc-900/90 backdrop-blur-md px-6 py-3 rounded-full border border-zinc-700 shadow-2xl">
-            <button 
-                onClick={onStop}
-                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center active:scale-95 hover:bg-zinc-700 text-zinc-400"
-            >
-                <Square fill="currentColor" size={14} />
-            </button>
-            <button 
-                onClick={onRecord}
-                className={`w-12 h-12 rounded-full border-2 border-zinc-800 flex items-center justify-center active:scale-95 hover:brightness-110 ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-700'}`}
-            >
-                <Circle fill="white" size={16} className="text-white" />
-            </button>
-            <button 
-                onClick={onPlayPause}
-                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center active:scale-95 hover:bg-zinc-700 text-zinc-200"
-            >
-                 {isPlaying ? <Pause fill="currentColor" size={16} /> : <Play fill="currentColor" size={16} className="ml-0.5" />}
-            </button>
-        </div>
-
-
-        {contextMenu && (
-            <div 
-                className="fixed inset-0 z-50" 
-                onClick={() => setContextMenu(null)}
-            >
-                <div 
-                    className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-lg overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100"
-                    style={{ 
-                        left: Math.min(window.innerWidth - 170, contextMenu.x), 
-                        top: Math.min(window.innerHeight - 200, contextMenu.y) 
-                    }}
-                >
-                    <div className="p-2 border-b border-zinc-700 text-xs font-bold text-zinc-500 bg-zinc-900/50">Edit Clip</div>
-                    <button onClick={() => handleContextMenuAction('DUPLICATE')} className="w-full text-left px-4 py-3 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
-                        <Copy size={14} /> <span>Duplicate</span>
-                    </button>
-                    <button onClick={() => handleContextMenuAction('DELETE')} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2">
-                        <Trash2 size={14} /> <span>Delete</span>
-                    </button>
+                     {/* Grid Numbers */}
+                     {[...Array(totalBars)].map((_, i) => (
+                        <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-700 pl-1 select-none h-4 flex items-end pb-0.5 font-medium" style={{ left: i * pixelsPerBar }}>
+                            {i + 1}
+                        </div>
+                     ))}
                 </div>
             </div>
-        )}
+
+            {/* 2. Tracks Container */}
+            <div className="relative">
+                {/* Background Grid (Canvas Pattern via CSS) */}
+                <div 
+                    className="absolute inset-0 z-0 pointer-events-none" 
+                    style={{
+                        left: HEADER_WIDTH,
+                        backgroundImage: `
+                            linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
+                            linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px)
+                        `,
+                        backgroundSize: `${pixelsPerBar}px 100%, ${pixelsPerBeat}px 100%`
+                    }} 
+                />
+
+                {project.tracks.map((track, trackIndex) => (
+                    <div key={track.id} className="flex relative z-10 group" style={{ height: TRACK_HEIGHT }}>
+                        
+                        {/* Sticky Track Header */}
+                        <div 
+                            className={`sticky left-0 z-30 bg-studio-panel border-r border-zinc-800 border-b border-zinc-800/50 shrink-0 flex flex-col p-2 relative transition-colors ${selectedTrackId === track.id ? 'bg-zinc-800' : ''}`}
+                            style={{ width: HEADER_WIDTH }}
+                            onClick={() => onSelectTrack(track.id)}
+                            onDoubleClick={() => onOpenInspector(track.id)}
+                        >
+                             <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center space-x-2 overflow-hidden">
+                                    <div className="w-6 h-6 rounded bg-zinc-900 flex items-center justify-center shadow-inner shrink-0" style={{ color: track.color }}>
+                                        <TrackIcon name={track.name} color={track.color} />
+                                    </div>
+                                    <span className={`font-bold text-xs truncate ${selectedTrackId === track.id ? 'text-white' : 'text-zinc-400'}`}>{track.name}</span>
+                                </div>
+                                <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300">
+                                    <Sliders size={12} />
+                                </button>
+                             </div>
+                             
+                             <div className="flex space-x-2 mt-auto">
+                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.muted ? 'bg-red-500 text-white shadow-red-500/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>M</button>
+                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.solo ? 'bg-yellow-400 text-black shadow-yellow-400/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>S</button>
+                             </div>
+                             
+                             <div className="mt-2 flex items-center space-x-2">
+                                <input 
+                                    type="range" min="0" max="1" step="0.01" 
+                                    value={track.volume} 
+                                    onClick={(e) => e.stopPropagation()} 
+                                    onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} 
+                                    className="w-full h-1 bg-zinc-900 rounded-lg appearance-none cursor-pointer accent-zinc-500" 
+                                />
+                             </div>
+
+                             {/* Color Strip */}
+                             <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
+                        </div>
+
+                        {/* Track Lane / Clips */}
+                        <div className="relative flex-1 border-b border-zinc-800/30 bg-zinc-900/20">
+                            {project.clips.filter(c => c.trackId === track.id).map(clip => {
+                                const isSelected = selectedClipId === clip.id;
+                                return (
+                                    <div
+                                        key={clip.id}
+                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none transition-all ${
+                                            isSelected ? 'ring-2 ring-white z-20 shadow-xl' : 'hover:brightness-110 z-10 shadow-md'
+                                        }`}
+                                        style={{
+                                            left: clip.start * zoom,
+                                            width: clip.duration * zoom,
+                                            top: 4,
+                                            bottom: 4,
+                                            backgroundColor: '#18181b', // Dark background for clip
+                                            borderLeft: `4px solid ${track.color}`
+                                        }}
+                                        onMouseDown={(e) => handleClipMouseDown(e, clip, 'MOVE')}
+                                    >
+                                        {/* Clip Header */}
+                                        <div 
+                                            className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate"
+                                            style={{ backgroundColor: track.color }}
+                                        >
+                                            <span className="truncate">{clip.name}</span>
+                                        </div>
+
+                                        {/* Waveform Area */}
+                                        <div className="absolute inset-0 top-5 bottom-0 bg-black/40">
+                                            <Waveform bufferKey={clip.bufferKey} color={track.color} />
+                                        </div>
+                                        
+                                        {/* Fades Visuals */}
+                                        <svg className="absolute inset-0 pointer-events-none z-20 opacity-50" width="100%" height="100%" preserveAspectRatio="none">
+                                            {clip.fadeIn > 0 && <path d={`M 0 100 L ${clip.fadeIn * zoom} 0 L 0 0 Z`} fill="black" />}
+                                            {clip.fadeOut > 0 && <path d={`M ${clip.duration * zoom} 100 L ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} 0 Z`} fill="black" />}
+                                        </svg>
+
+                                        {/* Resize Handles */}
+                                        <div className={`absolute inset-y-0 left-0 w-3 cursor-w-resize z-30 hover:bg-white/10 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_START')} />
+                                        <div className={`absolute inset-y-0 right-0 w-3 cursor-e-resize z-30 hover:bg-white/10 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_END')} />
+                                        
+                                        {/* Fade Handles */}
+                                        <div className={`absolute top-0 w-3 h-3 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ left: clip.fadeIn * zoom }} onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_IN')} />
+                                        <div className={`absolute top-0 w-3 h-3 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ right: clip.fadeOut * zoom }} onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_OUT')} />
+
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                ))}
+                
+                {/* Playhead Overlay */}
+                <div 
+                    className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]"
+                    style={{ left: HEADER_WIDTH + (currentTime * zoom) }}
+                >
+                    <div className="w-3 h-3 bg-red-500 rounded-full -ml-1.5 -mt-1.5 shadow-sm" />
+                </div>
+            </div>
+        </div>
       </div>
+
+      {/* Floating Transport Control */}
+      <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center space-x-6 bg-zinc-900/90 backdrop-blur-xl px-8 py-3 rounded-2xl border border-zinc-700/50 shadow-2xl">
+            <button onClick={onStop} className="group">
+                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">
+                    <Square fill="currentColor" size={12} className="text-zinc-400 group-hover:text-white" />
+                </div>
+            </button>
+            <button onClick={onRecord} className="group relative">
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center group-active:scale-95 transition-all shadow-lg border-4 border-zinc-800 ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-500'}`}>
+                    <Circle fill="white" size={16} className="text-white" />
+                </div>
+            </button>
+            <button onClick={onPlayPause} className="group">
+                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">
+                     {isPlaying ? <Pause fill="currentColor" size={14} className="text-zinc-200" /> : <Play fill="currentColor" size={14} className="text-zinc-200 ml-0.5" />}
+                </div>
+            </button>
+      </div>
+      
+      {/* Context Menu */}
+      {contextMenu && (
+        <div className="fixed inset-0 z-[100]" onClick={() => setContextMenu(null)}>
+            <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1"
+                style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
+                <button className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
+                    <Copy size={14} /> <span>Duplicate</span>
+                </button>
+                <div className="h-px bg-zinc-700 mx-2 my-1" />
+                <button className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2">
+                    <Trash2 size={14} /> <span>Delete</span>
+                </button>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

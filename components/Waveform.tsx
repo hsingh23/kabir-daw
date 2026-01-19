@@ -32,47 +32,69 @@ const Waveform: React.FC<WaveformProps> = ({ bufferKey, color }) => {
       const data = buffer.getChannelData(0);
       const step = Math.ceil(data.length / rect.width);
       const amp = rect.height / 2;
+      const mid = rect.height / 2;
       
       ctx.clearRect(0, 0, rect.width, rect.height);
-      ctx.fillStyle = color;
       
-      // Draw mirrored waveform
+      // Create Gradient
+      const gradient = ctx.createLinearGradient(0, 0, 0, rect.height);
+      gradient.addColorStop(0, color); 
+      gradient.addColorStop(1, color); 
+
+      ctx.fillStyle = color;
+
       ctx.beginPath();
       
+      // Draw top half
       for (let i = 0; i < rect.width; i++) {
-        const idx = i * step;
-        if (idx >= data.length) break;
+        const idx = Math.floor(i * step);
+        // if (idx >= data.length) break;
 
-        let min = 1.0;
-        let max = -1.0;
-        
-        // Find peak in this chunk
-        for (let j = 0; j < step; j++) {
-            const val = data[idx + j];
-            if (val < min) min = val;
+        let max = 0;
+        // Simple decimation (peak finding)
+        const bound = Math.min(data.length, idx + step);
+        for (let j = idx; j < bound; j++) {
+            const val = Math.abs(data[j]);
             if (val > max) max = val;
         }
 
-        // Sanity check
-        if (min === 1.0 && max === -1.0) {
-            min = 0;
-            max = 0;
+        const y = mid - (max * amp * 0.95); // 0.95 to leave a tiny margin
+        if (i === 0) {
+            ctx.moveTo(i, y);
+        } else {
+            ctx.lineTo(i, y);
         }
-
-        // Draw vertical line for this pixel column
-        // Center is amp.
-        // Y grows down.
-        const yTop = (1 - max) * amp;
-        const yBottom = (1 - min) * amp;
-        const height = Math.max(1, yBottom - yTop);
-        
-        ctx.fillRect(i, yTop, 1, height);
       }
+
+      // Draw bottom half (mirror)
+      for (let i = rect.width - 1; i >= 0; i--) {
+        const idx = Math.floor(i * step);
+        let max = 0;
+        const bound = Math.min(data.length, idx + step);
+        for (let j = idx; j < bound; j++) {
+            const val = Math.abs(data[j]);
+            if (val > max) max = val;
+        }
+        
+        const y = mid + (max * amp * 0.95);
+        ctx.lineTo(i, y);
+      }
+
+      ctx.closePath();
+      ctx.fill();
     };
 
     draw();
-    window.addEventListener('resize', draw);
-    return () => window.removeEventListener('resize', draw);
+    
+    const resizeObserver = new ResizeObserver(() => {
+        draw();
+    });
+    
+    if (canvasRef.current) {
+        resizeObserver.observe(canvasRef.current);
+    }
+
+    return () => resizeObserver.disconnect();
   }, [bufferKey, color]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
