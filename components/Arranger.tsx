@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy, Triangle, Play, Pause, Square, Circle } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy, Triangle, Play, Pause, Square, Circle, Sliders } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -21,6 +21,7 @@ interface ArrangerProps {
   onSelectTrack: (id: string) => void;
   selectedClipId: string | null;
   onSelectClip: (id: string | null) => void;
+  onOpenInspector: (trackId: string) => void;
 }
 
 const TRACK_HEIGHT = 96; 
@@ -58,7 +59,8 @@ const Arranger: React.FC<ArrangerProps> = ({
     selectedTrackId,
     onSelectTrack,
     selectedClipId,
-    onSelectClip
+    onSelectClip,
+    onOpenInspector
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const trackHeaderContainerRef = useRef<HTMLDivElement>(null);
@@ -177,7 +179,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     onSelectClip(clip.id);
     setContextMenu(null);
 
-    // Tools logic
     if (tool === ToolMode.SPLIT && mode === 'MOVE') {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
@@ -255,7 +256,7 @@ const Arranger: React.FC<ArrangerProps> = ({
              updatedClip.fadeIn = Math.max(0, Math.min(original.duration - original.fadeOut, original.fadeIn + fadeChange));
         }
         else if (dragState.mode === 'FADE_OUT') {
-             const fadeChange = -deltaSeconds; // Move left to increase fade out
+             const fadeChange = -deltaSeconds; 
              updatedClip.fadeOut = Math.max(0, Math.min(original.duration - original.fadeIn, original.fadeOut + fadeChange));
         }
 
@@ -301,7 +302,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   };
 
-  // Pinch Zoom Handlers
   const handleTouchStart = (e: React.TouchEvent) => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current); 
     for (let i = 0; i < e.targetTouches.length; i++) {
@@ -382,7 +382,6 @@ const Arranger: React.FC<ArrangerProps> = ({
       {/* Toolbar */}
       <div className="h-12 border-b border-zinc-700 bg-studio-panel flex items-center px-4 justify-between shrink-0 z-30 space-x-4 overflow-x-auto no-scrollbar">
          <div className="flex space-x-3 items-center">
-            {/* Tools */}
             <div className="flex bg-zinc-800 rounded p-1 space-x-1 shrink-0">
                 <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded ${tool === ToolMode.POINTER ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><MousePointer size={16} /></button>
                 <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded ${tool === ToolMode.SPLIT ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><Scissors size={16} /></button>
@@ -391,7 +390,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             
             <div className="w-px h-6 bg-zinc-700 shrink-0" />
 
-            {/* Snap */}
             <div className="flex items-center space-x-2 bg-zinc-800 rounded px-2 h-8 shrink-0">
                 <Grid size={14} className="text-zinc-400" />
                 <select 
@@ -407,7 +405,6 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             <div className="w-px h-6 bg-zinc-700 shrink-0" />
 
-            {/* BPM & Metronome */}
             <div className="flex items-center space-x-1 bg-zinc-800 rounded px-2 h-8 shrink-0">
                 <Activity size={14} className="text-zinc-400" />
                 <input 
@@ -459,6 +456,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                 <div 
                     key={track.id} 
                     onClick={() => onSelectTrack(track.id)}
+                    onDoubleClick={() => onOpenInspector(track.id)}
                     className={`border-b border-zinc-800 p-2 flex flex-col justify-center relative group cursor-pointer transition-colors ${selectedTrackId === track.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}
                     style={{ height: TRACK_HEIGHT }}
                 >
@@ -473,6 +471,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                              <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold border border-transparent ${track.muted ? 'bg-red-500 text-white' : 'bg-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>M</button>
                              <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold border border-transparent ${track.solo ? 'bg-yellow-400 text-black' : 'bg-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>S</button>
                          </div>
+                         <button 
+                            onClick={(e) => { e.stopPropagation(); onOpenInspector(track.id); }} 
+                            className="text-zinc-500 hover:text-white p-1 rounded hover:bg-zinc-600"
+                        >
+                             <Sliders size={12} />
+                         </button>
                     </div>
                     <div className="flex items-center space-x-2 px-1">
                         <input type="range" min="0" max="1" step="0.01" value={track.volume} onClick={(e) => e.stopPropagation()} onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} className="w-full h-1 bg-zinc-600 rounded-lg appearance-none cursor-pointer" />
@@ -564,7 +568,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                         const bufferDuration = getBufferDuration(clip.bufferKey);
                         const isLooping = clip.duration > (bufferDuration - clip.offset);
 
-                        // Calculate repeats for looping visual
                         const repeatCount = Math.ceil(clip.duration / bufferDuration);
                         const waveformWidth = bufferDuration * zoom;
 
@@ -591,7 +594,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     {tool === ToolMode.SPLIT && <Scissors size={10} className="text-white" />}
                                 </div>
                                 
-                                {/* Waveform Repeating Container */}
                                 <div className="absolute inset-0 top-4 z-10 overflow-hidden pointer-events-none flex">
                                     <div 
                                         className="flex-shrink-0 h-full relative"
@@ -599,7 +601,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     >
                                         <Waveform bufferKey={clip.bufferKey} color="rgba(255,255,255,0.9)" />
                                     </div>
-                                    {/* Ghost Loops */}
                                     {isLooping && [...Array(repeatCount)].map((_, i) => (
                                          <div key={i} className="flex-shrink-0 h-full relative border-l border-white/30 opacity-60" style={{ width: waveformWidth }}>
                                             <Waveform bufferKey={clip.bufferKey} color="rgba(255,255,255,0.9)" />
@@ -607,9 +608,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     ))}
                                 </div>
 
-                                {/* Fade Overlays */}
                                 <svg className="absolute inset-0 pointer-events-none z-20" width="100%" height="100%" preserveAspectRatio="none">
-                                    {/* Fade In Curve */}
                                     {clip.fadeIn > 0 && (
                                         <path 
                                             d={`M 0 ${TRACK_HEIGHT-16} L ${clip.fadeIn * zoom} 0`} 
@@ -619,7 +618,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                                             className="opacity-80" 
                                         />
                                     )}
-                                    {/* Fade Out Curve */}
                                     {clip.fadeOut > 0 && (
                                         <path 
                                             d={`M ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} ${TRACK_HEIGHT-16}`} 
@@ -631,7 +629,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     )}
                                 </svg>
                                 
-                                {/* Fade Handles (Clickable) */}
                                 <div 
                                     className="absolute top-0 w-3 h-3 bg-white rounded-full shadow border border-black cursor-ew-resize z-40 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-125"
                                     style={{ left: (clip.fadeIn || 0) * zoom - 6 }}
@@ -656,7 +653,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                     })}
                 </div>
 
-                {/* Playhead */}
                 <div 
                     className="absolute top-0 bottom-0 w-px bg-red-500 z-40 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.5)]"
                     style={{ left: currentTime * zoom, height: '100%' }}
@@ -667,7 +663,6 @@ const Arranger: React.FC<ArrangerProps> = ({
              </div>
         </div>
 
-        {/* Floating Transport Control */}
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-40 flex items-center space-x-4 bg-zinc-900/90 backdrop-blur-md px-6 py-3 rounded-full border border-zinc-700 shadow-2xl">
             <button 
                 onClick={onStop}
@@ -690,7 +685,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         </div>
 
 
-        {/* Context Menu Overlay */}
         {contextMenu && (
             <div 
                 className="fixed inset-0 z-50" 
