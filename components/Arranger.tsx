@@ -452,7 +452,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                 >
                      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
                         <div 
-                            className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 pointer-events-auto group ${project.isLooping ? 'opacity-100' : 'opacity-0'}`}
+                            className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 group ${project.isLooping ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
                             style={{ left: project.loopStart * zoom, width: Math.max(1, (project.loopEnd - project.loopStart) * zoom) }}
                         >
                              <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => handleLoopPointerDown(e, 'move')} />

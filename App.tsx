@@ -114,8 +114,44 @@ const App: React.FC = () => {
       setFuture(newFuture);
   };
 
+  // Logic to handle Play/Pause toggle cleanly
+  const togglePlay = useCallback(() => {
+      setIsPlaying(prevIsPlaying => {
+          if (isRecording) {
+            // If recording, we want to stop recording logic specifically
+             return prevIsPlaying; // Let the record toggle handle it, or we handle it here.
+             // But simpler: just toggle audio state
+          }
+          
+          if (prevIsPlaying) {
+              audio.pause();
+              return false;
+          } else {
+              // We need current time. Since this is in callback, we might need a ref or access to state.
+              // However, audio.play accepts time. 
+              // State 'currentTime' might be stale in closure if not careful, 
+              // but since we update 'isPlaying' state, we can trigger the effect to play.
+              // BETTER: Just call audio.play with current time from audio engine or state.
+              // audio.getCurrentTime() returns context time relative to start, but if stopped, we need the cursor position.
+              // The cursor position is in 'currentTime' state.
+              return true;
+          }
+      });
+  }, [isRecording]);
+
+  // Use Effect to handle actual audio play/pause when state changes from togglePlay
+  useEffect(() => {
+     if (isPlaying && !audio.isPlaying) {
+         audio.play(project.clips, project.tracks, currentTime);
+     } else if (!isPlaying && audio.isPlaying) {
+         audio.pause();
+     }
+  }, [isPlaying]);
+
+  // Global Keyboard Shortcuts
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+          // Undo/Redo
           if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
               if (e.shiftKey) {
                   redo();
@@ -123,11 +159,27 @@ const App: React.FC = () => {
                   undo();
               }
               e.preventDefault();
+              return;
+          }
+
+          // Spacebar - Play/Pause
+          if (e.code === 'Space') {
+              // Ignore if typing in an input
+              if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+                  return;
+              }
+              e.preventDefault(); // Prevent scrolling or button activation
+              
+              if (isRecording) {
+                  handleRecordToggle(); // Stop recording on space
+              } else {
+                  togglePlay();
+              }
           }
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [past, future, project]);
+  }, [past, future, project, isRecording, togglePlay]);
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
@@ -159,18 +211,13 @@ const App: React.FC = () => {
     return () => cancelAnimationFrame(rafRef.current!);
   }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks]);
 
-  const togglePlay = () => {
-    if (isRecording) {
-        handleRecordToggle();
-        return;
-    }
-    if (isPlaying) {
-      audio.pause();
-      setIsPlaying(false);
-    } else {
-      audio.play(project.clips, project.tracks, currentTime);
-      setIsPlaying(true);
-    }
+  // Wrapper for UI buttons to ensure they work alongside the effect
+  const handlePlayPauseClick = () => {
+      if (isRecording) {
+          handleRecordToggle();
+          return;
+      }
+      togglePlay();
   };
 
   const handleRecordToggle = async () => {
@@ -387,7 +434,7 @@ const App: React.FC = () => {
              project={project} 
              setProject={updateProject} 
              isPlaying={isPlaying}
-             onPlayPause={togglePlay}
+             onPlayPause={handlePlayPauseClick}
              onStop={stop}
              onRecord={handleRecordToggle}
            />
@@ -399,7 +446,7 @@ const App: React.FC = () => {
              isPlaying={isPlaying}
              isRecording={isRecording}
              recordingStartTime={recordingStartTime}
-             onPlayPause={togglePlay}
+             onPlayPause={handlePlayPauseClick}
              onStop={stop}
              onRecord={handleRecordToggle}
              onSeek={handleSeek}
