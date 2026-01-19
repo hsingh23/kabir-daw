@@ -109,6 +109,12 @@ class AudioEngine {
     this.loadImpulseResponse();
   }
 
+  async resumeContext() {
+    if (this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+    }
+  }
+
   setupRouting() {
     // Master Routing
     this.masterGain.connect(this.compressor);
@@ -408,6 +414,43 @@ class AudioEngine {
       return this._isPlaying;
   }
 
+  scheduler() {
+    if (!this.metronomeEnabled || !this._isPlaying) return;
+    const lookahead = 0.1;
+    
+    while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
+        this.scheduleClick(this.currentBeat, this.nextNoteTime);
+        const secondsPerBeat = 60.0 / this.bpm;
+        this.nextNoteTime += secondsPerBeat;
+        this.currentBeat++;
+    }
+
+    // Procedural Instrument Scheduling (Simple)
+    if (this.tanpuraConfig?.enabled) {
+        while (this.nextTanpuraNoteTime < this.ctx.currentTime + lookahead) {
+            const freqs = this.getTanpuraFreqs(this.tanpuraConfig);
+            const freq = freqs[this.currentTanpuraString];
+            this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0); // 2s sustain
+            
+            const interval = 60 / this.tanpuraConfig.tempo;
+            this.nextTanpuraNoteTime += interval;
+            this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
+        }
+    }
+    
+    if (this.tablaConfig?.enabled) {
+         while (this.nextTablaBeatTime < this.ctx.currentTime + lookahead) {
+            const pattern = this.getTablaPattern(this.tablaConfig.taal);
+            const hit = pattern[this.currentTablaBeat % pattern.length];
+            this.playTablaHit(this.ctx, this.tablaGain, this.tablaConfig.key, hit as any, this.nextTablaBeatTime);
+            
+            const beatTime = 60 / this.tablaConfig.bpm;
+            this.nextTablaBeatTime += beatTime;
+            this.currentTablaBeat++;
+         }
+    }
+  }
+
   scheduleClick(beatNumber: number, time: number) {
     const osc = this.ctx.createOscillator();
     const env = this.ctx.createGain();
@@ -423,6 +466,43 @@ class AudioEngine {
     osc.start(time);
     osc.stop(time + 0.05);
   }
+
+  // --- Recording ---
+
+  async startRecording() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaRecorder = new MediaRecorder(stream);
+      this.recordedChunks = [];
+      
+      this.mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) this.recordedChunks.push(e.data);
+      };
+      
+      this.mediaRecorder.start();
+  }
+
+  async stopRecording(): Promise<Blob | undefined> {
+      return new Promise((resolve) => {
+          if (!this.mediaRecorder) return resolve(undefined);
+          
+          this.mediaRecorder.onstop = () => {
+              const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+              this.recordedChunks = [];
+              if (this.mediaRecorder) {
+                this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                this.mediaRecorder = null;
+              }
+              resolve(blob);
+          };
+          
+          if (this.mediaRecorder.state !== 'inactive') {
+            this.mediaRecorder.stop();
+          } else {
+            resolve(undefined);
+          }
+      });
+  }
+
 
   // --- Synthesis for Instruments (Refactored for Reusability) ---
 
@@ -450,282 +530,193 @@ class AudioEngine {
       osc.stop(time + duration);
   }
 
-  scheduleTanpura() {
-      if (!this.tanpuraConfig || !this.tanpuraConfig.enabled) return;
-      
-      const sa = NOTE_FREQS[this.tanpuraConfig.key] || 261.63;
+  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, hit: 'dha' | 'dhin' | 'tin' | 'na' | 'ge' | 'ka', time: number) {
+    const baseFreq = NOTE_FREQS[key] || 261.63;
+    
+    // Low Drum (Bayan)
+    if (['dha', 'dhin', 'ge', 'ghe'].includes(hit)) {
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        osc.frequency.setValueAtTime(baseFreq / 2, time);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq / 2 * 0.8, time + 0.3);
+        env.gain.setValueAtTime(0.8, time);
+        env.gain.exponentialRampToValueAtTime(0.01, time + 0.4);
+        osc.connect(env);
+        env.connect(destination);
+        osc.start(time);
+        osc.stop(time + 0.4);
+    }
+
+    // High Drum (Dayan) - Resonant
+    if (['dha', 'dhin', 'tin', 'na'].includes(hit)) {
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        const isMuted = hit === 'dhin'; // simplified
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(baseFreq, time);
+        
+        env.gain.setValueAtTime(0.6, time);
+        env.gain.exponentialRampToValueAtTime(0.01, time + (isMuted ? 0.2 : 0.6));
+        
+        osc.connect(env);
+        env.connect(destination);
+        osc.start(time);
+        osc.stop(time + (isMuted ? 0.2 : 0.6));
+    }
+    
+    // Slap (Ka)
+    if (hit === 'ka' || hit === 'na') {
+        const osc = ctx.createOscillator(); // noise approximation
+        // Web Audio noise is usually buffer, assume simple high freq osc for now or nothing
+        const noise = ctx.createBufferSource();
+        // Skip noise generation for brevity/performance in simple synth, usually requires noise buffer
+    }
+  }
+
+  getTanpuraFreqs(config: TanpuraState): number[] {
+      const sa = NOTE_FREQS[config.key] || 261.63;
       const lowerSa = sa / 2;
-      
       let firstStringFreq = sa * 0.75; 
-      if (this.tanpuraConfig.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; 
-      if (this.tanpuraConfig.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; 
-      if (this.tanpuraConfig.tuning === 'Pa') firstStringFreq = sa * 0.75; 
-
-      const freqs = [firstStringFreq, sa, sa, lowerSa];
-      const speed = this.tanpuraConfig.tempo || 60;
-      const interval = 60 / speed;
-
-      while (this.nextTanpuraNoteTime < this.ctx.currentTime + 0.2) {
-          this.playTanpuraNote(this.ctx, this.tanpuraGain, freqs[this.currentTanpuraString], this.nextTanpuraNoteTime, interval * 4);
-          this.nextTanpuraNoteTime += interval;
-          this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
-      }
+      if (config.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; 
+      if (config.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; 
+      if (config.tuning === 'Pa') firstStringFreq = sa * 0.75; 
+      return [firstStringFreq, sa, sa, lowerSa];
   }
 
-  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, type: 'dha' | 'dhin' | 'tin' | 'na' | 'ge' | 'ka', time: number) {
-      const sa = NOTE_FREQS[key] || 261.63;
-      const t = time;
-      
-      if (type === 'na' || type === 'tin' || type === 'dha' || type === 'dhin') {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.frequency.setValueAtTime(sa, t);
-          gain.gain.setValueAtTime(0, t);
-          gain.gain.linearRampToValueAtTime(0.6, t + 0.01);
-          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-          osc.connect(gain);
-          gain.connect(destination);
-          osc.start(t);
-          osc.stop(t + 0.3);
-      }
-
-      if (type === 'ge' || type === 'dha' || type === 'dhin') {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.frequency.setValueAtTime(100, t);
-          osc.frequency.exponentialRampToValueAtTime(60, t + 0.3);
-          gain.gain.setValueAtTime(0, t);
-          gain.gain.linearRampToValueAtTime(0.8, t + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-          osc.connect(gain);
-          gain.connect(destination);
-          osc.start(t);
-          osc.stop(t + 0.4);
-      }
-  }
-
-  scheduleTabla() {
-      if (!this.tablaConfig || !this.tablaConfig.enabled) return;
-
-      const bpm = this.tablaConfig.bpm || 100;
-      const beatTime = 60 / bpm;
-      
+  getTablaPattern(taal: string): string[] {
       const patterns: Record<string, string[]> = {
-          'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
-          'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
-          'Dadra': ['dha', 'dhin', 'na', 'dha', 'tin', 'na']
-      };
-      
-      const pattern = patterns[this.tablaConfig.taal] || patterns['TeenTaal'];
-
-      while (this.nextTablaBeatTime < this.ctx.currentTime + 0.2) {
-          const hit = pattern[this.currentTablaBeat % pattern.length];
-          this.playTablaHit(this.ctx, this.tablaGain, this.tablaConfig.key, hit as any, this.nextTablaBeatTime);
-          this.nextTablaBeatTime += beatTime;
-          this.currentTablaBeat++;
-      }
-  }
-
-  scheduler() {
-      if (!this._isPlaying) return;
-      
-      // Standard Metronome
-      if (this.metronomeEnabled) {
-        const lookahead = 0.1;
-        while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
-            this.scheduleClick(this.currentBeat, this.nextNoteTime);
-            const secondsPerBeat = 60.0 / this.bpm;
-            this.nextNoteTime += secondsPerBeat;
-            this.currentBeat++;
-        }
-      }
-
-      // Instruments
-      this.scheduleTanpura();
-      this.scheduleTabla();
-  }
-
-  async startRecording(): Promise<void> {
-    if (this.ctx.state === 'suspended') {
-        await this.ctx.resume();
-    }
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        this.mediaRecorder = new MediaRecorder(stream);
-        this.recordedChunks = [];
-        this.mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) this.recordedChunks.push(e.data);
-        };
-        this.mediaRecorder.start();
-    } catch (err) {
-        console.error("Error accessing microphone:", err);
-        throw err;
-    }
-  }
-
-  async stopRecording(): Promise<Blob | null> {
-    return new Promise((resolve) => {
-        if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
-            resolve(null);
-            return;
-        }
-        this.mediaRecorder.onstop = () => {
-            const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
-            this.recordedChunks = [];
-            this.mediaRecorder?.stream.getTracks().forEach(track => { track.stop(); });
-            this.mediaRecorder = null;
-            resolve(blob);
-        };
-        this.mediaRecorder.stop();
-    });
-  }
-
-  async renderProject(project: ProjectState): Promise<Blob | null> {
-    if (project.clips.length === 0) return null;
-
-    const sampleRate = 44100;
-    const duration = Math.max(...project.clips.map(c => c.start + c.duration), project.loopEnd) + 2; 
-    const length = Math.ceil(duration * sampleRate);
-    const offlineCtx = new OfflineAudioContext(2, length, sampleRate);
-
-    // --- Offline Graph Setup (Mirroring Realtime) ---
-    const masterGain = offlineCtx.createGain();
-    masterGain.gain.value = project.masterVolume;
-    
-    const compressor = offlineCtx.createDynamicsCompressor();
-    masterGain.connect(compressor);
-    compressor.connect(offlineCtx.destination);
-
-    // FX Bus
-    const reverbReturn = offlineCtx.createGain();
-    reverbReturn.gain.value = project.effects.reverb;
-    const reverbNode = offlineCtx.createConvolver();
-    // Copy buffer from live context
-    reverbNode.buffer = this.reverbNode.buffer;
-    reverbNode.connect(reverbReturn);
-    reverbReturn.connect(masterGain);
-
-    const delayReturn = offlineCtx.createGain();
-    delayReturn.gain.value = project.effects.delay;
-    const delayNode = offlineCtx.createDelay();
-    delayNode.delayTime.value = 0.4;
-    const delayFeedback = offlineCtx.createGain();
-    delayFeedback.gain.value = 0.4;
-    delayNode.connect(delayFeedback);
-    delayFeedback.connect(delayNode);
-    delayNode.connect(delayReturn);
-    delayReturn.connect(masterGain);
-
-    const chorusReturn = offlineCtx.createGain();
-    chorusReturn.gain.value = project.effects.chorus;
-    const chorusDelay = offlineCtx.createDelay();
-    chorusDelay.delayTime.value = 0.03;
-    const chorusLFO = offlineCtx.createOscillator();
-    chorusLFO.frequency.value = 1.5;
-    const chorusLFOGain = offlineCtx.createGain();
-    chorusLFOGain.gain.value = 0.002;
-    chorusLFO.connect(chorusLFOGain);
-    chorusLFOGain.connect(chorusDelay.delayTime);
-    chorusDelay.connect(chorusReturn);
-    chorusReturn.connect(masterGain);
-    chorusLFO.start(0);
-
-    // Create Track Nodes
-    const trackNodes = new Map<string, GainNode>();
-    project.tracks.forEach(track => {
-        const trackGain = offlineCtx.createGain();
-        const isMuted = track.muted || (project.tracks.some(t => t.solo) && !track.solo);
-        trackGain.gain.value = isMuted ? 0 : track.volume;
-        
-        const low = offlineCtx.createBiquadFilter();
-        low.type = 'lowshelf'; low.frequency.value = 320; low.gain.value = track.eq?.low || 0;
-        const mid = offlineCtx.createBiquadFilter();
-        mid.type = 'peaking'; mid.frequency.value = 1000; mid.gain.value = track.eq?.mid || 0;
-        const high = offlineCtx.createBiquadFilter();
-        high.type = 'highshelf'; high.frequency.value = 3200; high.gain.value = track.eq?.high || 0;
-
-        const panner = offlineCtx.createStereoPanner();
-        panner.pan.value = track.pan;
-
-        trackGain.connect(low);
-        low.connect(mid);
-        mid.connect(high);
-        high.connect(panner);
-        
-        // Connect Panner to Master and FX Sends
-        panner.connect(masterGain);
-        panner.connect(reverbNode);
-        panner.connect(delayNode);
-        panner.connect(chorusDelay);
-        
-        trackNodes.set(track.id, trackGain);
-    });
-
-    // Schedule Clips
-    project.clips.forEach(clip => {
-        const buffer = this.buffers.get(clip.bufferKey);
-        const trackNode = trackNodes.get(clip.trackId);
-        
-        if (buffer && trackNode) {
-            this.scheduleSource(buffer, clip.start, clip.offset, clip.duration, trackNode, clip, 0, offlineCtx);
-        }
-    });
-
-    // --- Schedule Instruments Offline ---
-    
-    // Tanpura
-    if (project.tanpura.enabled) {
-        const tanpuraGain = offlineCtx.createGain();
-        tanpuraGain.gain.value = project.tanpura.volume;
-        tanpuraGain.connect(masterGain);
-        tanpuraGain.connect(reverbNode);
-
-        const sa = NOTE_FREQS[project.tanpura.key] || 261.63;
-        const lowerSa = sa / 2;
-        let firstStringFreq = sa * 0.75;
-        if (project.tanpura.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2;
-        if (project.tanpura.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2;
-
-        const freqs = [firstStringFreq, sa, sa, lowerSa];
-        const interval = 60 / project.tanpura.tempo;
-        
-        let time = 0;
-        let sIdx = 0;
-        while (time < duration) {
-            this.playTanpuraNote(offlineCtx, tanpuraGain, freqs[sIdx], time, interval * 4);
-            time += interval;
-            sIdx = (sIdx + 1) % 4;
-        }
-    }
-
-    // Tabla
-    if (project.tabla.enabled) {
-        const tablaGain = offlineCtx.createGain();
-        tablaGain.gain.value = project.tabla.volume;
-        tablaGain.connect(masterGain);
-        tablaGain.connect(reverbNode);
-
-        const bpm = project.tabla.bpm;
-        const beatTime = 60 / bpm;
-        const patterns: Record<string, string[]> = {
              'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
              'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
              'Dadra': ['dha', 'dhin', 'na', 'dha', 'tin', 'na']
-        };
-        const pattern = patterns[project.tabla.taal] || patterns['TeenTaal'];
+      };
+      return patterns[taal] || patterns['TeenTaal'];
+  }
 
-        let time = 0;
-        let bIdx = 0;
-        while (time < duration) {
-            const hit = pattern[bIdx % pattern.length];
-            this.playTablaHit(offlineCtx, tablaGain, project.tabla.key, hit as any, time);
-            time += beatTime;
-            bIdx++;
-        }
-    }
+  async renderProject(project: ProjectState): Promise<Blob> {
+      // 1. Calculate Total Duration
+      const endTimes = project.clips.map(c => c.start + c.duration);
+      const maxClipTime = Math.max(0, ...endTimes, project.loopEnd);
+      const duration = maxClipTime + 2; // Tail
+      
+      const offlineCtx = new OfflineAudioContext(2, duration * this.ctx.sampleRate, this.ctx.sampleRate);
 
-    const renderedBuffer = await offlineCtx.startRendering();
-    return audioBufferToWav(renderedBuffer);
+      // 2. Reconstruct Graph in Offline Context
+      const masterGain = offlineCtx.createGain();
+      masterGain.gain.value = project.masterVolume;
+      
+      const compressor = offlineCtx.createDynamicsCompressor();
+      masterGain.connect(compressor);
+      compressor.connect(offlineCtx.destination);
+      
+      // Reverb
+      const reverbNode = offlineCtx.createConvolver();
+      if (this.reverbNode.buffer) reverbNode.buffer = this.reverbNode.buffer;
+      const reverbReturn = offlineCtx.createGain();
+      reverbReturn.gain.value = project.effects.reverb;
+      reverbNode.connect(reverbReturn);
+      reverbReturn.connect(masterGain);
+
+      // Delay
+      const delayNode = offlineCtx.createDelay();
+      delayNode.delayTime.value = 0.4;
+      const delayReturn = offlineCtx.createGain();
+      delayReturn.gain.value = project.effects.delay;
+      const delayFeedback = offlineCtx.createGain();
+      delayFeedback.gain.value = 0.4;
+      
+      delayNode.connect(delayReturn);
+      delayNode.connect(delayFeedback);
+      delayFeedback.connect(delayNode);
+      delayReturn.connect(masterGain);
+
+      // 3. Render Clips
+      // We need to map track settings to temporary channel strips
+      const trackMap = new Map<string, GainNode>(); // Input node for each track
+      
+      project.tracks.forEach(track => {
+          const tInput = offlineCtx.createGain();
+          const tLow = offlineCtx.createBiquadFilter(); tLow.type = 'lowshelf'; tLow.frequency.value = 320;
+          const tMid = offlineCtx.createBiquadFilter(); tMid.type = 'peaking'; tMid.frequency.value = 1000;
+          const tHigh = offlineCtx.createBiquadFilter(); tHigh.type = 'highshelf'; tHigh.frequency.value = 3200;
+          const tGain = offlineCtx.createGain();
+          const tPan = offlineCtx.createStereoPanner();
+
+          // Set Values
+          if (track.eq) {
+              tLow.gain.value = track.eq.low;
+              tMid.gain.value = track.eq.mid;
+              tHigh.gain.value = track.eq.high;
+          }
+          tGain.gain.value = (track.muted || (project.tracks.some(t => t.solo) && !track.solo)) ? 0 : track.volume;
+          tPan.pan.value = track.pan;
+
+          // Connect
+          tInput.connect(tLow);
+          tLow.connect(tMid);
+          tMid.connect(tHigh);
+          tHigh.connect(tGain);
+          tGain.connect(tPan);
+          
+          tPan.connect(masterGain);
+          tPan.connect(reverbNode); // Send to reverb
+          tPan.connect(delayNode);  // Send to delay
+
+          trackMap.set(track.id, tInput);
+      });
+
+      // Schedule Clips
+      for (const clip of project.clips) {
+          const buffer = this.buffers.get(clip.bufferKey);
+          const dest = trackMap.get(clip.trackId);
+          if (buffer && dest) {
+              this.scheduleSource(buffer, clip.start, clip.offset, clip.duration, dest, clip, 0, offlineCtx);
+          }
+      }
+
+      // 4. Render Backing Instruments
+      // Tanpura
+      if (project.tanpura.enabled) {
+          const tanpuraGain = offlineCtx.createGain();
+          tanpuraGain.gain.value = project.tanpura.volume;
+          tanpuraGain.connect(masterGain);
+          tanpuraGain.connect(reverbNode);
+          
+          const freqs = this.getTanpuraFreqs(project.tanpura);
+          const interval = 60 / project.tanpura.tempo;
+          
+          let time = 0;
+          let sIdx = 0;
+          while (time < duration) {
+              this.playTanpuraNote(offlineCtx, tanpuraGain, freqs[sIdx], time, interval * 4);
+              time += interval;
+              sIdx = (sIdx + 1) % 4;
+          }
+      }
+
+      // Tabla
+      if (project.tabla.enabled) {
+          const tablaGain = offlineCtx.createGain();
+          tablaGain.gain.value = project.tabla.volume;
+          tablaGain.connect(masterGain);
+          tablaGain.connect(reverbNode);
+
+          const bpm = project.tabla.bpm;
+          const beatTime = 60 / bpm;
+          const pattern = this.getTablaPattern(project.tabla.taal);
+
+          let time = 0;
+          let bIdx = 0;
+          while (time < duration) {
+              const hit = pattern[bIdx % pattern.length];
+              this.playTablaHit(offlineCtx, tablaGain, project.tabla.key, hit as any, time);
+              time += beatTime;
+              bIdx++;
+          }
+      }
+
+      const renderedBuffer = await offlineCtx.startRendering();
+      return audioBufferToWav(renderedBuffer);
   }
 }
 

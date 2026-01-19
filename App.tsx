@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectState, Track, Clip } from './types';
 import Mixer from './components/Mixer';
@@ -290,6 +291,9 @@ const App: React.FC = () => {
   }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks]);
 
   const handlePlayPauseClick = useCallback(() => {
+      // Must resume context inside the event handler for iOS
+      audio.resumeContext();
+      
       if (isRecording) {
           handleRecordToggle();
           return;

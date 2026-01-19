@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { getAllAssetKeys, deleteAudioBlob, getAudioBlob } from '../services/db';
 import { Trash2, Play, AlertCircle, FileAudio } from 'lucide-react';
@@ -31,6 +32,8 @@ const Library: React.FC = () => {
   };
 
   const handlePreview = async (key: string) => {
+    audio.resumeContext(); // Unlock audio context for iOS
+    
     if (previewing === key) {
         audio.stop();
         setPreviewing(null);
