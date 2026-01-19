@@ -20,6 +20,11 @@ export interface Track {
   solo: boolean;
   color: string;
   icon?: string; // 'piano', 'drums', 'guitar', 'mic'
+  eq: {
+    low: number; // Gain in dB (-12 to 12)
+    mid: number; // Gain in dB
+    high: number; // Gain in dB
+  };
 }
 
 export interface ProjectState {

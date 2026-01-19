@@ -67,3 +67,14 @@ export const saveProject = async (project: any): Promise<void> => {
     req.onerror = () => reject(req.error);
   });
 };
+
+export const getProject = async (id: string): Promise<any> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, 'readonly');
+    const store = tx.objectStore(PROJECT_STORE);
+    const req = store.get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+};

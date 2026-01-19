@@ -2,18 +2,19 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectState, Track, Clip } from './types';
 import Mixer from './components/Mixer';
 import Arranger from './components/Arranger';
+import TrackInspector from './components/TrackInspector';
 import { audio } from './services/audio';
-import { saveAudioBlob } from './services/db';
+import { saveAudioBlob, saveProject, getProject } from './services/db';
 import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2 } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
   bpm: 120,
   tracks: [
-    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444' },
-    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6' },
-    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7' },
-    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308' },
+    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 } },
+    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6', eq: { low: 0, mid: 0, high: 0 } },
+    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7', eq: { low: 0, mid: 0, high: 0 } },
+    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 } },
   ],
   clips: [],
   loopStart: 0,
@@ -26,8 +27,6 @@ const INITIAL_PROJECT: ProjectState = {
 
 const App: React.FC = () => {
   const [view, setView] = useState<'mixer' | 'arranger'>('mixer');
-  
-  // Undo/Redo Stacks
   const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
   const [past, setPast] = useState<ProjectState[]>([]);
   const [future, setFuture] = useState<ProjectState[]>([]);
@@ -36,24 +35,68 @@ const App: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStartTime, setRecordingStartTime] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [zoom, setZoom] = useState(50); // pixels per second
+  const [zoom, setZoom] = useState(50); 
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>('1');
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  
+  // Track Inspector Modal
+  const [inspectorTrackId, setInspectorTrackId] = useState<string | null>(null);
 
   const rafRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
 
-  // Wrapper for state updates that records history
+  // Load Project on Mount
+  useEffect(() => {
+      const load = async () => {
+          const saved = await getProject('default-project');
+          if (saved) {
+              // Ensure old saves have new properties like eq
+              const migrated = {
+                  ...saved,
+                  tracks: saved.tracks.map((t: any) => ({
+                      ...t,
+                      eq: t.eq || { low: 0, mid: 0, high: 0 }
+                  }))
+              };
+              setProject(migrated);
+              // Also load audio into buffers for clips
+              for (const clip of migrated.clips) {
+                  const blob = await import('./services/db').then(m => m.getAudioBlob(clip.bufferKey));
+                  if (blob) {
+                      await audio.loadAudio(clip.bufferKey, blob);
+                  }
+              }
+          }
+      };
+      load();
+  }, []);
+
+  // Auto-Save Project
+  useEffect(() => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+          saveProject(project);
+      }, 2000) as unknown as number; // Auto-save after 2 seconds of inactivity
+  }, [project]);
+
   const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
       setProject(current => {
           const next = typeof value === 'function' ? (value as Function)(current) : value;
           if (next !== current) {
-              setPast(prev => [...prev.slice(-19), current]); // Keep last 20
+              setPast(prev => [...prev.slice(-19), current]);
               setFuture([]);
           }
           return next;
       });
   }, []);
+
+  const updateTrack = (id: string, updates: Partial<Track>) => {
+      updateProject(prev => ({
+          ...prev,
+          tracks: prev.tracks.map(t => t.id === id ? { ...t, ...updates } : t)
+      }));
+  };
 
   const undo = () => {
       if (past.length === 0) return;
@@ -91,19 +134,14 @@ const App: React.FC = () => {
       return () => window.removeEventListener('keydown', handleKeyDown);
   }, [past, future, project]);
 
-
-  // Audio Engine Sync: Tracks
+  // Audio Engine Sync
   useEffect(() => {
     audio.syncTracks(project.tracks);
-  }, [project.tracks]);
-
-  // Audio Engine Sync: Global & Metronome
-  useEffect(() => {
     audio.setMasterVolume(project.masterVolume);
     audio.setDelayLevel(project.effects.delay);
     audio.bpm = project.bpm;
     audio.metronomeEnabled = project.metronomeOn;
-  }, [project.masterVolume, project.effects, project.bpm, project.metronomeOn]);
+  }, [project]);
 
   // Playback Loop
   useEffect(() => {
@@ -133,7 +171,6 @@ const App: React.FC = () => {
         handleRecordToggle();
         return;
     }
-
     if (isPlaying) {
       audio.pause();
       setIsPlaying(false);
@@ -178,7 +215,6 @@ const App: React.FC = () => {
             alert("Select a track to record on first.");
             return;
         }
-        
         try {
             await audio.startRecording();
             const startTime = currentTime;
@@ -201,29 +237,6 @@ const App: React.FC = () => {
     setIsPlaying(false);
     setCurrentTime(project.isLooping ? project.loopStart : 0);
   };
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      }
-      
-      if ((e.code === 'Delete' || e.code === 'Backspace') && selectedClipId) {
-        e.preventDefault();
-        updateProject(prev => ({
-          ...prev,
-          clips: prev.clips.filter(c => c.id !== selectedClipId)
-        }));
-        setSelectedClipId(null);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, isRecording, selectedClipId, project]);
 
   const handleSeek = (time: number) => {
     if (isRecording) return;
@@ -272,7 +285,7 @@ const App: React.FC = () => {
     const clipA: Clip = {
         ...clip,
         duration: splitOffset,
-        fadeOut: 0.05 // Tiny default fade out to avoid clicks
+        fadeOut: 0.05 
     };
 
     const clipB: Clip = {
@@ -282,7 +295,7 @@ const App: React.FC = () => {
         offset: clip.offset + splitOffset,
         duration: clip.duration - splitOffset,
         name: clip.name + ' (cut)',
-        fadeIn: 0.05 // Tiny default fade in
+        fadeIn: 0.05
     };
 
     updateProject(prev => ({
@@ -300,7 +313,8 @@ const App: React.FC = () => {
           pan: 0,
           muted: false,
           solo: false,
-          color: `hsl(${Math.random() * 360}, 70%, 50%)`
+          color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+          eq: { low: 0, mid: 0, high: 0 }
       };
       updateProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       setSelectedTrackId(newTrack.id);
@@ -313,20 +327,11 @@ const App: React.FC = () => {
       <div className="h-12 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-4 z-50">
         <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">PocketStudio</h1>
         
-        {/* Undo/Redo Controls */}
         <div className="flex space-x-2">
-            <button 
-                onClick={undo} 
-                disabled={past.length === 0}
-                className={`p-1 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}
-            >
+            <button onClick={undo} disabled={past.length === 0} className={`p-1 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
                 <Undo2 size={18} />
             </button>
-            <button 
-                onClick={redo} 
-                disabled={future.length === 0}
-                className={`p-1 rounded ${future.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}
-            >
+            <button onClick={redo} disabled={future.length === 0} className={`p-1 rounded ${future.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
                 <Redo2 size={18} />
             </button>
         </div>
@@ -371,43 +376,40 @@ const App: React.FC = () => {
              onSelectTrack={setSelectedTrackId}
              selectedClipId={selectedClipId}
              onSelectClip={setSelectedClipId}
+             onOpenInspector={setInspectorTrackId}
            />
+        )}
+
+        {/* Track Inspector Modal */}
+        {inspectorTrackId && (
+            <TrackInspector 
+                track={project.tracks.find(t => t.id === inspectorTrackId)!} 
+                updateTrack={updateTrack}
+                onClose={() => setInspectorTrackId(null)}
+            />
         )}
       </div>
 
-      {/* Recording Indicator Overlay */}
       {isRecording && (
           <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-red-600 text-white px-4 py-1 rounded-full animate-pulse shadow-lg z-50 pointer-events-none font-bold text-xs tracking-wider">
               RECORDING
           </div>
       )}
 
-      {/* Bottom Navigation */}
       <div className="h-16 bg-studio-panel border-t border-zinc-800 flex items-center justify-around z-50 pb-safe">
-        <button 
-            onClick={() => setView('mixer')}
-            className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'mixer' ? 'text-studio-accent' : 'text-zinc-500'}`}
-        >
+        <button onClick={() => setView('mixer')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'mixer' ? 'text-studio-accent' : 'text-zinc-500'}`}>
             <Mic size={24} />
             <span className="text-[10px] font-medium">Studio</span>
         </button>
-        
-        <button 
-            onClick={() => setView('arranger')}
-            className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'arranger' ? 'text-studio-accent' : 'text-zinc-500'}`}
-        >
+        <button onClick={() => setView('arranger')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'arranger' ? 'text-studio-accent' : 'text-zinc-500'}`}>
             <LayoutGrid size={24} />
             <span className="text-[10px] font-medium">Arranger</span>
         </button>
-
-        <button 
-            className="flex flex-col items-center space-y-1 text-zinc-500 opacity-50 cursor-not-allowed"
-        >
+        <button className="flex flex-col items-center space-y-1 text-zinc-500 opacity-50 cursor-not-allowed">
             <Music size={24} />
             <span className="text-[10px] font-medium">Library</span>
         </button>
       </div>
-
     </div>
   );
 };

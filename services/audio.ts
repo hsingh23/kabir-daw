@@ -1,6 +1,15 @@
 import { Clip, Track } from '../types';
 import { getAudioBlob } from './db';
 
+interface TrackChannel {
+    input: GainNode; // Entry point for sources
+    lowFilter: BiquadFilterNode;
+    midFilter: BiquadFilterNode;
+    highFilter: BiquadFilterNode;
+    gain: GainNode; // Volume fader
+    panner: StereoPannerNode; // Pan
+}
+
 class AudioEngine {
   ctx: AudioContext;
   masterGain: GainNode;
@@ -13,8 +22,8 @@ class AudioEngine {
   buffers: Map<string, AudioBuffer> = new Map();
   activeSources: Map<string, AudioBufferSourceNode> = new Map();
   
-  // Persistent nodes for each track: ID -> { input: Gain, panner: StereoPanner }
-  trackChannels: Map<string, { gain: GainNode, panner: StereoPannerNode }> = new Map();
+  // Persistent nodes for each track: ID -> Channel Strip
+  trackChannels: Map<string, TrackChannel> = new Map();
 
   private _isPlaying: boolean = false;
   private _startTime: number = 0;
@@ -91,15 +100,43 @@ class AudioEngine {
     return audioBuffer;
   }
 
-  getTrackChannel(trackId: string) {
+  getTrackChannel(trackId: string): TrackChannel {
     if (!this.trackChannels.has(trackId)) {
-      const gain = this.ctx.createGain();
-      const panner = this.ctx.createStereoPanner();
+      // 1. Create Nodes
+      const input = this.ctx.createGain(); // Entry point
       
+      const lowFilter = this.ctx.createBiquadFilter();
+      lowFilter.type = 'lowshelf';
+      lowFilter.frequency.value = 320;
+
+      const midFilter = this.ctx.createBiquadFilter();
+      midFilter.type = 'peaking';
+      midFilter.frequency.value = 1000;
+      midFilter.Q.value = 1.0;
+
+      const highFilter = this.ctx.createBiquadFilter();
+      highFilter.type = 'highshelf';
+      highFilter.frequency.value = 3200;
+
+      const gain = this.ctx.createGain(); // Fader
+      const panner = this.ctx.createStereoPanner(); // Pan
+      
+      // 2. Connect Chain
+      input.connect(lowFilter);
+      lowFilter.connect(midFilter);
+      midFilter.connect(highFilter);
+      highFilter.connect(gain);
       gain.connect(panner);
       panner.connect(this.masterGain);
       
-      this.trackChannels.set(trackId, { gain, panner });
+      this.trackChannels.set(trackId, { 
+          input, 
+          lowFilter, 
+          midFilter, 
+          highFilter, 
+          gain, 
+          panner 
+      });
     }
     return this.trackChannels.get(trackId)!;
   }
@@ -114,8 +151,16 @@ class AudioEngine {
       const isMuted = track.muted || (soloActive && !track.solo);
       const targetVolume = isMuted ? 0 : track.volume;
 
+      // Update Gain/Pan
       channel.gain.gain.setTargetAtTime(targetVolume, currentTime, 0.02);
       channel.panner.pan.setTargetAtTime(track.pan, currentTime, 0.02);
+
+      // Update EQ
+      if (track.eq) {
+          channel.lowFilter.gain.setTargetAtTime(track.eq.low, currentTime, 0.1);
+          channel.midFilter.gain.setTargetAtTime(track.eq.mid, currentTime, 0.1);
+          channel.highFilter.gain.setTargetAtTime(track.eq.high, currentTime, 0.1);
+      }
     });
   }
 
@@ -147,16 +192,12 @@ class AudioEngine {
       const duration = clip.duration;
 
       if (when < this.ctx.currentTime) {
-         // Clip starts in the past
          const startDiff = startTime - clip.start;
          if (startDiff >= 0 && startDiff < duration) {
-            // Start midway
-            // We need to pass the *full* clip details to calculate fade curves correctly relative to the *clip* start/end
-            this.scheduleSource(buffer, this.ctx.currentTime, offset + startDiff, duration - startDiff, channel, clip, startDiff);
+            this.scheduleSource(buffer, this.ctx.currentTime, offset + startDiff, duration - startDiff, channel.input, clip, startDiff);
          }
       } else {
-         // Clip starts in the future
-         this.scheduleSource(buffer, when, offset, duration, channel, clip, 0);
+         this.scheduleSource(buffer, when, offset, duration, channel.input, clip, 0);
       }
     });
   }
@@ -166,7 +207,7 @@ class AudioEngine {
       when: number, 
       offset: number, 
       playDuration: number, 
-      channel: { gain: GainNode },
+      destination: AudioNode,
       clip: Clip,
       elapsedClipTime: number
     ) {
@@ -176,54 +217,37 @@ class AudioEngine {
     // Envelope Gain for Fades
     const envelope = this.ctx.createGain();
     source.connect(envelope);
-    envelope.connect(channel.gain);
+    envelope.connect(destination); // Connect to Track Input (Start of chain)
 
-    // Apply Fades
-    // We must calculate the gain value at 'when' (the start of *playback*), which might be mid-fade
-    
+    // Fade Logic
     const clipFadeIn = clip.fadeIn || 0;
     const clipFadeOut = clip.fadeOut || 0;
     const clipTotalDuration = clip.duration;
 
-    // 1. Initial Value
     let startGain = 1;
     if (elapsedClipTime < clipFadeIn) {
-        // We are starting inside the Fade In
         startGain = elapsedClipTime / clipFadeIn;
     } else if (elapsedClipTime > clipTotalDuration - clipFadeOut) {
-        // We are starting inside the Fade Out
         const timeRemaining = clipTotalDuration - elapsedClipTime;
         startGain = timeRemaining / clipFadeOut;
     }
     
     envelope.gain.setValueAtTime(startGain, when);
 
-    // 2. Scheduled Ramps
-    
-    // Fade In Ramp (if we haven't passed it yet)
     if (elapsedClipTime < clipFadeIn) {
-        // Ramp from current gain to 1
         const timeUntilFull = clipFadeIn - elapsedClipTime;
         envelope.gain.linearRampToValueAtTime(1, when + timeUntilFull);
     }
 
-    // Fade Out Ramp
-    // When does the fade out start relative to *playback start*?
     const timeUntilFadeOut = (clipTotalDuration - clipFadeOut) - elapsedClipTime;
-    
     if (timeUntilFadeOut > 0) {
-        // Fade out hasn't started yet relative to playback start
         envelope.gain.setValueAtTime(1, when + timeUntilFadeOut);
         envelope.gain.linearRampToValueAtTime(0, when + timeUntilFadeOut + clipFadeOut);
     } else {
-        // We are already inside fade out region (or past it), handle the ramp down from current startGain
-        // However, if we started inside fade out, startGain is already set. We just need to ramp to 0 at the end.
         const timeRemaining = playDuration;
         envelope.gain.linearRampToValueAtTime(0, when + timeRemaining);
     }
 
-
-    // Looping Logic
     if (offset + playDuration > buffer.duration) {
         source.loop = true;
         source.loopStart = 0;
