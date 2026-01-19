@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -10,6 +10,7 @@ interface ArrangerProps {
   currentTime: number;
   isPlaying: boolean;
   isRecording: boolean;
+  recordingStartTime?: number; // Added for ghost clip calculation
   onPlayPause: () => void;
   onStop: () => void;
   onRecord: () => void;
@@ -50,6 +51,7 @@ const Arranger: React.FC<ArrangerProps> = ({
     currentTime, 
     isPlaying,
     isRecording,
+    recordingStartTime = 0,
     onPlayPause,
     onStop,
     onRecord, 
@@ -80,6 +82,8 @@ const Arranger: React.FC<ArrangerProps> = ({
   const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number, pointerId: number } | null>(null);
   const [isScrubbing, setIsScrubbing] = useState<{ active: boolean, pointerId: number | null }>({ active: false, pointerId: null });
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const isLongPressRef = useRef(false);
 
   // Pinch Zoom State
   const [pinchDist, setPinchDist] = useState<number | null>(null);
@@ -92,24 +96,39 @@ const Arranger: React.FC<ArrangerProps> = ({
   const pixelsPerBeat = zoom * secondsPerBeat;
   const pixelsPerBar = pixelsPerBeat * beatsPerBar;
 
+  // Render more space if recording to allow infinite scrolling feel
   const maxTime = Math.max(
       project.loopEnd + 10,
       ...project.clips.map(c => c.start + c.duration),
+      isRecording ? currentTime + 20 : 0, 
       (window.innerWidth / zoom) * 2
   );
   const totalBars = Math.ceil(maxTime / secondsPerBar) + 2;
   const totalWidth = totalBars * pixelsPerBar;
 
+  // Grid Visualization Logic
+  const showBeats = pixelsPerBeat > 15;
+  const gridImage = showBeats 
+        ? `linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
+           linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px)`
+        : `linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px)`;
+  const gridSize = showBeats
+        ? `${pixelsPerBar}px 100%, ${pixelsPerBeat}px 100%`
+        : `${pixelsPerBar}px 100%`;
+
   // Auto-scroll during playback
   useEffect(() => {
-    if (isPlaying && scrollContainerRef.current) {
+    if ((isPlaying || isRecording) && scrollContainerRef.current) {
         const playheadX = (currentTime * zoom) + HEADER_WIDTH;
         const container = scrollContainerRef.current;
-        if (playheadX > container.scrollLeft + container.clientWidth * 0.9) {
+        // Follow playhead more strictly when recording
+        const threshold = isRecording ? 0.8 : 0.9;
+        
+        if (playheadX > container.scrollLeft + container.clientWidth * threshold) {
             container.scrollLeft = playheadX - HEADER_WIDTH - (container.clientWidth * 0.1);
         }
     }
-  }, [currentTime, isPlaying, zoom]);
+  }, [currentTime, isPlaying, isRecording, zoom]);
 
   const updateTrack = (id: string, updates: Partial<Track>) => {
     setProject(prev => ({
@@ -158,11 +177,23 @@ const Arranger: React.FC<ArrangerProps> = ({
   // --- Pointer Events for Clips ---
   const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
-    // Context Menu check
+    
+    // Right Click
     if (e.button === 2) {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
         return;
+    }
+
+    // Long Press Detection for Touch
+    if (e.pointerType === 'touch') {
+        isLongPressRef.current = false;
+        longPressTimerRef.current = window.setTimeout(() => {
+            isLongPressRef.current = true;
+            setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
+            // Cancel drag if long press triggers
+            setDragState(null);
+        }, 600);
     }
 
     onSelectTrack(clip.trackId);
@@ -196,10 +227,19 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleGlobalPointerMove = (e: React.PointerEvent) => {
+    // Clear long press if moved significantly
+    if (longPressTimerRef.current && Math.abs(e.movementX) + Math.abs(e.movementY) > 5) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+    }
+
     if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
         onSeek(calculateSeekTime(e.clientX, e.shiftKey));
         return;
     }
+
+    // Don't drag if we just triggered a long press menu
+    if (isLongPressRef.current) return;
 
     if (dragState && dragState.pointerId === e.pointerId) {
         const deltaX = (e.clientX - dragState.startX);
@@ -218,8 +258,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             // Vertical Track Moving
             if (scrollContainerRef.current) {
                 const containerRect = scrollContainerRef.current.getBoundingClientRect();
-                // 32 is roughly the ruler height. 
-                // We add scrollTop to account for vertical scrolling
                 const scrollTop = scrollContainerRef.current.scrollTop;
                 const relativeY = (e.clientY - containerRect.top) + scrollTop - 32; 
                 
@@ -292,6 +330,11 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleGlobalPointerUp = (e: React.PointerEvent) => {
+    if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+    }
+
     if (dragState && dragState.pointerId === e.pointerId) {
         setDragState(null);
         (e.target as Element).releasePointerCapture(e.pointerId);
@@ -347,7 +390,15 @@ const Arranger: React.FC<ArrangerProps> = ({
             
             <div className="w-px h-6 bg-zinc-800 shrink-0" />
 
+            {/* Metronome & Snap */}
             <div className="flex items-center space-x-2 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
+                <button 
+                    onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))} 
+                    className={`p-1 rounded transition-colors ${project.metronomeOn ? 'text-studio-accent' : 'text-zinc-500'}`}
+                >
+                    <Zap size={14} fill={project.metronomeOn ? "currentColor" : "none"} />
+                </button>
+                <div className="w-px h-4 bg-zinc-800" />
                 <Grid size={14} className="text-zinc-500" />
                 <select 
                     value={snapGrid} 
@@ -360,6 +411,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                 </select>
             </div>
 
+            {/* BPM */}
             <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
                 <Activity size={14} className="text-zinc-500" />
                 <input 
@@ -371,6 +423,7 @@ const Arranger: React.FC<ArrangerProps> = ({
             </div>
          </div>
 
+         {/* Transport & Zoom */}
          <div className="flex items-center space-x-3 shrink-0">
              <div className="text-zinc-400 font-mono flex items-center bg-black/40 px-3 py-1.5 rounded-md border border-zinc-800/50 shadow-inner">
                  <span className="text-white font-bold">{Math.floor(currentTime / secondsPerBar) + 1}</span>
@@ -393,13 +446,12 @@ const Arranger: React.FC<ArrangerProps> = ({
       <div 
         ref={scrollContainerRef}
         className="flex-1 overflow-auto bg-zinc-900 relative overscroll-contain"
-        style={{ touchAction: 'pan-x pan-y' }} // Allow native scrolling, clips handle their own touch-action
+        style={{ touchAction: 'pan-x pan-y' }} 
       >
         <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + HEADER_WIDTH }}>
            
             {/* 1. Sticky Top Ruler */}
             <div className="sticky top-0 z-40 flex h-8 bg-zinc-900 border-b border-zinc-800 shadow-sm">
-                {/* 1a. Sticky Left Corner */}
                 <div 
                     className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800 shadow-md" 
                     style={{ width: HEADER_WIDTH }}
@@ -407,7 +459,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                     <span className="text-[10px] font-bold text-zinc-600 tracking-widest">TRACKS</span>
                 </div>
 
-                {/* 1b. Ruler Timeline */}
                 <div 
                     className="relative flex-1 bg-zinc-900 cursor-pointer touch-none"
                     onPointerDown={handleRulerPointerDown}
@@ -435,16 +486,13 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             {/* 2. Tracks Container */}
             <div className="relative">
-                {/* Background Grid */}
+                {/* Background Grid - Dynamic Density */}
                 <div 
                     className="absolute inset-0 z-0 pointer-events-none" 
                     style={{
                         left: HEADER_WIDTH,
-                        backgroundImage: `
-                            linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
-                            linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px)
-                        `,
-                        backgroundSize: `${pixelsPerBar}px 100%, ${pixelsPerBeat}px 100%`
+                        backgroundImage: gridImage,
+                        backgroundSize: gridSize
                     }} 
                 />
 
@@ -485,12 +533,29 @@ const Arranger: React.FC<ArrangerProps> = ({
                                 />
                              </div>
 
-                             {/* Color Strip */}
                              <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
                         </div>
 
                         {/* Track Lane */}
                         <div className="relative flex-1 border-b border-zinc-800/30 bg-zinc-900/20">
+                            {/* Recording Ghost Clip */}
+                            {isRecording && selectedTrackId === track.id && (
+                                <div 
+                                    className="absolute rounded-lg overflow-hidden z-20 shadow-xl opacity-80 border-2 border-red-500 bg-red-900/40"
+                                    style={{
+                                        left: recordingStartTime * zoom,
+                                        width: Math.max(10, (currentTime - recordingStartTime) * zoom),
+                                        top: 4,
+                                        bottom: 4,
+                                    }}
+                                >
+                                     <div className="absolute top-2 left-2 flex items-center space-x-2">
+                                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                        <span className="text-[10px] font-bold text-red-200">Recording...</span>
+                                     </div>
+                                </div>
+                            )}
+
                             {project.clips.filter(c => c.trackId === track.id).map(clip => {
                                 const isSelected = selectedClipId === clip.id;
                                 return (
@@ -528,7 +593,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                             {clip.fadeOut > 0 && <path d={`M ${clip.duration * zoom} 100 L ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} 0 Z`} fill="black" />}
                                         </svg>
 
-                                        {/* Resize Handles (Larger hit area for touch) */}
+                                        {/* Resize Handles */}
                                         <div className={`absolute inset-y-0 left-0 w-6 -ml-3 cursor-w-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')} />
                                         <div className={`absolute inset-y-0 right-0 w-6 -mr-3 cursor-e-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')} />
                                         
@@ -548,7 +613,8 @@ const Arranger: React.FC<ArrangerProps> = ({
                     className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]"
                     style={{ left: HEADER_WIDTH + (currentTime * zoom) }}
                 >
-                    <div className="w-3 h-3 bg-red-500 rounded-full -ml-1.5 -mt-1.5 shadow-sm" />
+                    <div className="w-3 h-3 bg-red-500 rounded-full -ml-1.5 -mt-1.5 shadow-sm transform -translate-x-px" />
+                    <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-red-500 -ml-[5.5px]" />
                 </div>
             </div>
         </div>
