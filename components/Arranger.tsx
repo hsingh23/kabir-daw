@@ -1,7 +1,10 @@
+
 import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2 } from 'lucide-react';
+import Tanpura from './Tanpura';
+import Tabla from './Tabla';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -72,6 +75,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
   const [snapGrid, setSnapGrid] = useState(1); 
+  const [showBacking, setShowBacking] = useState(false);
   
   // Responsive Header Logic
   const [headerWidth, setHeaderWidth] = useState(160);
@@ -502,6 +506,14 @@ const Arranger: React.FC<ArrangerProps> = ({
          </div>
 
          <div className="flex items-center space-x-3 shrink-0">
+             <button 
+                onClick={() => setShowBacking(!showBacking)}
+                className={`flex items-center space-x-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 hover:text-white transition-colors ${showBacking ? 'border-studio-accent text-studio-accent' : ''}`}
+             >
+                <Music2 size={14} />
+                <span className="hidden md:inline font-bold">Backing</span>
+             </button>
+
              <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg p-1 border border-zinc-800">
                  <button onClick={() => setZoom(Math.max(10, zoom * 0.8))} className="p-1 text-zinc-400 hover:text-white"><ZoomOut size={14} /></button>
                  <button onClick={() => setZoom(Math.min(400, zoom * 1.2))} className="p-1 text-zinc-400 hover:text-white"><ZoomIn size={14} /></button>
@@ -517,6 +529,20 @@ const Arranger: React.FC<ArrangerProps> = ({
             </button>
          </div>
       </div>
+      
+      {/* Backing Popover */}
+      {showBacking && (
+          <div className="absolute top-14 right-4 z-50 w-80 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 flex flex-col space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
+                  <h3 className="font-bold text-sm text-zinc-200">Backing Instruments</h3>
+                  <button onClick={() => setShowBacking(false)} className="text-zinc-500 hover:text-white"><X size={16} /></button>
+              </div>
+              <div className="space-y-4 overflow-y-auto max-h-[60vh]">
+                  <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />
+                  <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />
+              </div>
+          </div>
+      )}
 
       <div 
         ref={scrollContainerRef}
