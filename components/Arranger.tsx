@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, GripVertical, Plus, Grid } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -15,10 +15,19 @@ interface ArrangerProps {
   setZoom: (z: number) => void;
   selectedTrackId: string | null;
   onSelectTrack: (id: string) => void;
+  selectedClipId: string | null;
+  onSelectClip: (id: string | null) => void;
 }
 
 const TRACK_HEIGHT = 96; // 6rem / h-24
-const HEADER_WIDTH = 192; // 12rem / w-48 (md)
+
+const SNAP_OPTIONS = [
+    { label: 'Off', value: 0 },
+    { label: '1/16', value: 0.125 }, 
+    { label: '1/8', value: 0.25 },
+    { label: '1/4', value: 0.5 },
+    { label: 'Bar', value: 2.0 },
+];
 
 const Arranger: React.FC<ArrangerProps> = ({ 
     project, 
@@ -30,18 +39,17 @@ const Arranger: React.FC<ArrangerProps> = ({
     zoom,
     setZoom,
     selectedTrackId,
-    onSelectTrack
+    onSelectTrack,
+    selectedClipId,
+    onSelectClip
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const trackHeaderContainerRef = useRef<HTMLDivElement>(null);
   const trackContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
+  const [snapGrid, setSnapGrid] = useState(0.25);
   
   // Interaction State
-  // clipId: ID of clip being interacted with
-  // mode: 'MOVE' | 'TRIM_START' | 'TRIM_END'
-  // startX: Initial mouse X
-  // startY: Initial mouse Y
-  // original: Snapshot of clip state before drag
   const [dragState, setDragState] = useState<{
       clipId: string;
       mode: 'MOVE' | 'TRIM_START' | 'TRIM_END';
@@ -62,6 +70,13 @@ const Arranger: React.FC<ArrangerProps> = ({
         }
     }
   }, [currentTime, isPlaying, zoom]);
+
+  // Sync scroll from timeline to track headers
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+      if (trackHeaderContainerRef.current) {
+          trackHeaderContainerRef.current.scrollTop = e.currentTarget.scrollTop;
+      }
+  };
 
   const updateTrack = (id: string, updates: Partial<Track>) => {
     setProject(prev => ({
@@ -86,6 +101,12 @@ const Arranger: React.FC<ArrangerProps> = ({
     onSeek(time);
   };
 
+  const handleBackgroundMouseDown = (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget || e.target === trackContainerRef.current) {
+        onSelectClip(null);
+      }
+  };
+
   const handleLoopMouseDown = (e: React.MouseEvent, type: 'start' | 'end' | 'move') => {
     e.stopPropagation();
     setLoopDrag({
@@ -98,10 +119,11 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END') => {
     e.stopPropagation();
-    e.preventDefault(); // Prevent text selection
+    e.preventDefault(); 
     onSelectTrack(clip.trackId);
+    onSelectClip(clip.id);
 
-    // Tools logic overrides standard behavior
+    // Tools logic
     if (tool === ToolMode.SPLIT && mode === 'MOVE') {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
@@ -114,6 +136,7 @@ const Arranger: React.FC<ArrangerProps> = ({
             ...prev,
             clips: prev.clips.filter(c => c.id !== clip.id)
         }));
+        onSelectClip(null);
         return;
     }
 
@@ -133,22 +156,30 @@ const Arranger: React.FC<ArrangerProps> = ({
         const bufferDuration = getBufferDuration(original.bufferKey);
         
         let updatedClip = { ...original };
+        const activeSnap = e.shiftKey ? 0 : snapGrid; // Shift disables snap
 
         if (dragState.mode === 'MOVE') {
             // Horizontal Move
             let newStart = original.start + deltaX;
             // Snap
-            const SNAP = 0.125; // 1/32th roughly at 120bpm
-            if (!e.shiftKey) { // Shift disables snap
-                newStart = Math.round(newStart / SNAP) * SNAP;
+            if (activeSnap > 0) {
+                newStart = Math.round(newStart / activeSnap) * activeSnap;
             }
             updatedClip.start = Math.max(0, newStart);
 
             // Vertical Move (Change Track)
-            // We need to calculate offset relative to trackContainer
             if (trackContainerRef.current) {
                 const rect = trackContainerRef.current.getBoundingClientRect();
-                const relativeY = e.clientY - rect.top; // + scrollContainerRef.current.scrollTop if vertical scroll exists (not yet implemented)
+                const relativeY = e.clientY - rect.top; 
+                // Add current scrollTop to calculation
+                const scrollTop = scrollContainerRef.current?.scrollTop || 0;
+                // Actually, clientY is relative to viewport. rect.top changes with scroll if parent scrolls, 
+                // but trackContainer is inside a scrollable div? 
+                // Wait, trackContainer is INSIDE the scrollable div.
+                // rect.top moves up as we scroll down.
+                // So (e.clientY - rect.top) gives the Y coordinate relative to the top of the trackContainer (0 at top of tracks)
+                // This is correct, no need to add scrollTop again.
+                
                 const trackIndex = Math.floor(relativeY / TRACK_HEIGHT);
                 
                 if (trackIndex >= 0 && trackIndex < project.tracks.length) {
@@ -157,36 +188,35 @@ const Arranger: React.FC<ArrangerProps> = ({
             }
         } 
         else if (dragState.mode === 'TRIM_START') {
-            // Dragging left edge:
-            // Moving right (positive delta): start increases, duration decreases, offset increases
-            // Moving left (negative delta): start decreases, duration increases, offset decreases
-            
-            // Limit delta so we don't go past start of file (offset) or end of clip (duration)
-            // Constraint 1: offset + delta >= 0 -> delta >= -offset
-            // Constraint 2: duration - delta >= 0.1 -> delta <= duration - 0.1
-            
+            const rawStart = original.start + deltaX;
+            let newStart = rawStart;
+            if (activeSnap > 0) {
+                newStart = Math.round(newStart / activeSnap) * activeSnap;
+            }
+            // Recalculate effective delta after snap
+            const effectiveDelta = newStart - original.start;
+
             const maxDelta = original.duration - 0.1;
             const minDelta = -original.offset;
-            const clampedDelta = Math.min(maxDelta, Math.max(minDelta, deltaX));
+            const clampedDelta = Math.min(maxDelta, Math.max(minDelta, effectiveDelta));
 
             updatedClip.start = original.start + clampedDelta;
             updatedClip.offset = original.offset + clampedDelta;
             updatedClip.duration = original.duration - clampedDelta;
         } 
         else if (dragState.mode === 'TRIM_END') {
-            // Dragging right edge:
-            // Moving right: duration increases
-            // Moving left: duration decreases
+            const rawEnd = original.start + original.duration + deltaX;
+            let newEnd = rawEnd;
+            if (activeSnap > 0) {
+                newEnd = Math.round(newEnd / activeSnap) * activeSnap;
+            }
+            const newDuration = newEnd - original.start;
             
-            // Constraint: offset + newDuration <= bufferDuration
-            // newDuration = original + delta
-            // original + delta <= bufferDuration - offset -> delta <= bufferDuration - offset - original
+            // Constrain
+            const maxDuration = bufferDuration - original.offset;
+            const minDuration = 0.1;
             
-            const maxDelta = bufferDuration - original.offset - original.duration;
-            const minDelta = -(original.duration - 0.1);
-            const clampedDelta = Math.min(maxDelta, Math.max(minDelta, deltaX));
-
-            updatedClip.duration = original.duration + clampedDelta;
+            updatedClip.duration = Math.min(maxDuration, Math.max(minDuration, newDuration));
         }
 
         setProject(prev => ({
@@ -195,7 +225,7 @@ const Arranger: React.FC<ArrangerProps> = ({
         }));
     } else if (loopDrag) {
         const deltaX = (e.clientX - loopDrag.startX) / zoom;
-        const SNAP = 0.5;
+        const SNAP = snapGrid || 0.5;
         
         let newStart = loopDrag.originalLoopStart;
         let newEnd = loopDrag.originalLoopEnd;
@@ -235,17 +265,36 @@ const Arranger: React.FC<ArrangerProps> = ({
         onMouseLeave={handleGlobalUp}
     >
       {/* Toolbar */}
-      <div className="h-10 border-b border-zinc-700 bg-studio-panel flex items-center px-4 justify-between shrink-0">
-         <div className="flex space-x-4">
+      <div className="h-10 border-b border-zinc-700 bg-studio-panel flex items-center px-4 justify-between shrink-0 z-30">
+         <div className="flex space-x-4 items-center">
+            {/* Tools */}
             <div className="flex bg-zinc-800 rounded p-1 space-x-1">
                 <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded ${tool === ToolMode.POINTER ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><MousePointer size={16} /></button>
                 <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded ${tool === ToolMode.SPLIT ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><Scissors size={16} /></button>
                 <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded ${tool === ToolMode.ERASER ? 'bg-studio-accent text-white' : 'text-zinc-400'}`}><Trash2 size={16} /></button>
             </div>
-            <div className="flex items-center space-x-2 bg-zinc-800 rounded p-1 px-2">
+            
+            {/* Snap Control */}
+            <div className="flex items-center space-x-2 bg-zinc-800 rounded px-2 h-8">
+                <Grid size={14} className="text-zinc-400" />
+                <select 
+                    value={snapGrid} 
+                    onChange={(e) => setSnapGrid(parseFloat(e.target.value))}
+                    className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium cursor-pointer"
+                >
+                    {SNAP_OPTIONS.map(opt => (
+                        <option key={opt.label} value={opt.value}>{opt.label}</option>
+                    ))}
+                </select>
+            </div>
+
+            {/* Loop Toggle */}
+            <div className="flex items-center space-x-2 bg-zinc-800 rounded p-1 px-2 h-8">
                 <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`${project.isLooping ? 'text-yellow-400' : 'text-zinc-500'}`}><Repeat size={16} /></button>
             </div>
-            <div className="flex bg-zinc-800 rounded p-1 space-x-1">
+            
+            {/* Zoom */}
+            <div className="flex bg-zinc-800 rounded p-1 space-x-1 h-8 items-center">
                 <button onClick={() => setZoom(Math.max(10, zoom - 10))} className="p-1.5 rounded text-zinc-400 hover:text-white"><ZoomOut size={16} /></button>
                 <button onClick={() => setZoom(Math.min(200, zoom + 10))} className="p-1.5 rounded text-zinc-400 hover:text-white"><ZoomIn size={16} /></button>
             </div>
@@ -254,9 +303,12 @@ const Arranger: React.FC<ArrangerProps> = ({
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Track Headers */}
-        <div className="w-36 md:w-48 bg-studio-panel border-r border-zinc-800 flex-shrink-0 z-20 shadow-xl overflow-hidden relative">
-            <div className="h-8 border-b border-zinc-800 bg-zinc-900 flex items-center justify-center text-zinc-500 font-medium">Tracks</div> 
+        {/* Track Headers (Scrolls programmatically) */}
+        <div 
+            className="w-36 md:w-48 bg-studio-panel border-r border-zinc-800 flex-shrink-0 z-20 shadow-xl overflow-hidden relative"
+            ref={trackHeaderContainerRef}
+        >
+            <div className="h-8 border-b border-zinc-800 bg-zinc-900 flex items-center justify-center text-zinc-500 font-medium sticky top-0 z-30">Tracks</div> 
             {project.tracks.map(track => (
                 <div 
                     key={track.id} 
@@ -277,17 +329,21 @@ const Arranger: React.FC<ArrangerProps> = ({
                     <div className={`absolute left-0 top-0 bottom-0 w-1 ${selectedTrackId === track.id ? 'shadow-[0_0_8px_currentColor]' : ''}`} style={{ backgroundColor: track.color, color: track.color }}></div>
                 </div>
             ))}
-            <div className="absolute bottom-0 w-full p-2 bg-studio-panel">
+            <div className="w-full p-2 bg-studio-panel">
                 <button className="w-full py-2 text-zinc-500 hover:text-zinc-300 flex items-center justify-center space-x-1 border border-dashed border-zinc-700 rounded hover:bg-zinc-800/50" onClick={() => { /* add track */ }}>
                     <Plus size={14} /> <span>Add</span>
                 </button>
             </div>
+            {/* Spacer to match timeline height if needed, but flex takes care of it usually. Adding some buffer */}
+            <div className="h-48"></div>
         </div>
 
         {/* Timeline Content */}
         <div 
             className="flex-1 overflow-x-auto overflow-y-auto relative no-scrollbar bg-zinc-900"
             ref={scrollContainerRef}
+            onScroll={handleScroll}
+            onMouseDown={handleBackgroundMouseDown}
         >
              <div className="relative min-w-full" style={{ width: `${Math.max(2000, project.loopEnd * zoom + 1000)}px` }}>
                 
@@ -319,9 +375,9 @@ const Arranger: React.FC<ArrangerProps> = ({
                     style={{ height: project.tracks.length * TRACK_HEIGHT }}
                 >
                     {/* Background Grid & Loop Region */}
-                    <div className="absolute inset-0 z-0">
+                    <div className="absolute inset-0 z-0 pointer-events-none">
                          {project.isLooping && (
-                            <div className="absolute top-0 bottom-0 bg-white/5 pointer-events-none" style={{ left: project.loopStart * zoom, width: (project.loopEnd - project.loopStart) * zoom }} />
+                            <div className="absolute top-0 bottom-0 bg-white/5" style={{ left: project.loopStart * zoom, width: (project.loopEnd - project.loopStart) * zoom }} />
                          )}
                          {/* Bar Lines */}
                          {[...Array(100)].map((_, i) => (
@@ -340,21 +396,24 @@ const Arranger: React.FC<ArrangerProps> = ({
                         
                         const track = project.tracks[trackIndex];
                         const isDragging = dragState?.clipId === clip.id;
+                        const isSelected = selectedClipId === clip.id;
                         const bufferDuration = getBufferDuration(clip.bufferKey);
-                        // Calculate waveform width: full buffer duration scaled by zoom
                         const waveformWidth = bufferDuration * zoom;
-                        // Calculate left offset: shifts the waveform left to align with offset
                         const waveformLeft = -(clip.offset * zoom);
 
                         return (
                             <div
                                 key={clip.id}
-                                className={`absolute rounded-md overflow-hidden cursor-pointer group shadow-md border border-white/10 hover:border-white/30 transition-shadow ${isDragging ? 'z-50 opacity-90 ring-2 ring-white shadow-2xl' : 'z-10'}`}
+                                className={`absolute rounded-md overflow-hidden cursor-pointer group transition-shadow ${
+                                    isDragging ? 'z-50 opacity-90 shadow-2xl' : 'z-10 shadow-md'
+                                } ${
+                                    isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-zinc-900' : 'border border-white/10 hover:border-white/30'
+                                }`}
                                 style={{
                                     left: clip.start * zoom,
                                     width: clip.duration * zoom,
-                                    top: trackIndex * TRACK_HEIGHT + 8, // +8 padding
-                                    height: TRACK_HEIGHT - 16, // padding
+                                    top: trackIndex * TRACK_HEIGHT + 8, 
+                                    height: TRACK_HEIGHT - 16,
                                     backgroundColor: track.color
                                 }}
                                 onMouseDown={(e) => handleClipMouseDown(e, clip, 'MOVE')}
@@ -376,7 +435,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     </div>
                                 </div>
 
-                                {/* Trim Handles (Only visible on hover or drag) */}
+                                {/* Trim Handles */}
                                 <div 
                                     className="absolute left-0 top-0 bottom-0 w-3 bg-black/10 hover:bg-white/30 cursor-ew-resize z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                                     onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_START')}

@@ -32,8 +32,9 @@ const App: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(50); // pixels per second
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>('1');
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
 
-  const rafRef = useRef<number>();
+  const rafRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Audio Engine Sync: Tracks
@@ -114,6 +115,7 @@ const App: React.FC = () => {
                 ...prev,
                 clips: [...prev.clips, newClip]
             }));
+            setSelectedClipId(newClip.id);
         }
     } else {
         // --- START RECORDING ---
@@ -144,6 +146,31 @@ const App: React.FC = () => {
     setIsPlaying(false);
     setCurrentTime(project.isLooping ? project.loopStart : 0);
   };
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      }
+      
+      if ((e.code === 'Delete' || e.code === 'Backspace') && selectedClipId) {
+        e.preventDefault();
+        setProject(prev => ({
+          ...prev,
+          clips: prev.clips.filter(c => c.id !== selectedClipId)
+        }));
+        setSelectedClipId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPlaying, isRecording, selectedClipId, project]); // Add dependencies
 
   const handleSeek = (time: number) => {
     if (isRecording) return; // Disable seek while recording
@@ -181,6 +208,7 @@ const App: React.FC = () => {
         ...prev,
         clips: [...prev.clips, newClip]
       }));
+      setSelectedClipId(newClip.id);
     }
   };
 
@@ -211,6 +239,7 @@ const App: React.FC = () => {
         ...prev,
         clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
     }));
+    setSelectedClipId(clipB.id);
   };
 
   const addTrack = () => {
@@ -267,6 +296,8 @@ const App: React.FC = () => {
              setZoom={setZoom}
              selectedTrackId={selectedTrackId}
              onSelectTrack={setSelectedTrackId}
+             selectedClipId={selectedClipId}
+             onSelectClip={setSelectedClipId}
            />
         )}
       </div>

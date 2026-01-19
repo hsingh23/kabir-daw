@@ -36,7 +36,7 @@ const Fader: React.FC<FaderProps> = ({ value, onChange, height = 200 }) => {
             // Rotate to make it vertical if supported, but here we keep it standard and rely on custom Thumb via CSS or absolute positioning
             // Standard vertical range input is tricky cross-browser.
             // Let's implement custom drag instead for true verticality.
-            appearance: 'slider-vertical', // Works in some browsers
+            appearance: 'slider-vertical' as any, // Works in some browsers
             width: '40px'
         }}
         // Fallback for better touch control on mobile without slider-vertical support
