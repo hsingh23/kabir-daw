@@ -1,26 +1,46 @@
 
-import React, { useEffect, useState } from 'react';
-import { getAllAssetKeys, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject } from '../services/db';
-import { Trash2, Play, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { getAllAssetsMetadata, saveAudioBlob, saveAssetMetadata, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject } from '../services/db';
+import { AssetMetadata } from '../types';
+import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Tag, Globe, Upload, Edit2, Check, X, Filter } from 'lucide-react';
 import { audio } from '../services/audio';
 
 interface LibraryProps {
   onLoadProject?: (id: string) => void;
   onCreateNewProject?: () => void;
+  onAddAsset?: (asset: AssetMetadata) => void;
   currentProjectId?: string;
 }
 
-const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, currentProjectId }) => {
-  const [activeTab, setActiveTab] = useState<'projects' | 'assets'>('projects');
-  
-  // Assets State
-  const [assetKeys, setAssetKeys] = useState<string[]>([]);
-  const [loadingAssets, setLoadingAssets] = useState(false);
-  const [previewing, setPreviewing] = useState<string | null>(null);
+const INSTRUMENTS = ['Drums', 'Bass', 'Guitar', 'Keys', 'Synth', 'Vocals', 'FX', 'Orchestral', 'Percussion', 'Other'];
+const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const TYPES = ['loop', 'oneshot', 'stem', 'song'];
 
+const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, onAddAsset, currentProjectId }) => {
+  const [activeTab, setActiveTab] = useState<'projects' | 'assets'>('assets');
+  
   // Projects State
   const [projects, setProjects] = useState<any[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+
+  // Assets State
+  const [assets, setAssets] = useState<AssetMetadata[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  
+  // Search & Filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterInstrument, setFilterInstrument] = useState('');
+  const [filterType, setFilterType] = useState('');
+
+  // Import State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [isUrlImporting, setIsUrlImporting] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+
+  // Edit Metadata State
+  const [editingAsset, setEditingAsset] = useState<AssetMetadata | null>(null);
 
   useEffect(() => {
     if (activeTab === 'assets') loadAssets();
@@ -30,8 +50,9 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
   const loadAssets = async () => {
     setLoadingAssets(true);
     try {
-      const k = await getAllAssetKeys();
-      setAssetKeys(k);
+      const metas = await getAllAssetsMetadata();
+      // Sort by date added desc
+      setAssets(metas.sort((a, b) => b.dateAdded - a.dateAdded));
     } catch (e) {
       console.error(e);
     } finally {
@@ -51,10 +72,89 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
       }
   };
 
+  // --- Actions ---
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files.length > 0) {
+          setLoadingAssets(true);
+          const files = Array.from(e.target.files);
+          
+          for (const file of files) {
+              try {
+                  const key = crypto.randomUUID();
+                  await saveAudioBlob(key, file);
+                  
+                  // Quick analyze duration (optional, expensive for many files so maybe skip or do async)
+                  // For now, save placeholder duration
+                  const meta: AssetMetadata = {
+                      id: key,
+                      name: file.name.replace(/\.[^/.]+$/, ""),
+                      type: 'oneshot',
+                      instrument: 'Other',
+                      tags: [],
+                      duration: 0,
+                      dateAdded: Date.now(),
+                      fileType: file.type
+                  };
+                  await saveAssetMetadata(meta);
+              } catch (err) {
+                  console.error(`Failed to upload ${file.name}`, err);
+              }
+          }
+          await loadAssets();
+          e.target.value = ''; // Reset input
+      }
+  };
+
+  const handleUrlImport = async () => {
+      if (!urlInput) return;
+      setIsUrlImporting(true);
+      try {
+          // Note: This relies on the URL serving CORS headers allowing the fetch
+          const response = await fetch(urlInput);
+          if (!response.ok) throw new Error('Network response was not ok');
+          const blob = await response.blob();
+          
+          const key = crypto.randomUUID();
+          await saveAudioBlob(key, blob);
+          
+          // Try to guess name from URL
+          const urlName = urlInput.split('/').pop()?.split('?')[0] || `Imported Audio`;
+          
+          const meta: AssetMetadata = {
+              id: key,
+              name: decodeURIComponent(urlName),
+              type: 'oneshot',
+              instrument: 'Other',
+              tags: ['imported'],
+              duration: 0,
+              dateAdded: Date.now(),
+              fileType: blob.type
+          };
+          await saveAssetMetadata(meta);
+          setUrlInput('');
+          setShowUrlInput(false);
+          await loadAssets();
+      } catch (err) {
+          alert('Failed to import from URL. Please ensure the URL is direct and supports CORS.');
+          console.error(err);
+      } finally {
+          setIsUrlImporting(false);
+      }
+  };
+
+  const handleSaveMetadata = async () => {
+      if (editingAsset) {
+          await saveAssetMetadata(editingAsset);
+          setAssets(prev => prev.map(a => a.id === editingAsset.id ? editingAsset : a));
+          setEditingAsset(null);
+      }
+  };
+
   const handleDeleteAsset = async (key: string) => {
-    if (confirm('Delete this audio file permanently?')) {
+    if (confirm('Delete this asset permanently?')) {
       await deleteAudioBlob(key);
-      loadAssets();
+      setAssets(prev => prev.filter(a => a.id !== key));
     }
   };
 
@@ -65,38 +165,53 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
       }
   };
 
-  const handlePreview = async (key: string) => {
+  const handlePreview = async (asset: AssetMetadata) => {
     audio.resumeContext(); 
     
-    if (previewing === key) {
+    if (previewing === asset.id) {
         audio.stop();
         setPreviewing(null);
         return;
     }
     
     try {
-        const blob = await getAudioBlob(key);
+        const blob = await getAudioBlob(asset.id);
         if (blob) {
             audio.stop(); 
-            const buffer = await audio.loadAudio(key, blob);
+            const buffer = await audio.loadAudio(asset.id, blob);
             const source = audio.ctx.createBufferSource();
             source.buffer = buffer;
             source.connect(audio.ctx.destination);
+            // Simple loop if typed as loop
+            if (asset.type === 'loop') source.loop = true;
+            
             source.start();
-            setPreviewing(key);
-            source.onended = () => setPreviewing(null);
+            setPreviewing(asset.id);
+            // Only auto-stop visual if not looping
+            if (!source.loop) {
+                source.onended = () => setPreviewing(null);
+            }
         }
     } catch (e) {
         console.error("Preview failed", e);
     }
   };
 
+  // --- Filtering ---
+  const filteredAssets = assets.filter(a => {
+      const matchSearch = a.name.toLowerCase().includes(searchQuery.toLowerCase()) || a.tags.some(t => t.includes(searchQuery.toLowerCase()));
+      const matchInst = filterInstrument ? a.instrument === filterInstrument : true;
+      const matchType = filterType ? a.type === filterType : true;
+      return matchSearch && matchInst && matchType;
+  });
+
   return (
-    <div className="flex flex-col h-full bg-studio-bg text-white p-6 overflow-hidden">
-        <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-light tracking-widest uppercase text-zinc-400">Library</h2>
+    <div className="flex flex-col h-full bg-studio-bg text-white overflow-hidden relative">
+        {/* Header Tabs */}
+        <div className="p-4 bg-studio-panel border-b border-zinc-800 flex items-center justify-between shrink-0">
+            <h2 className="text-xl font-bold tracking-tight text-zinc-100 hidden md:block">LIBRARY</h2>
             
-            <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+            <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800 mx-auto md:mx-0">
                 <button 
                     onClick={() => setActiveTab('projects')} 
                     className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-2 ${activeTab === 'projects' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -112,13 +227,13 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
             </div>
         </div>
         
+        {/* Projects Tab */}
         {activeTab === 'projects' && (
-            <div className="flex-1 overflow-y-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
-                     {/* New Project Card */}
+            <div className="flex-1 overflow-y-auto p-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
                      <button 
                         onClick={() => { if(onCreateNewProject) onCreateNewProject(); loadProjects(); }}
-                        className="bg-zinc-800/30 border border-zinc-700 border-dashed rounded-lg p-6 flex flex-col items-center justify-center space-y-2 hover:bg-zinc-800/50 hover:border-zinc-500 transition-all group"
+                        className="bg-zinc-800/30 border border-zinc-700 border-dashed rounded-lg p-6 flex flex-col items-center justify-center space-y-2 hover:bg-zinc-800/50 hover:border-zinc-500 transition-all group min-h-[140px]"
                      >
                         <div className="p-3 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
                             <Plus size={24} className="text-zinc-400 group-hover:text-white" />
@@ -128,9 +243,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
 
                      {loadingProjects ? (
                          <div className="col-span-full flex justify-center py-10 text-zinc-500">Loading projects...</div>
-                     ) : projects.length === 0 ? (
-                         null
-                     ) : (
+                     ) : projects.length === 0 ? null : (
                          projects.map(proj => (
                             <div key={proj.id} className={`bg-zinc-800/50 border rounded-lg p-4 flex flex-col justify-between group hover:bg-zinc-800 transition-colors ${currentProjectId === proj.id ? 'border-studio-accent/50 ring-1 ring-studio-accent/20' : 'border-zinc-700'}`}>
                                 <div className="flex items-start justify-between mb-4">
@@ -138,8 +251,8 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
                                         <div className="w-10 h-10 rounded bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center shrink-0 shadow-inner">
                                             <FileMusic size={20} className="text-zinc-400" />
                                         </div>
-                                        <div>
-                                            <h3 className="text-sm font-bold text-zinc-200 truncate w-32 md:w-40">{proj.id === 'default-project' ? 'Demo Project' : `Project ${proj.id.slice(0,4)}...`}</h3>
+                                        <div className="overflow-hidden">
+                                            <h3 className="text-sm font-bold text-zinc-200 truncate">{proj.id === 'default-project' ? 'Demo Project' : `Project ${proj.id.slice(0,4)}...`}</h3>
                                             <p className="text-[10px] text-zinc-500">{proj.tracks.length} Tracks • {proj.bpm} BPM</p>
                                         </div>
                                     </div>
@@ -169,49 +282,221 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, cu
             </div>
         )}
 
+        {/* Assets Tab */}
         {activeTab === 'assets' && (
-             loadingAssets ? (
-                 <div className="flex flex-col items-center justify-center flex-1 text-zinc-500">
-                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mb-2"></div>
-                     <p>Loading library...</p>
-                 </div>
-             ) : assetKeys.length === 0 ? (
-                <div className="flex flex-col items-center justify-center flex-1 text-zinc-600 space-y-4">
-                    <AlertCircle size={48} />
-                    <p>No audio assets found.</p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-20">
-                    {assetKeys.map(key => (
-                        <div key={key} className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4 flex items-center justify-between group hover:bg-zinc-800 transition-colors">
-                            <div className="flex items-center space-x-3 overflow-hidden">
-                                <div className="w-10 h-10 rounded bg-zinc-900 flex items-center justify-center shrink-0">
-                                    <FileAudio size={20} className="text-zinc-500" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                    <span className="text-xs font-mono text-zinc-400 truncate w-32 md:w-48" title={key}>{key}</span>
-                                    <span className="text-[10px] text-zinc-600">Local Audio</span>
-                                </div>
-                            </div>
+            <div className="flex flex-col flex-1 overflow-hidden">
+                {/* Search & Upload Bar */}
+                <div className="p-3 bg-zinc-900 border-b border-zinc-800 space-y-3 shrink-0">
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                            <input 
+                                type="text" 
+                                placeholder="Search loops, stems, one-shots..." 
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-md pl-8 pr-2 py-1.5 text-xs text-white focus:outline-none focus:border-zinc-500"
+                            />
+                        </div>
+                        <div className="flex gap-1">
+                            <button onClick={() => fileInputRef.current?.click()} className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 p-1.5 rounded-md" title="Upload Files">
+                                <Upload size={16} />
+                            </button>
+                            <input type="file" ref={fileInputRef} onChange={handleFileUpload} multiple accept="audio/*" className="hidden" />
                             
-                            <div className="flex items-center space-x-2">
-                                <button 
-                                    onClick={() => handlePreview(key)}
-                                    className={`p-2 rounded-full hover:bg-zinc-700 transition-colors ${previewing === key ? 'text-studio-accent' : 'text-zinc-400'}`}
+                            <button onClick={() => setShowUrlInput(!showUrlInput)} className={`border border-zinc-700 text-zinc-300 p-1.5 rounded-md ${showUrlInput ? 'bg-zinc-700 text-white' : 'bg-zinc-800 hover:bg-zinc-700'}`} title="Import from URL">
+                                <Globe size={16} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {showUrlInput && (
+                        <div className="flex gap-2 animate-in slide-in-from-top-2">
+                            <input 
+                                type="text" 
+                                placeholder="https://example.com/audio.mp3" 
+                                value={urlInput}
+                                onChange={(e) => setUrlInput(e.target.value)}
+                                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-md px-3 py-1.5 text-xs text-white focus:outline-none focus:border-zinc-500"
+                            />
+                            <button 
+                                onClick={handleUrlImport}
+                                disabled={isUrlImporting || !urlInput}
+                                className="bg-studio-accent text-white px-3 py-1.5 rounded-md text-xs font-bold disabled:opacity-50"
+                            >
+                                {isUrlImporting ? '...' : 'Import'}
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                        <select 
+                            value={filterInstrument} 
+                            onChange={(e) => setFilterInstrument(e.target.value)}
+                            className="bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] rounded px-2 py-1 outline-none"
+                        >
+                            <option value="">All Instruments</option>
+                            {INSTRUMENTS.map(i => <option key={i} value={i}>{i}</option>)}
+                        </select>
+                        <select 
+                            value={filterType} 
+                            onChange={(e) => setFilterType(e.target.value)}
+                            className="bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] rounded px-2 py-1 outline-none"
+                        >
+                            <option value="">All Types</option>
+                            {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                {/* Asset List */}
+                <div className="flex-1 overflow-y-auto p-2 pb-24">
+                    {loadingAssets ? (
+                        <div className="flex justify-center py-10 text-zinc-500 text-xs">Loading library...</div>
+                    ) : filteredAssets.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 text-zinc-600 space-y-2">
+                            <AlertCircle size={32} />
+                            <p className="text-xs">No assets found</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-1">
+                            {filteredAssets.map(asset => (
+                                <div key={asset.id} className="group bg-zinc-800/40 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md p-2 flex items-center gap-3 transition-colors">
+                                    <button 
+                                        onClick={() => handlePreview(asset)}
+                                        className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-colors ${previewing === asset.id ? 'bg-studio-accent text-white' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
+                                    >
+                                        {previewing === asset.id ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
+                                    </button>
+                                    
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold text-xs text-zinc-200 truncate">{asset.name}</span>
+                                            {asset.type === 'loop' && <span className="text-[9px] bg-blue-900/50 text-blue-300 px-1 rounded border border-blue-800">LOOP</span>}
+                                        </div>
+                                        <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-0.5">
+                                            <span>{asset.instrument}</span>
+                                            {asset.bpm && <span>• {asset.bpm} BPM</span>}
+                                            {asset.key && <span>• {asset.key}</span>}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {onAddAsset && (
+                                            <button 
+                                                onClick={() => onAddAsset(asset)}
+                                                className="p-1.5 rounded hover:bg-green-900/30 text-zinc-500 hover:text-green-400"
+                                                title="Add to Project"
+                                            >
+                                                <Plus size={14} />
+                                            </button>
+                                        )}
+                                        <button 
+                                            onClick={() => setEditingAsset(asset)}
+                                            className="p-1.5 rounded hover:bg-blue-900/30 text-zinc-500 hover:text-blue-400"
+                                            title="Edit Metadata"
+                                        >
+                                            <Edit2 size={14} />
+                                        </button>
+                                        <button 
+                                            onClick={() => handleDeleteAsset(asset.id)}
+                                            className="p-1.5 rounded hover:bg-red-900/30 text-zinc-500 hover:text-red-400"
+                                            title="Delete"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* Edit Metadata Modal */}
+        {editingAsset && (
+            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+                    <div className="px-4 py-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-800/50">
+                        <h3 className="font-bold text-zinc-200">Edit Asset</h3>
+                        <button onClick={() => setEditingAsset(null)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
+                    </div>
+                    <div className="p-4 space-y-4">
+                        <div>
+                            <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Name</label>
+                            <input 
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                value={editingAsset.name}
+                                onChange={e => setEditingAsset({...editingAsset, name: e.target.value})}
+                            />
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Instrument</label>
+                                <select 
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                    value={editingAsset.instrument}
+                                    onChange={e => setEditingAsset({...editingAsset, instrument: e.target.value})}
                                 >
-                                    <Play size={16} fill={previewing === key ? "currentColor" : "none"} />
-                                </button>
-                                <button 
-                                    onClick={() => handleDeleteAsset(key)}
-                                    className="p-2 rounded-full hover:bg-red-900/30 text-zinc-600 hover:text-red-500 transition-colors"
+                                    {INSTRUMENTS.map(i => <option key={i} value={i}>{i}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Type</label>
+                                <select 
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                    value={editingAsset.type}
+                                    onChange={e => setEditingAsset({...editingAsset, type: e.target.value as any})}
                                 >
-                                    <Trash2 size={16} />
-                                </button>
+                                    {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
                             </div>
                         </div>
-                    ))}
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">BPM</label>
+                                <input 
+                                    type="number"
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                    value={editingAsset.bpm || ''}
+                                    placeholder="Unknown"
+                                    onChange={e => setEditingAsset({...editingAsset, bpm: parseFloat(e.target.value) || undefined})}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Key</label>
+                                <select 
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                    value={editingAsset.key || ''}
+                                    onChange={e => setEditingAsset({...editingAsset, key: e.target.value})}
+                                >
+                                    <option value="">Unknown</option>
+                                    {KEYS.map(k => <option key={k} value={k}>{k}</option>)}
+                                    {KEYS.map(k => <option key={k+'m'} value={k+'m'}>{k}m</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Tags (comma separated)</label>
+                            <input 
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                value={editingAsset.tags.join(', ')}
+                                onChange={e => setEditingAsset({...editingAsset, tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})}
+                            />
+                        </div>
+                    </div>
+                    <div className="p-4 border-t border-zinc-800 bg-zinc-800/30 flex justify-end gap-2">
+                        <button onClick={() => setEditingAsset(null)} className="px-4 py-2 rounded text-xs font-bold text-zinc-400 hover:text-white">Cancel</button>
+                        <button onClick={handleSaveMetadata} className="px-4 py-2 rounded bg-studio-accent hover:bg-red-600 text-white text-xs font-bold flex items-center gap-2">
+                            <Check size={14} /> Save
+                        </button>
+                    </div>
                 </div>
-            )
+            </div>
         )}
     </div>
   );

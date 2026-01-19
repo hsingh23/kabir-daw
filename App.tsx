@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ProjectState, Track, Clip, Marker } from './types';
+import { ProjectState, Track, Clip, Marker, AssetMetadata } from './types';
 import Mixer from './components/Mixer';
 import Arranger from './components/Arranger';
 import Library from './components/Library';
 import TrackInspector from './components/TrackInspector';
 import { audio } from './services/audio';
-import { saveAudioBlob, saveProject, getProject } from './services/db';
+import { saveAudioBlob, saveProject, getProject, getAudioBlob } from './services/db';
 import { moveItem } from './services/utils';
 import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download } from 'lucide-react';
 
@@ -119,7 +119,7 @@ const App: React.FC = () => {
         
         // Load Audio Buffers concurrently
         const bufferPromises = migrated.clips.map(async (clip: Clip) => {
-            const blob = await import('./services/db').then(m => m.getAudioBlob(clip.bufferKey));
+            const blob = await getAudioBlob(clip.bufferKey);
             if (blob) {
                 await audio.loadAudio(clip.bufferKey, blob);
             }
@@ -600,6 +600,65 @@ const App: React.FC = () => {
     }
   }, [updateProject, selectedTrackId]);
 
+  // Handle adding asset from library
+  const handleAddAssetToProject = useCallback(async (asset: AssetMetadata) => {
+      try {
+          const blob = await getAudioBlob(asset.id);
+          if (!blob) {
+              alert("Audio data not found.");
+              return;
+          }
+          await audio.loadAudio(asset.id, blob);
+          const buffer = audio.buffers.get(asset.id);
+          const duration = buffer?.duration || 0;
+
+          // Determine target track
+          let targetTrackId = selectedTrackId;
+          // If the asset has a specific instrument type that matches a track name, smart place it?
+          // For now, just use selected or first.
+          if (!targetTrackId && project.tracks.length > 0) {
+              targetTrackId = project.tracks[0].id;
+          }
+          
+          // If no tracks, create one
+          if (!targetTrackId) {
+              const newTrack: Track = {
+                  id: crypto.randomUUID(),
+                  name: asset.instrument || 'Audio',
+                  volume: 0.8, pan: 0, muted: false, solo: false, color: '#4caf50',
+                  eq: {low:0, mid:0, high:0}, sends: {reverb:0, delay:0, chorus:0}
+              };
+              updateProject(p => ({...p, tracks: [...p.tracks, newTrack]}));
+              targetTrackId = newTrack.id;
+          }
+
+          const newClip: Clip = {
+              id: crypto.randomUUID(),
+              trackId: targetTrackId,
+              name: asset.name,
+              start: currentTime,
+              offset: 0,
+              duration: duration,
+              bufferKey: asset.id,
+              fadeIn: 0,
+              fadeOut: 0,
+              speed: 1
+          };
+
+          updateProject(prev => ({
+              ...prev,
+              clips: [...prev.clips, newClip]
+          }));
+          
+          setSelectedClipIds([newClip.id]);
+          setSelectedTrackId(targetTrackId);
+          setView('arranger'); // Switch to arranger to see the new clip
+          
+      } catch (e) {
+          console.error("Failed to add asset to project", e);
+      }
+  }, [selectedTrackId, project.tracks, currentTime, updateProject]);
+
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
       {/* Header */}
@@ -682,6 +741,7 @@ const App: React.FC = () => {
             <Library 
                 onLoadProject={loadProjectState} 
                 onCreateNewProject={createNewProject}
+                onAddAsset={handleAddAssetToProject}
                 currentProjectId={project.id}
             />
         )}

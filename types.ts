@@ -41,6 +41,19 @@ export interface Track {
   };
 }
 
+export interface AssetMetadata {
+  id: string; // matches the key in ASSET_STORE
+  name: string;
+  type: 'loop' | 'oneshot' | 'stem' | 'song';
+  instrument: string; // 'Drums', 'Bass', 'Synth', etc.
+  key?: string;
+  bpm?: number;
+  tags: string[];
+  duration: number;
+  dateAdded: number;
+  fileType: string;
+}
+
 export interface TanpuraState {
   enabled: boolean;
   volume: number;
