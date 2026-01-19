@@ -60,6 +60,11 @@ const Arranger: React.FC<ArrangerProps> = ({
   } | null>(null);
 
   const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number } | null>(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+
+  // Pinch Zoom State
+  const touchCache = useRef<Map<number, {clientX: number, clientY: number}>>(new Map());
+  const prevDiff = useRef<number>(-1);
 
   // --- Musical Calculations ---
   const secondsPerBeat = 60 / project.bpm;
@@ -111,20 +116,26 @@ const Arranger: React.FC<ArrangerProps> = ({
       return audio.buffers.get(key)?.duration || 10;
   };
 
-  const handleTimelineClick = (e: React.MouseEvent) => {
-    if (loopDrag || dragState) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left + (scrollContainerRef.current?.scrollLeft || 0);
+  const calculateSeekTime = (clientX: number, snap: boolean) => {
+    const rect = scrollContainerRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    const x = clientX - rect.left + (scrollContainerRef.current?.scrollLeft || 0);
     const time = Math.max(0, x / zoom);
     
-    // Optional: Snap seek to grid? For now, keep it free or use shift to snap
-    let seekTime = time;
-    if (e.shiftKey && snapGrid > 0) {
+    if (snap && snapGrid > 0) {
         const snapSeconds = snapGrid * secondsPerBeat;
-        seekTime = Math.round(time / snapSeconds) * snapSeconds;
+        return Math.round(time / snapSeconds) * snapSeconds;
     }
+    return time;
+  };
 
-    onSeek(seekTime);
+  const handleRulerMouseDown = (e: React.MouseEvent) => {
+    setIsScrubbing(true);
+    onSeek(calculateSeekTime(e.clientX, e.shiftKey));
+  };
+
+  const handleTimelineClick = (e: React.MouseEvent) => {
+     // Handled by mouse down/move for scrubbing
   };
 
   const handleBackgroundMouseDown = (e: React.MouseEvent) => {
@@ -154,7 +165,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
         const splitTime = clip.start + (clickX / zoom);
-        // Snap split?
         onSplit(clip.id, splitTime);
         return;
     }
@@ -177,6 +187,11 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleGlobalMove = (e: React.MouseEvent) => {
+    if (isScrubbing) {
+        onSeek(calculateSeekTime(e.clientX, e.shiftKey));
+        return;
+    }
+
     if (dragState) {
         const deltaX = (e.clientX - dragState.startX);
         const deltaSeconds = deltaX / zoom;
@@ -212,7 +227,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             if (activeSnapSeconds > 0) {
                 newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
             }
-            // Recalculate effective delta after snap
             const effectiveDelta = newStart - original.start;
 
             const maxDelta = original.duration - 0.1;
@@ -229,11 +243,8 @@ const Arranger: React.FC<ArrangerProps> = ({
                 newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
             }
             const newDuration = newEnd - original.start;
-            
-            // Constrain
             const maxDuration = bufferDuration - original.offset;
             const minDuration = 0.1;
-            
             updatedClip.duration = Math.min(maxDuration, Math.max(minDuration, newDuration));
         }
 
@@ -244,7 +255,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     } else if (loopDrag) {
         const deltaX = (e.clientX - loopDrag.startX);
         const deltaSeconds = deltaX / zoom;
-        // Default loop snap to Bar (4 beats) if grid is off, otherwise use grid
         const snapBeats = snapGrid === 0 ? 4 : snapGrid;
         const activeSnapSeconds = snapBeats * secondsPerBeat;
         
@@ -261,7 +271,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             newEnd = newStart + length;
         }
         
-        // Apply Snap
         newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
         newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
 
@@ -277,11 +286,55 @@ const Arranger: React.FC<ArrangerProps> = ({
   const handleGlobalUp = () => {
     setDragState(null);
     setLoopDrag(null);
+    setIsScrubbing(false);
   };
+
+  // --- Pinch Zoom Handlers ---
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    for (let i = 0; i < e.targetTouches.length; i++) {
+        touchCache.current.set(e.targetTouches[i].identifier, {
+            clientX: e.targetTouches[i].clientX,
+            clientY: e.targetTouches[i].clientY
+        });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    // If 2 touches, do pinch
+    if (e.targetTouches.length === 2) {
+        e.preventDefault(); // Prevent native scroll
+        const t1 = e.targetTouches[0];
+        const t2 = e.targetTouches[1];
+        
+        // Calculate distance
+        const dx = t1.clientX - t2.clientX;
+        const dy = t1.clientY - t2.clientY;
+        const curDiff = Math.sqrt(dx*dx + dy*dy);
+        
+        if (prevDiff.current > 0) {
+            const delta = curDiff - prevDiff.current;
+            // Sensitivity
+            const zoomFactor = delta * 0.5; 
+            setZoom(Math.min(300, Math.max(10, zoom + zoomFactor)));
+        }
+        prevDiff.current = curDiff;
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+     for (let i = 0; i < e.changedTouches.length; i++) {
+         touchCache.current.delete(e.changedTouches[i].identifier);
+     }
+     if (e.targetTouches.length < 2) {
+         prevDiff.current = -1;
+     }
+  };
+
 
   return (
     <div 
-        className="flex flex-col h-full bg-studio-bg text-xs select-none"
+        className="flex flex-col h-full bg-studio-bg text-xs select-none touch-none" // touch-none to handle gestures manually if needed, but we use scroll
         onMouseMove={handleGlobalMove}
         onMouseUp={handleGlobalUp}
         onMouseLeave={handleGlobalUp}
@@ -392,10 +445,13 @@ const Arranger: React.FC<ArrangerProps> = ({
 
         {/* Timeline Content */}
         <div 
-            className="flex-1 overflow-x-auto overflow-y-auto relative no-scrollbar bg-zinc-900"
+            className="flex-1 overflow-x-auto overflow-y-auto relative no-scrollbar bg-zinc-900 touch-pan-x"
             ref={scrollContainerRef}
             onScroll={handleScroll}
             onMouseDown={handleBackgroundMouseDown}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
         >
              <div className="relative min-w-full" style={{ width: totalWidth }}>
                 
@@ -412,8 +468,11 @@ const Arranger: React.FC<ArrangerProps> = ({
                             <div className="absolute right-0 top-0 bottom-0 w-4 -mr-2 cursor-ew-resize hover:bg-white/10" onMouseDown={(e) => handleLoopMouseDown(e, 'end')} />
                         </div>
                     </div>
-                    {/* Musical Time Ruler */}
-                    <div className="h-8 bg-zinc-800 border-b border-zinc-700 relative cursor-pointer overflow-hidden" onClick={handleTimelineClick}>
+                    {/* Musical Time Ruler (Scrubbable) */}
+                    <div 
+                        className="h-8 bg-zinc-800 border-b border-zinc-700 relative cursor-pointer overflow-hidden group" 
+                        onMouseDown={handleRulerMouseDown}
+                    >
                         {[...Array(totalBars)].map((_, i) => (
                             <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-600 pl-1 select-none h-4" style={{ left: i * pixelsPerBar }}>
                                 {i + 1}
@@ -489,7 +548,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                 onMouseDown={(e) => handleClipMouseDown(e, clip, 'MOVE')}
                             >
                                 {/* Header */}
-                                <div className="absolute top-0 left-0 right-0 h-4 bg-black/20 text-[10px] px-2 text-white/90 truncate flex justify-between items-center select-none z-20">
+                                <div className="absolute top-0 left-0 right-0 h-4 bg-black/20 text-[10px] px-2 text-white/90 truncate flex justify-between items-center select-none z-20 backdrop-blur-sm">
                                     <span className="truncate mr-2 font-medium drop-shadow-md">{clip.name}</span>
                                     {tool === ToolMode.SPLIT && <Scissors size={10} className="text-white" />}
                                 </div>
