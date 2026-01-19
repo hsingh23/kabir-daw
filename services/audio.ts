@@ -542,11 +542,14 @@ class AudioEngine {
   }
 
   scheduler() {
-    if (!this.metronomeEnabled || !this._isPlaying) return;
+    if (!this._isPlaying) return;
     const lookahead = 0.1;
     
+    // Metronome
     while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
-        this.scheduleClick(this.currentBeat, this.nextNoteTime);
+        if (this.metronomeEnabled) {
+            this.scheduleClick(this.currentBeat, this.nextNoteTime);
+        }
         const secondsPerBeat = 60.0 / this.bpm;
         this.nextNoteTime += secondsPerBeat;
         this.currentBeat++;
