@@ -1,3 +1,4 @@
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 import { Track } from '../../types';
@@ -23,12 +24,15 @@ describe('AudioEngine', () => {
         expect(channel).toBeDefined();
         expect(channel.gain).toBeDefined();
         expect(channel.panner).toBeDefined();
+        expect(channel.reverbSend).toBeDefined();
+        expect(channel.delaySend).toBeDefined();
+        expect(channel.chorusSend).toBeDefined();
         expect(audio.trackChannels.has('t1')).toBe(true);
     });
 
-    it('syncs track parameters correctly', () => {
+    it('syncs track parameters correctly including sends', () => {
         const tracks: Track[] = [
-            { id: 't1', name: 'Test', volume: 0.5, pan: -0.5, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 } }
+            { id: 't1', name: 'Test', volume: 0.5, pan: -0.5, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0.5, delay: 0.2, chorus: 0 } }
         ];
 
         audio.syncTracks(tracks);
@@ -36,11 +40,13 @@ describe('AudioEngine', () => {
         const channel = audio.getTrackChannel('t1');
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
         expect(channel.panner.pan.setTargetAtTime).toHaveBeenCalledWith(-0.5, expect.any(Number), expect.any(Number));
+        expect(channel.reverbSend.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
+        expect(channel.delaySend.gain.setTargetAtTime).toHaveBeenCalledWith(0.2, expect.any(Number), expect.any(Number));
     });
 
     it('mutes track when muted', () => {
         const tracks: Track[] = [
-            { id: 't1', name: 'Test', volume: 0.8, pan: 0, muted: true, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 } }
+            { id: 't1', name: 'Test', volume: 0.8, pan: 0, muted: true, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
         ];
 
         audio.syncTracks(tracks);
@@ -51,8 +57,8 @@ describe('AudioEngine', () => {
 
     it('mutes other tracks when one is soloed', () => {
         const tracks: Track[] = [
-            { id: 't1', name: 'Soloed', volume: 0.8, pan: 0, muted: false, solo: true, color: '#000', eq: { low: 0, mid: 0, high: 0 } },
-            { id: 't2', name: 'Other', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 } }
+            { id: 't1', name: 'Soloed', volume: 0.8, pan: 0, muted: false, solo: true, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
+            { id: 't2', name: 'Other', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
         ];
 
         audio.syncTracks(tracks);

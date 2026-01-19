@@ -11,6 +11,9 @@ interface TrackChannel {
     gain: GainNode; // Volume fader
     panner: StereoPannerNode; // Pan
     analyser: AnalyserNode; // For metering
+    reverbSend: GainNode;
+    delaySend: GainNode;
+    chorusSend: GainNode;
 }
 
 // Frequency map for keys (Middle Sa)
@@ -22,6 +25,12 @@ const NOTE_FREQS: Record<string, number> = {
 class AudioEngine {
   ctx: AudioContext;
   masterGain: GainNode;
+  
+  // Master EQ
+  masterLow: BiquadFilterNode;
+  masterMid: BiquadFilterNode;
+  masterHigh: BiquadFilterNode;
+
   masterAnalyser: AnalyserNode;
   
   // FX Sends/Returns
@@ -80,6 +89,20 @@ class AudioEngine {
     
     // Master Chain
     this.masterGain = this.ctx.createGain();
+    
+    this.masterLow = this.ctx.createBiquadFilter();
+    this.masterLow.type = 'lowshelf';
+    this.masterLow.frequency.value = 200;
+
+    this.masterMid = this.ctx.createBiquadFilter();
+    this.masterMid.type = 'peaking';
+    this.masterMid.frequency.value = 1000;
+    this.masterMid.Q.value = 1.0;
+
+    this.masterHigh = this.ctx.createBiquadFilter();
+    this.masterHigh.type = 'highshelf';
+    this.masterHigh.frequency.value = 3000;
+
     this.compressor = this.ctx.createDynamicsCompressor();
     this.compressor.knee.value = 10;
     this.compressor.attack.value = 0.05;
@@ -127,8 +150,11 @@ class AudioEngine {
   }
 
   setupRouting() {
-    // Master Routing
-    this.masterGain.connect(this.compressor);
+    // Master Routing: Gain -> Low -> Mid -> High -> Compressor -> Analyser -> Dest
+    this.masterGain.connect(this.masterLow);
+    this.masterLow.connect(this.masterMid);
+    this.masterMid.connect(this.masterHigh);
+    this.masterHigh.connect(this.compressor);
     this.compressor.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
 
@@ -228,6 +254,10 @@ class AudioEngine {
       analyser.smoothingTimeConstant = 0.5;
 
       const panner = this.ctx.createStereoPanner(); // Pan
+
+      const reverbSend = this.ctx.createGain();
+      const delaySend = this.ctx.createGain();
+      const chorusSend = this.ctx.createGain();
       
       // 2. Connect Chain: EQ -> Compressor -> Fader -> Panner
       input.connect(lowFilter);
@@ -240,9 +270,16 @@ class AudioEngine {
       
       // 3. Connect to Master and Effects Sends
       panner.connect(this.masterGain);
-      panner.connect(this.reverbInput);
-      panner.connect(this.delayInput);
-      panner.connect(this.chorusInput);
+
+      // Per-track Sends
+      panner.connect(reverbSend);
+      reverbSend.connect(this.reverbInput);
+
+      panner.connect(delaySend);
+      delaySend.connect(this.delayInput);
+
+      panner.connect(chorusSend);
+      chorusSend.connect(this.chorusInput);
       
       this.trackChannels.set(trackId, { 
           input, 
@@ -252,7 +289,10 @@ class AudioEngine {
           compressor, 
           gain, 
           panner,
-          analyser 
+          analyser,
+          reverbSend,
+          delaySend,
+          chorusSend
       });
     }
     return this.trackChannels.get(trackId)!;
@@ -291,6 +331,18 @@ class AudioEngine {
               channel.compressor.threshold.setTargetAtTime(0, currentTime, 0.1);
               channel.compressor.ratio.setTargetAtTime(1, currentTime, 0.1);
           }
+      }
+
+      // Update Sends
+      if (track.sends) {
+          channel.reverbSend.gain.setTargetAtTime(track.sends.reverb, currentTime, 0.05);
+          channel.delaySend.gain.setTargetAtTime(track.sends.delay, currentTime, 0.05);
+          channel.chorusSend.gain.setTargetAtTime(track.sends.chorus, currentTime, 0.05);
+      } else {
+          // Default to 0 if sends undefined (migration safety)
+          channel.reverbSend.gain.setTargetAtTime(0, currentTime, 0.05);
+          channel.delaySend.gain.setTargetAtTime(0, currentTime, 0.05);
+          channel.chorusSend.gain.setTargetAtTime(0, currentTime, 0.05);
       }
     });
   }
@@ -430,6 +482,12 @@ class AudioEngine {
 
   setMasterVolume(val: number) {
     this.masterGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
+  }
+
+  setMasterEq(low: number, mid: number, high: number) {
+      this.masterLow.gain.setTargetAtTime(low, this.ctx.currentTime, 0.1);
+      this.masterMid.gain.setTargetAtTime(mid, this.ctx.currentTime, 0.1);
+      this.masterHigh.gain.setTargetAtTime(high, this.ctx.currentTime, 0.1);
   }
 
   setMasterCompressor(threshold: number, ratio: number) {
@@ -680,12 +738,27 @@ class AudioEngine {
       const masterGain = offlineCtx.createGain();
       masterGain.gain.value = project.masterVolume;
       
+      // Master EQ
+      const masterLow = offlineCtx.createBiquadFilter(); masterLow.type = 'lowshelf'; masterLow.frequency.value = 200;
+      const masterMid = offlineCtx.createBiquadFilter(); masterMid.type = 'peaking'; masterMid.frequency.value = 1000;
+      const masterHigh = offlineCtx.createBiquadFilter(); masterHigh.type = 'highshelf'; masterHigh.frequency.value = 3000;
+      
+      if (project.masterEq) {
+          masterLow.gain.value = project.masterEq.low;
+          masterMid.gain.value = project.masterEq.mid;
+          masterHigh.gain.value = project.masterEq.high;
+      }
+
       const compressor = offlineCtx.createDynamicsCompressor();
       if (project.masterCompressor) {
           compressor.threshold.value = project.masterCompressor.threshold;
           compressor.ratio.value = project.masterCompressor.ratio;
       }
-      masterGain.connect(compressor);
+      
+      masterGain.connect(masterLow);
+      masterLow.connect(masterMid);
+      masterMid.connect(masterHigh);
+      masterHigh.connect(compressor);
       compressor.connect(offlineCtx.destination);
       
       // Reverb
@@ -721,6 +794,9 @@ class AudioEngine {
           const tCompressor = offlineCtx.createDynamicsCompressor();
           const tGain = offlineCtx.createGain();
           const tPan = offlineCtx.createStereoPanner();
+          const tReverbSend = offlineCtx.createGain();
+          const tDelaySend = offlineCtx.createGain();
+          const tChorusSend = offlineCtx.createGain();
 
           // Set Values
           if (track.eq) {
@@ -739,6 +815,12 @@ class AudioEngine {
               tCompressor.ratio.value = 1;
           }
 
+          if (track.sends) {
+             tReverbSend.gain.value = track.sends.reverb;
+             tDelaySend.gain.value = track.sends.delay;
+             tChorusSend.gain.value = track.sends.chorus;
+          }
+
           tGain.gain.value = (track.muted || (project.tracks.some(t => t.solo) && !track.solo)) ? 0 : track.volume;
           tPan.pan.value = track.pan;
 
@@ -751,8 +833,13 @@ class AudioEngine {
           tGain.connect(tPan);
           
           tPan.connect(masterGain);
-          tPan.connect(reverbNode); // Send to reverb
-          tPan.connect(delayNode);  // Send to delay
+          
+          // Sends
+          tPan.connect(tReverbSend);
+          tReverbSend.connect(reverbNode);
+          
+          tPan.connect(tDelaySend);
+          tDelaySend.connect(delayNode); 
 
           trackMap.set(track.id, tInput);
       });

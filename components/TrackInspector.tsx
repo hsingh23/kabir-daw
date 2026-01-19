@@ -46,6 +46,16 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
       });
   };
 
+  const updateSend = (type: 'reverb' | 'delay' | 'chorus', value: number) => {
+      updateTrack(track.id, {
+          sends: {
+              reverb: 0, delay: 0, chorus: 0,
+              ...track.sends,
+              [type]: value
+          }
+      });
+  };
+
   return (
     <div className="fixed inset-x-0 bottom-0 top-12 bg-studio-panel z-[100] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
       
@@ -67,7 +77,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-20">
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* EQ Section */}
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
                   <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
@@ -123,6 +133,34 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                         value={((track.compressor?.ratio ?? 4) - 1) / 19} // 1 to 20
                         min={0} max={1}
                         onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} 
+                      />
+                  </div>
+              </div>
+
+              {/* FX Sends Section */}
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
+                      <span className="w-2 h-2 rounded-full bg-purple-500 mr-2"></span>
+                      FX Sends
+                  </h3>
+                  <div className="flex justify-around items-center">
+                      <Knob 
+                        label="Reverb" 
+                        value={track.sends?.reverb ?? 0}
+                        min={0} max={1}
+                        onChange={(v) => updateSend('reverb', v)} 
+                      />
+                      <Knob 
+                        label="Delay" 
+                        value={track.sends?.delay ?? 0}
+                        min={0} max={1}
+                        onChange={(v) => updateSend('delay', v)} 
+                      />
+                      <Knob 
+                        label="Chorus" 
+                        value={track.sends?.chorus ?? 0}
+                        min={0} max={1}
+                        onChange={(v) => updateSend('chorus', v)} 
                       />
                   </div>
               </div>

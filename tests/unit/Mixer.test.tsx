@@ -16,8 +16,8 @@ const mockProject: ProjectState = {
   id: 'test',
   bpm: 120,
   tracks: [
-    { id: 't1', name: 'Track 1', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 } },
-    { id: 't2', name: 'Track 2', volume: 0.5, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 } }
+    { id: 't1', name: 'Track 1', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
+    { id: 't2', name: 'Track 2', volume: 0.5, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
   ],
   clips: [],
   loopStart: 0,
@@ -25,6 +25,7 @@ const mockProject: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1,
+  masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: { threshold: -24, ratio: 12 },
   effects: { reverb: 0, delay: 0, chorus: 0 },
   tanpura: { enabled: false, volume: 0.5, key: 'C', tuning: 'Pa', tempo: 60 },

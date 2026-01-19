@@ -33,6 +33,11 @@ export interface Track {
     attack: number; // 0 to 1
     release: number; // 0 to 1
   };
+  sends: {
+    reverb: number; // 0 to 1
+    delay: number; // 0 to 1
+    chorus: number; // 0 to 1
+  };
 }
 
 export interface TanpuraState {
@@ -61,6 +66,11 @@ export interface ProjectState {
   isLooping: boolean;
   metronomeOn: boolean;
   masterVolume: number;
+  masterEq: {
+      low: number; // -12 to 12 dB
+      mid: number;
+      high: number;
+  };
   masterCompressor: {
       threshold: number; // -60 to 0 dB
       ratio: number; // 1 to 20

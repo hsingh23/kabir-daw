@@ -49,6 +49,16 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
       }));
   };
 
+  const updateMasterEq = (band: 'low' | 'mid' | 'high', value: number) => {
+      setProject(prev => ({
+          ...prev,
+          masterEq: {
+              ...prev.masterEq,
+              [band]: value
+          }
+      }));
+  };
+
   return (
     <div className="flex flex-col h-full bg-studio-bg overflow-y-auto no-scrollbar pb-24">
       
@@ -87,6 +97,30 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                 onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} 
                 defaultValue={0.57} // ~12
                />
+           </div>
+
+           <div className="w-px h-10 bg-zinc-700 hidden md:block" />
+
+           {/* Master EQ Group */}
+           <div className="flex space-x-2">
+                <Knob 
+                    label="High" 
+                    value={(project.masterEq.high + 12) / 24} // -12 to 12
+                    onChange={(v) => updateMasterEq('high', (v * 24) - 12)}
+                    defaultValue={0.5}
+                />
+                 <Knob 
+                    label="Mid" 
+                    value={(project.masterEq.mid + 12) / 24} 
+                    onChange={(v) => updateMasterEq('mid', (v * 24) - 12)}
+                    defaultValue={0.5}
+                />
+                 <Knob 
+                    label="Low" 
+                    value={(project.masterEq.low + 12) / 24} 
+                    onChange={(v) => updateMasterEq('low', (v * 24) - 12)}
+                    defaultValue={0.5}
+                />
            </div>
 
            <div className="w-px h-10 bg-zinc-700 hidden md:block" />
