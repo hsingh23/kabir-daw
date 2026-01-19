@@ -2,11 +2,12 @@ import React from 'react';
 import { Track } from '../types';
 import Knob from './Knob';
 import CustomFader from './Fader';
-import { X, Mic, Music, Drum, Guitar, Keyboard } from 'lucide-react';
+import { X, Mic, Music, Drum, Guitar, Keyboard, Trash2 } from 'lucide-react';
 
 interface TrackInspectorProps {
   track: Track;
   updateTrack: (id: string, updates: Partial<Track>) => void;
+  onDeleteTrack?: (id: string) => void;
   onClose: () => void;
 }
 
@@ -19,7 +20,7 @@ const TrackIcon = ({ name, color, size = 24 }: { name: string, color: string, si
     return <Music size={size} style={{ color }} />;
 };
 
-const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onClose }) => {
+const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onDeleteTrack, onClose }) => {
   
   const updateEQ = (band: 'low' | 'mid' | 'high', value: number) => {
       updateTrack(track.id, {
@@ -49,7 +50,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onC
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-8">
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-20">
           
           {/* EQ Section */}
           <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
@@ -112,6 +113,19 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onC
                     className={`flex-1 py-3 rounded-lg font-bold text-sm uppercase tracking-wide transition-colors ${track.solo ? 'bg-yellow-500 text-black' : 'bg-zinc-700 text-zinc-400'}`}
                 >Solo</button>
           </div>
+
+          {/* Destructive Actions */}
+          {onDeleteTrack && (
+            <div className="pt-8 border-t border-zinc-700">
+                <button 
+                    onClick={() => onDeleteTrack(track.id)}
+                    className="w-full py-3 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 flex items-center justify-center space-x-2 transition-colors"
+                >
+                    <Trash2 size={16} />
+                    <span className="font-bold text-sm">Delete Track</span>
+                </button>
+            </div>
+          )}
 
       </div>
     </div>
