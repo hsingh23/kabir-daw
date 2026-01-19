@@ -62,11 +62,52 @@ const TrackIcon = ({ name, color }: { name: string, color: string }) => {
     return <Music size={16} style={{ color }} />;
 };
 
+const LoopMarkers = ({ clip, zoom }: { clip: Clip, zoom: number }) => {
+    // Only render markers if clip is longer than buffer (looping)
+    const buffer = audio.buffers.get(clip.bufferKey);
+    if (!buffer) return null;
+    
+    const B = buffer.duration;
+    if (B === 0) return null;
+    
+    const O = clip.offset;
+    const D = clip.duration;
+    
+    const markers = [];
+    // First loop point is when the buffer finishes for the first time
+    // Current pos in buffer is O. Remaining is B - O.
+    let time = B - (O % B); 
+    
+    while (time < D) {
+        markers.push(time);
+        time += B;
+    }
+
+    if (markers.length === 0) return null;
+
+    return (
+        <>
+            {markers.map((t, i) => (
+                <div 
+                    key={i} 
+                    className="absolute top-0 bottom-0 border-l border-white/40 border-dashed z-20 pointer-events-none"
+                    style={{ left: t * zoom }}
+                >
+                     {/* Loop Icon */}
+                     <div className="text-[8px] text-white/70 pl-0.5 pt-0.5 opacity-70">
+                        <Repeat size={8} />
+                     </div>
+                </div>
+            ))}
+        </>
+    );
+};
+
 const Arranger: React.FC<ArrangerProps> = ({ 
     project, 
     setProject, 
     currentTime, 
-    isPlaying,
+    isPlaying, 
     isRecording,
     recordingStartTime = 0,
     onPlayPause,
@@ -246,7 +287,16 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (tool === ToolMode.SPLIT && mode === 'MOVE') {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
-        const splitTime = clip.start + (clickX / zoom);
+        let splitTime = clip.start + (clickX / zoom);
+        
+        // Apply Snap for Split
+        if (!e.shiftKey && snapGrid > 0) {
+             const snapSeconds = snapGrid * secondsPerBeat;
+             splitTime = Math.round(splitTime / snapSeconds) * snapSeconds;
+        }
+        // Clamp
+        splitTime = Math.max(clip.start + 0.01, Math.min(clip.start + clip.duration - 0.01, splitTime));
+
         onSplit(clip.id, splitTime);
         return;
     }
@@ -739,12 +789,14 @@ const Arranger: React.FC<ArrangerProps> = ({
                             {project.clips.filter(c => c.trackId === track.id).map(clip => {
                                 const isSelected = selectedClipId === clip.id;
                                 const clipColor = clip.color || track.color;
+                                const isMuted = track.muted || (project.tracks.some(t => t.solo) && !track.solo);
+
                                 return (
                                     <div
                                         key={clip.id}
-                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none touch-none transition-shadow ${
+                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none touch-none transition-all ${
                                             isSelected ? 'ring-2 ring-white z-20 shadow-xl' : 'hover:brightness-110 z-10 shadow-md'
-                                        }`}
+                                        } ${isMuted ? 'opacity-50 grayscale' : ''}`}
                                         style={{
                                             left: clip.start * zoom,
                                             width: clip.duration * zoom,
@@ -755,8 +807,10 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         }}
                                         onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
                                     >
+                                        <LoopMarkers clip={clip} zoom={zoom} />
+
                                         <div 
-                                            className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate"
+                                            className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate relative z-10"
                                             style={{ backgroundColor: clipColor }}
                                         >
                                             <span className="truncate">{clip.name}</span>
