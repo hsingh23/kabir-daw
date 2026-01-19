@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectState, Track, Clip } from './types';
 import Mixer from './components/Mixer';
 import Arranger from './components/Arranger';
+import Library from './components/Library';
 import TrackInspector from './components/TrackInspector';
 import { audio } from './services/audio';
 import { saveAudioBlob, saveProject, getProject } from './services/db';
@@ -42,9 +43,9 @@ const INITIAL_PROJECT: ProjectState = {
 
 const App: React.FC = () => {
   // URL State Initialization
-  const [view, setView] = useState<'mixer' | 'arranger'>(() => {
+  const [view, setView] = useState<'mixer' | 'arranger' | 'library'>(() => {
       const params = new URLSearchParams(window.location.search);
-      return (params.get('view') as 'mixer' | 'arranger') || 'mixer';
+      return (params.get('view') as 'mixer' | 'arranger' | 'library') || 'mixer';
   });
 
   const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
@@ -464,7 +465,7 @@ const App: React.FC = () => {
              onStop={stop}
              onRecord={handleRecordToggle}
            />
-        ) : (
+        ) : view === 'arranger' ? (
            <Arranger 
              project={project}
              setProject={updateProject}
@@ -487,6 +488,8 @@ const App: React.FC = () => {
              onMoveTrack={handleMoveTrack}
              onRenameClip={handleRenameClip}
            />
+        ) : (
+            <Library />
         )}
 
         {inspectorTrackId && (
@@ -513,7 +516,7 @@ const App: React.FC = () => {
             <LayoutGrid size={24} />
             <span className="text-[10px] font-medium">Arranger</span>
         </button>
-        <button className="flex flex-col items-center space-y-1 text-zinc-500 opacity-50 cursor-not-allowed">
+        <button onClick={() => setView('library')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'library' ? 'text-studio-accent' : 'text-zinc-500'}`}>
             <Music size={24} />
             <span className="text-[10px] font-medium">Library</span>
         </button>

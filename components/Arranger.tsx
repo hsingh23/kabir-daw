@@ -336,24 +336,26 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (loopDrag && loopDrag.pointerId === e.pointerId) {
         const deltaX = (e.clientX - loopDrag.startX);
         const deltaSeconds = deltaX / zoom;
-        const snapBeats = snapGrid === 0 ? 4 : snapGrid; 
+        const snapBeats = e.shiftKey ? 0 : snapGrid; 
         const activeSnapSeconds = snapBeats * secondsPerBeat;
         
         let newStart = loopDrag.originalLoopStart;
         let newEnd = loopDrag.originalLoopEnd;
 
         if (loopDrag.type === 'start') {
-            newStart = Math.min(Math.max(0, newStart + deltaSeconds), newEnd - activeSnapSeconds);
+            newStart = Math.min(Math.max(0, newStart + deltaSeconds), newEnd - (activeSnapSeconds || 0.1));
         } else if (loopDrag.type === 'end') {
-            newEnd = Math.max(newEnd + deltaSeconds, newStart + activeSnapSeconds);
+            newEnd = Math.max(newEnd + deltaSeconds, newStart + (activeSnapSeconds || 0.1));
         } else if (loopDrag.type === 'move') {
             const length = newEnd - newStart;
             newStart = Math.max(0, newStart + deltaSeconds);
             newEnd = newStart + length;
         }
         
-        newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
-        newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
+        if (activeSnapSeconds > 0) {
+            newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
+            newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
+        }
 
         setProject(prev => ({
             ...prev,
@@ -490,6 +492,11 @@ const Arranger: React.FC<ArrangerProps> = ({
          </div>
 
          <div className="flex items-center space-x-3 shrink-0">
+             <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+                 <button onClick={() => setZoom(Math.max(10, zoom * 0.8))} className="p-1 text-zinc-400 hover:text-white"><ZoomOut size={14} /></button>
+                 <button onClick={() => setZoom(Math.min(400, zoom * 1.2))} className="p-1 text-zinc-400 hover:text-white"><ZoomIn size={14} /></button>
+             </div>
+
              <div className="text-zinc-400 font-mono flex items-center bg-black/40 px-3 py-1.5 rounded-md border border-zinc-800/50 shadow-inner">
                  <span className="text-white font-bold">{Math.floor(currentTime / secondsPerBar) + 1}</span>
                  <span className="text-zinc-600 mx-1">.</span>
