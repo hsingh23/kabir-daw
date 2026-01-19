@@ -57,6 +57,28 @@ export const getAudioBlob = async (key: string): Promise<Blob | undefined> => {
   });
 };
 
+export const deleteAudioBlob = async (key: string): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(ASSET_STORE, 'readwrite');
+    const store = tx.objectStore(ASSET_STORE);
+    const req = store.delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+};
+
+export const getAllAssetKeys = async (): Promise<string[]> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(ASSET_STORE, 'readonly');
+    const store = tx.objectStore(ASSET_STORE);
+    const req = store.getAllKeys();
+    req.onsuccess = () => resolve(req.result as string[]);
+    req.onerror = () => reject(req.error);
+  });
+};
+
 export const saveProject = async (project: any): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
