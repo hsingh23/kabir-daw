@@ -5,6 +5,7 @@ import Arranger from './components/Arranger';
 import TrackInspector from './components/TrackInspector';
 import { audio } from './services/audio';
 import { saveAudioBlob, saveProject, getProject } from './services/db';
+import { moveItem } from './services/utils';
 import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
@@ -114,32 +115,20 @@ const App: React.FC = () => {
       setFuture(newFuture);
   };
 
-  // Logic to handle Play/Pause toggle cleanly
   const togglePlay = useCallback(() => {
       setIsPlaying(prevIsPlaying => {
           if (isRecording) {
-            // If recording, we want to stop recording logic specifically
-             return prevIsPlaying; // Let the record toggle handle it, or we handle it here.
-             // But simpler: just toggle audio state
+             return prevIsPlaying;
           }
-          
           if (prevIsPlaying) {
               audio.pause();
               return false;
           } else {
-              // We need current time. Since this is in callback, we might need a ref or access to state.
-              // However, audio.play accepts time. 
-              // State 'currentTime' might be stale in closure if not careful, 
-              // but since we update 'isPlaying' state, we can trigger the effect to play.
-              // BETTER: Just call audio.play with current time from audio engine or state.
-              // audio.getCurrentTime() returns context time relative to start, but if stopped, we need the cursor position.
-              // The cursor position is in 'currentTime' state.
               return true;
           }
       });
   }, [isRecording]);
 
-  // Use Effect to handle actual audio play/pause when state changes from togglePlay
   useEffect(() => {
      if (isPlaying && !audio.isPlaying) {
          audio.play(project.clips, project.tracks, currentTime);
@@ -148,10 +137,8 @@ const App: React.FC = () => {
      }
   }, [isPlaying]);
 
-  // Global Keyboard Shortcuts
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          // Undo/Redo
           if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
               if (e.shiftKey) {
                   redo();
@@ -161,17 +148,13 @@ const App: React.FC = () => {
               e.preventDefault();
               return;
           }
-
-          // Spacebar - Play/Pause
           if (e.code === 'Space') {
-              // Ignore if typing in an input
               if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
                   return;
               }
-              e.preventDefault(); // Prevent scrolling or button activation
-              
+              e.preventDefault();
               if (isRecording) {
-                  handleRecordToggle(); // Stop recording on space
+                  handleRecordToggle();
               } else {
                   togglePlay();
               }
@@ -211,7 +194,6 @@ const App: React.FC = () => {
     return () => cancelAnimationFrame(rafRef.current!);
   }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks]);
 
-  // Wrapper for UI buttons to ensure they work alongside the effect
   const handlePlayPauseClick = () => {
       if (isRecording) {
           handleRecordToggle();
@@ -386,6 +368,20 @@ const App: React.FC = () => {
       setSelectedTrackId(newTrack.id);
   };
 
+  const handleMoveTrack = (fromIndex: number, toIndex: number) => {
+      updateProject(prev => ({
+          ...prev,
+          tracks: moveItem(prev.tracks, fromIndex, toIndex)
+      }));
+  };
+
+  const handleRenameClip = (clipId: string, newName: string) => {
+      updateProject(prev => ({
+          ...prev,
+          clips: prev.clips.map(c => c.id === clipId ? { ...c, name: newName } : c)
+      }));
+  };
+
   return (
     <div className="flex flex-col h-screen bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
       
@@ -458,6 +454,8 @@ const App: React.FC = () => {
              selectedClipId={selectedClipId}
              onSelectClip={setSelectedClipId}
              onOpenInspector={setInspectorTrackId}
+             onMoveTrack={handleMoveTrack}
+             onRenameClip={handleRenameClip}
            />
         )}
 

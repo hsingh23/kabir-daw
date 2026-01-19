@@ -32,16 +32,19 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
             label="Reverb" 
             value={project.effects.reverb} 
             onChange={(v) => setProject(p => ({...p, effects: {...p.effects, reverb: v}}))} 
+            defaultValue={0.2}
            />
            <Knob 
             label="Delay" 
             value={project.effects.delay} 
             onChange={(v) => setProject(p => ({...p, effects: {...p.effects, delay: v}}))} 
+            defaultValue={0.1}
            />
            <Knob 
             label="Master" 
             value={project.masterVolume} 
             onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
+            defaultValue={1.0}
            />
         </div>
       </div>
@@ -100,6 +103,7 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                         value={track.volume} 
                         onChange={(v) => updateTrack(track.id, { volume: v })} 
                         height={200}
+                        defaultValue={0.8}
                     />
                     
                     <div className="w-full flex justify-center">
