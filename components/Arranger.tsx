@@ -24,6 +24,7 @@ interface ArrangerProps {
   onOpenInspector: (trackId: string) => void;
   onMoveTrack?: (from: number, to: number) => void;
   onRenameClip?: (clipId: string, name: string) => void;
+  onRenameTrack?: (trackId: string, name: string) => void;
 }
 
 const TRACK_HEIGHT = 120; 
@@ -65,7 +66,8 @@ const Arranger: React.FC<ArrangerProps> = ({
     onSelectClip,
     onOpenInspector,
     onMoveTrack,
-    onRenameClip
+    onRenameClip,
+    onRenameTrack
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
@@ -262,8 +264,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         const scrollContainer = scrollContainerRef.current;
         if (!scrollContainer) return;
         const rect = scrollContainer.getBoundingClientRect();
-        // Calculate the hypothetical index based on pointer Y
-        // Offset for ruler (32px) and scroll
         const scrollTop = scrollContainer.scrollTop;
         const relativeY = (e.clientY - rect.top) + scrollTop - 32;
         const newIndex = Math.max(0, Math.min(project.tracks.length - 1, Math.floor(relativeY / TRACK_HEIGHT)));
@@ -406,7 +406,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const onTouchEnd = () => {
-      setPinchDist(null);
+    setPinchDist(null);
   };
 
   const handleRename = () => {
@@ -436,6 +436,16 @@ const Arranger: React.FC<ArrangerProps> = ({
         }
         setContextMenu(null);
       }
+  };
+
+  const handleTrackNameDoubleClick = (e: React.MouseEvent, trackId: string, currentName: string) => {
+    e.stopPropagation();
+    if (onRenameTrack) {
+        const newName = prompt("Rename track:", currentName);
+        if (newName) {
+            onRenameTrack(trackId, newName);
+        }
+    }
   };
 
   return (
@@ -596,7 +606,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     <div className="w-6 h-6 rounded bg-zinc-900 flex items-center justify-center shadow-inner shrink-0" style={{ color: track.color }}>
                                         <TrackIcon name={track.name} color={track.color} />
                                     </div>
-                                    <span className={`font-bold text-xs truncate ${selectedTrackId === track.id ? 'text-white' : 'text-zinc-400'}`}>{track.name}</span>
+                                    <span 
+                                        className={`font-bold text-xs truncate cursor-text ${selectedTrackId === track.id ? 'text-white' : 'text-zinc-400'}`}
+                                        onDoubleClick={(e) => handleTrackNameDoubleClick(e, track.id, track.name)}
+                                    >
+                                        {track.name}
+                                    </span>
                                 </div>
                                 <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 md:block hidden">
                                     <Sliders size={12} />
