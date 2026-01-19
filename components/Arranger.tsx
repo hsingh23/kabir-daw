@@ -426,6 +426,15 @@ const Arranger: React.FC<ArrangerProps> = ({
   const onTouchEnd = () => {
     setPinchDist(null);
   };
+  
+  const handleWheel = (e: React.WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const zoomDelta = -e.deltaY * 0.1;
+          setZoom(Math.max(10, Math.min(400, zoom + zoomDelta)));
+      }
+      // Horizontal scroll is usually handled natively by browser or trackpad gestures
+  };
 
   const handleRename = () => {
       if (contextMenu && onRenameClip) {
@@ -585,7 +594,8 @@ const Arranger: React.FC<ArrangerProps> = ({
       <div 
         ref={scrollContainerRef}
         className="flex-1 overflow-auto bg-zinc-900 relative overscroll-contain"
-        style={{ touchAction: 'pan-x pan-y' }} 
+        style={{ touchAction: 'pan-x pan-y' }}
+        onWheel={handleWheel}
       >
         <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + headerWidth }}>
            

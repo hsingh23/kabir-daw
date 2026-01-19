@@ -14,10 +14,10 @@ const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
   bpm: 120,
   tracks: [
-    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 } },
-    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 } },
-    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -18, ratio: 2.5, attack: 0.05, release: 0.2 } },
-    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -22, ratio: 3, attack: 0.02, release: 0.2 } },
+    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
+    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
+    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -18, ratio: 2.5, attack: 0.05, release: 0.2 }, sends: { reverb: 0, delay: 0.2, chorus: 0.3 } },
+    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -22, ratio: 3, attack: 0.02, release: 0.2 }, sends: { reverb: 0.3, delay: 0.1, chorus: 0 } },
   ],
   clips: [],
   loopStart: 0,
@@ -25,6 +25,7 @@ const INITIAL_PROJECT: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1.0,
+  masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: {
       threshold: -24,
       ratio: 12
@@ -56,6 +57,7 @@ const App: React.FC = () => {
   const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
   const [past, setPast] = useState<ProjectState[]>([]);
   const [future, setFuture] = useState<ProjectState[]>([]);
+  const [clipboard, setClipboard] = useState<Clip | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -104,10 +106,12 @@ const App: React.FC = () => {
             ...saved,
             effects: { ...INITIAL_PROJECT.effects, ...saved.effects },
             masterCompressor: saved.masterCompressor || INITIAL_PROJECT.masterCompressor,
+            masterEq: saved.masterEq || INITIAL_PROJECT.masterEq,
             tracks: saved.tracks.map((t: any) => ({
                 ...t,
                 eq: t.eq || { low: 0, mid: 0, high: 0 },
-                compressor: t.compressor || { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 }
+                compressor: t.compressor || { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 },
+                sends: t.sends || { reverb: 0, delay: 0, chorus: 0 }
             }))
         };
         setProject(migrated);
@@ -246,6 +250,7 @@ const App: React.FC = () => {
             return;
           }
 
+          // Undo/Redo
           if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
               if (e.shiftKey) {
                   redo();
@@ -254,6 +259,67 @@ const App: React.FC = () => {
               }
               e.preventDefault();
               return;
+          }
+
+          // Copy (Cmd/Ctrl + C)
+          if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+             if (selectedClipId) {
+                 const clip = project.clips.find(c => c.id === selectedClipId);
+                 if (clip) {
+                     setClipboard(clip);
+                     e.preventDefault();
+                 }
+             }
+          }
+
+          // Paste (Cmd/Ctrl + V)
+          if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+              if (clipboard) {
+                  const targetTrackId = selectedTrackId || clipboard.trackId;
+                  const newClip: Clip = {
+                      ...clipboard,
+                      id: crypto.randomUUID(),
+                      trackId: targetTrackId,
+                      start: currentTime, // Paste at playhead
+                      name: `${clipboard.name} (Copy)`
+                  };
+                  updateProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
+                  setSelectedClipId(newClip.id);
+                  e.preventDefault();
+              }
+          }
+
+          // Duplicate (Cmd/Ctrl + D)
+          if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+              if (selectedClipId) {
+                  const clip = project.clips.find(c => c.id === selectedClipId);
+                  if (clip) {
+                      const newClip = {
+                          ...clip,
+                          id: crypto.randomUUID(),
+                          start: clip.start + clip.duration, // Append after
+                          name: `${clip.name} (Dup)`
+                      };
+                      updateProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
+                      setSelectedClipId(newClip.id);
+                      e.preventDefault();
+                  }
+              }
+          }
+
+          // Nudge (Arrows)
+          if (selectedClipId && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+              const clip = project.clips.find(c => c.id === selectedClipId);
+              if (clip) {
+                  e.preventDefault();
+                  const amount = e.shiftKey ? 0.1 : 0.01; // Shift for coarse, normal for fine
+                  const delta = e.key === 'ArrowLeft' ? -amount : amount;
+                  const newStart = Math.max(0, clip.start + delta);
+                  updateProject(prev => ({
+                      ...prev,
+                      clips: prev.clips.map(c => c.id === clip.id ? { ...c, start: newStart } : c)
+                  }));
+              }
           }
           
           if (e.code === 'Space') {
@@ -277,7 +343,7 @@ const App: React.FC = () => {
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipId, handleRecordToggle, updateProject]); 
+  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipId, handleRecordToggle, updateProject, clipboard, currentTime, selectedTrackId]); 
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
@@ -285,6 +351,9 @@ const App: React.FC = () => {
     audio.setMasterVolume(project.masterVolume);
     if (project.masterCompressor) {
         audio.setMasterCompressor(project.masterCompressor.threshold, project.masterCompressor.ratio);
+    }
+    if (project.masterEq) {
+        audio.setMasterEq(project.masterEq.low, project.masterEq.mid, project.masterEq.high);
     }
     audio.setDelayLevel(project.effects.delay);
     audio.setReverbLevel(project.effects.reverb);
@@ -449,7 +518,8 @@ const App: React.FC = () => {
           solo: false,
           color: `hsl(${Math.random() * 360}, 70%, 50%)`,
           eq: { low: 0, mid: 0, high: 0 },
-          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 }
+          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
+          sends: { reverb: 0, delay: 0, chorus: 0 }
       };
       updateProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       setSelectedTrackId(newTrack.id);
