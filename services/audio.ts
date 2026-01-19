@@ -1,4 +1,4 @@
-import { Clip, Track, ProjectState } from '../types';
+import { Clip, Track, ProjectState, TanpuraState, TablaState } from '../types';
 import { audioBufferToWav } from './utils';
 
 interface TrackChannel {
@@ -9,6 +9,12 @@ interface TrackChannel {
     gain: GainNode; // Volume fader
     panner: StereoPannerNode; // Pan
 }
+
+// Frequency map for keys (Middle Sa)
+const NOTE_FREQS: Record<string, number> = {
+  'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.63, 'F': 349.23,
+  'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88
+};
 
 class AudioEngine {
   ctx: AudioContext;
@@ -35,6 +41,18 @@ class AudioEngine {
   private nextNoteTime: number = 0;
   private currentBeat: number = 0;
 
+  // Drone & Percussion State
+  private tanpuraGain: GainNode;
+  private tablaGain: GainNode;
+  private nextTanpuraNoteTime: number = 0;
+  private currentTanpuraString: number = 0; // 0-3
+  private nextTablaBeatTime: number = 0;
+  private currentTablaBeat: number = 0;
+  
+  // Cache current settings
+  private tanpuraConfig: TanpuraState | null = null;
+  private tablaConfig: TablaState | null = null;
+
   // Recording
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: BlobPart[] = [];
@@ -55,6 +73,10 @@ class AudioEngine {
     this.metronomeGain = this.ctx.createGain();
     this.metronomeGain.gain.value = 0.5;
 
+    // Drone/Percussion Gains
+    this.tanpuraGain = this.ctx.createGain();
+    this.tablaGain = this.ctx.createGain();
+
     this.setupRouting();
     this.loadImpulseResponse();
   }
@@ -74,6 +96,15 @@ class AudioEngine {
 
     // Connect Metronome directly to destination
     this.metronomeGain.connect(this.masterGain);
+
+    // Connect Instruments
+    this.tanpuraGain.connect(this.reverbNode); // Send Tanpura to reverb for ambience
+    this.tanpuraGain.connect(this.masterGain);
+    
+    this.tablaGain.connect(this.masterGain);
+    this.tablaGain.connect(this.reverbNode); // Some reverb on Tabla
+
+    this.reverbNode.connect(this.masterGain);
   }
 
   async loadImpulseResponse() {
@@ -164,6 +195,33 @@ class AudioEngine {
     });
   }
 
+  syncInstruments(tanpura: TanpuraState, tabla: TablaState) {
+      this.tanpuraConfig = tanpura;
+      this.tablaConfig = tabla;
+      
+      const currentTime = this.ctx.currentTime;
+      
+      // Update Volumes
+      const tanpuraVol = tanpura.enabled ? tanpura.volume : 0;
+      this.tanpuraGain.gain.setTargetAtTime(tanpuraVol, currentTime, 0.1);
+
+      const tablaVol = tabla.enabled ? tabla.volume : 0;
+      this.tablaGain.gain.setTargetAtTime(tablaVol, currentTime, 0.1);
+
+      // If just enabled, we need to make sure scheduler picks them up
+      if ((tanpura.enabled || tabla.enabled) && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+      }
+      
+      // Start independent loops if DAW is stopped? 
+      // For now, instruments play when DAW plays OR when enabled? 
+      // User likely wants them as backing for practice even if timeline isn't running?
+      // Let's attach them to the main `isPlaying` or create a separate "Practice Mode".
+      // For Simplicity, let's make them play when `isPlaying` is true, 
+      // BUT also we might want them to play independently.
+      // Let's assume they run when the DAW Transport is running.
+  }
+
   play(clips: Clip[], tracks: Track[], startTime: number = 0) {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
@@ -178,6 +236,12 @@ class AudioEngine {
     this.currentBeat = Math.ceil(startTime / secondsPerBeat);
     const nextBeatTimeRelative = this.currentBeat * secondsPerBeat;
     this.nextNoteTime = this.ctx.currentTime + (nextBeatTimeRelative - startTime);
+    
+    // Sync Instruments Start
+    this.nextTanpuraNoteTime = this.ctx.currentTime + 0.1;
+    this.currentTanpuraString = 0;
+    this.nextTablaBeatTime = this.ctx.currentTime + 0.1;
+    this.currentTablaBeat = 0;
 
     this.syncTracks(tracks);
 
@@ -306,15 +370,139 @@ class AudioEngine {
     osc.stop(time + 0.05);
   }
 
-  scheduler() {
-      if (!this.metronomeEnabled || !this._isPlaying) return;
-      const lookahead = 0.1;
-      while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
-          this.scheduleClick(this.currentBeat, this.nextNoteTime);
-          const secondsPerBeat = 60.0 / this.bpm;
-          this.nextNoteTime += secondsPerBeat;
-          this.currentBeat++;
+  // --- Synthesis for Instruments ---
+
+  // Tanpura Synthesis
+  playTanpuraNote(freq: number, time: number, duration: number) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+
+      // Sawtooth for rich harmonics
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+
+      // Low pass to soften the buzz
+      filter.type = 'lowpass';
+      filter.frequency.value = 2000;
+      filter.Q.value = 1;
+
+      // ADSR
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(0.3, time + 0.5); // Slow attack
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.tanpuraGain);
+
+      osc.start(time);
+      osc.stop(time + duration);
+  }
+
+  scheduleTanpura() {
+      if (!this.tanpuraConfig || !this.tanpuraConfig.enabled) return;
+      
+      // Standard Tuning: Pa (Lower), Sa (Middle), Sa (Middle), Sa (Lower)
+      // Or Ma, or Ni based on tuning
+      const sa = NOTE_FREQS[this.tanpuraConfig.key] || 261.63;
+      const lowerSa = sa / 2;
+      
+      let firstStringFreq = sa * 0.75; // Pa (Perfect 5th below Sa?? No, Pa is 1.5x Sa, usually Lower Pa is 0.75x)
+      if (this.tanpuraConfig.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; // Lower Ma
+      if (this.tanpuraConfig.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; // Lower Ni
+      if (this.tanpuraConfig.tuning === 'Pa') firstStringFreq = sa * 0.75; // Lower Pa
+
+      const freqs = [firstStringFreq, sa, sa, lowerSa];
+      // Cycle Timing
+      const speed = this.tanpuraConfig.tempo || 60; // BPM effectively
+      const interval = 60 / speed;
+
+      while (this.nextTanpuraNoteTime < this.ctx.currentTime + 0.2) {
+          this.playTanpuraNote(freqs[this.currentTanpuraString], this.nextTanpuraNoteTime, interval * 4); // Long sustain
+          this.nextTanpuraNoteTime += interval;
+          this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
       }
+  }
+
+  // Tabla Synthesis (Simplified)
+  playTablaHit(type: 'dha' | 'dhin' | 'tin' | 'na' | 'ge' | 'ka', time: number) {
+      // Base freq for 'Sa'
+      const sa = NOTE_FREQS[this.tablaConfig?.key || 'C'] || 261.63;
+      // We usually tune the Dayan to Sa.
+      
+      const t = time;
+      
+      if (type === 'na' || type === 'tin' || type === 'dha' || type === 'dhin') {
+          // Resonant high pitch (Dayan)
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.frequency.setValueAtTime(sa, t);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.6, t + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          osc.connect(gain);
+          gain.connect(this.tablaGain);
+          osc.start(t);
+          osc.stop(t + 0.3);
+      }
+
+      if (type === 'ge' || type === 'dha' || type === 'dhin') {
+          // Bass swoop (Bayan)
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.frequency.setValueAtTime(100, t);
+          osc.frequency.exponentialRampToValueAtTime(60, t + 0.3); // Pitch bend
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.8, t + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+          osc.connect(gain);
+          gain.connect(this.tablaGain);
+          osc.start(t);
+          osc.stop(t + 0.4);
+      }
+  }
+
+  scheduleTabla() {
+      if (!this.tablaConfig || !this.tablaConfig.enabled) return;
+
+      const bpm = this.tablaConfig.bpm || 100;
+      const beatTime = 60 / bpm;
+      
+      // Patterns
+      const patterns: Record<string, string[]> = {
+          'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
+          'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
+          'Dadra': ['dha', 'dhin', 'na', 'dha', 'tin', 'na']
+      };
+      
+      const pattern = patterns[this.tablaConfig.taal] || patterns['TeenTaal'];
+
+      while (this.nextTablaBeatTime < this.ctx.currentTime + 0.2) {
+          const hit = pattern[this.currentTablaBeat % pattern.length];
+          this.playTablaHit(hit as any, this.nextTablaBeatTime);
+          this.nextTablaBeatTime += beatTime;
+          this.currentTablaBeat++;
+      }
+  }
+
+  scheduler() {
+      if (!this._isPlaying) return;
+      
+      // Standard Metronome
+      if (this.metronomeEnabled) {
+        const lookahead = 0.1;
+        while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
+            this.scheduleClick(this.currentBeat, this.nextNoteTime);
+            const secondsPerBeat = 60.0 / this.bpm;
+            this.nextNoteTime += secondsPerBeat;
+            this.currentBeat++;
+        }
+      }
+
+      // Instruments
+      this.scheduleTanpura();
+      this.scheduleTabla();
   }
 
   async startRecording(): Promise<void> {
