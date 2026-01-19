@@ -429,7 +429,7 @@ const Arranger: React.FC<ArrangerProps> = ({
       if (contextMenu) {
         const clip = project.clips.find(c => c.id === contextMenu.clipId);
         if (clip) {
-            const newClip = { ...clip, id: crypto.randomUUID(), start: clip.start + clip.duration, name: clip.name + ' copy' };
+            const newClip = { ...clip, id: crypto.randomUUID(), start: clip.start + clip.duration, name: `${clip.name} copy` };
             setProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
         }
         setContextMenu(null);
@@ -438,6 +438,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   return (
     <div 
+        role="application"
         className="flex flex-col h-full bg-studio-bg text-xs select-none"
         onPointerMove={handleGlobalPointerMove}
         onPointerUp={handleGlobalPointerUp}
@@ -482,7 +483,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                 <input 
                     type="number" 
                     value={project.bpm} 
-                    onChange={(e) => setProject(p => ({...p, bpm: parseInt(e.target.value) || 120}))}
+                    onChange={(e) => setProject(p => ({...p, bpm: parseInt(e.target.value, 10) || 120}))}
                     className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium w-8 text-center"
                 />
             </div>
@@ -563,10 +564,17 @@ const Arranger: React.FC<ArrangerProps> = ({
                         
                         {/* Sticky Track Header */}
                         <div 
+                            role="button"
+                            tabIndex={0}
                             className={`sticky left-0 z-30 bg-studio-panel border-r border-zinc-800 border-b border-zinc-800/50 shrink-0 flex flex-col p-2 relative transition-colors ${selectedTrackId === track.id ? 'bg-zinc-800' : ''}`}
                             style={{ width: headerWidth }}
                             onClick={() => onSelectTrack(track.id)}
                             onDoubleClick={() => onOpenInspector(track.id)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    onSelectTrack(track.id);
+                                }
+                            }}
                         >
                              <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center space-x-2 overflow-hidden">
@@ -657,6 +665,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         </div>
                                         
                                         <svg className="absolute inset-0 pointer-events-none z-20 opacity-50" width="100%" height="100%" preserveAspectRatio="none">
+                                            <title>Clip Fades</title>
                                             {clip.fadeIn > 0 && <path d={`M 0 100 L ${clip.fadeIn * zoom} 0 L 0 0 Z`} fill="black" />}
                                             {clip.fadeOut > 0 && <path d={`M ${clip.duration * zoom} 100 L ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} 0 Z`} fill="black" />}
                                         </svg>
@@ -704,7 +713,12 @@ const Arranger: React.FC<ArrangerProps> = ({
       </div>
       
       {contextMenu && (
-        <div className="fixed inset-0 z-[100]" onClick={() => setContextMenu(null)}>
+        <div 
+            className="fixed inset-0 z-[100]" 
+            onClick={() => setContextMenu(null)}
+            onKeyDown={(e) => { if(e.key === 'Escape') setContextMenu(null) }}
+            role="presentation"
+        >
             <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1"
                 style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
                 <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">

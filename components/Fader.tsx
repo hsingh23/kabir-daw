@@ -29,8 +29,13 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defa
 
     return (
         <div 
+            role="slider"
+            tabIndex={0}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(value * 100)}
             ref={trackRef}
-            className="relative w-10 cursor-pointer touch-none select-none py-2"
+            className="relative w-10 cursor-pointer touch-none select-none py-2 outline-none focus:ring-2 focus:ring-blue-500/50 rounded"
             style={{ height: `${height}px` }}
             onPointerDown={(e) => {
                 (e.target as Element).setPointerCapture(e.pointerId);
@@ -41,6 +46,11 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defa
             }}
             onPointerUp={(e) => (e.target as Element).releasePointerCapture(e.pointerId)}
             onDoubleClick={handleDoubleClick}
+            onKeyDown={(e) => {
+                const step = e.shiftKey ? 0.1 : 0.01;
+                if (e.key === 'ArrowUp') onChange(Math.min(1, value + step));
+                if (e.key === 'ArrowDown') onChange(Math.max(0, value - step));
+            }}
         >
              {/* Rail */}
              <div className="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-1.5 bg-black/40 rounded-full shadow-inner border border-white/5" />
@@ -48,6 +58,7 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defa
              {/* Ticks */}
              <div className="absolute top-2 bottom-2 left-0 right-0 pointer-events-none flex flex-col justify-between">
                 {[...Array(11)].map((_, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: visual grid only
                     <div key={i} className="flex justify-between w-full px-0.5">
                         <div className="w-1.5 h-px bg-zinc-600/50"></div>
                         <div className="w-1.5 h-px bg-zinc-600/50"></div>
