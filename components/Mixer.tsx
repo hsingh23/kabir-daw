@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ProjectState } from '../types';
 import Knob from './Knob';
 import CustomFader from './Fader';
@@ -16,7 +16,22 @@ interface MixerProps {
 }
 
 const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPause, onStop, onRecord }) => {
-  const [tab, setTab] = useState<'tracks' | 'instruments'>('tracks');
+  // Initialize tab from URL or default to 'tracks'
+  const [tab, setTab] = useState<'tracks' | 'instruments'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return (params.get('mixerTab') as 'tracks' | 'instruments') || 'tracks';
+  });
+
+  // Sync tab changes to URL
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (tab === 'tracks') {
+        url.searchParams.delete('mixerTab'); // clean URL for default
+    } else {
+        url.searchParams.set('mixerTab', tab);
+    }
+    window.history.replaceState({}, '', url);
+  }, [tab]);
 
   const updateTrack = (id: string, updates: Partial<typeof project.tracks[0]>) => {
     setProject(prev => ({
