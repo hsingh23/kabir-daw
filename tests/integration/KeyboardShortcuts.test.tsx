@@ -40,11 +40,11 @@ vi.mock('../../services/audio', () => ({
 }));
 
 // Mock ResizeObserver for Arranger
-global.ResizeObserver = class {
+globalThis.ResizeObserver = class {
   observe() {}
   unobserve() {}
   disconnect() {}
-};
+} as any;
 
 describe('App Keyboard Shortcuts', () => {
     
