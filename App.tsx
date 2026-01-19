@@ -19,6 +19,7 @@ const INITIAL_PROJECT: ProjectState = {
   loopStart: 0,
   loopEnd: 8,
   isLooping: false,
+  metronomeOn: false,
   masterVolume: 1.0,
   effects: { reverb: 0.2, delay: 0.1 }
 };
@@ -42,19 +43,24 @@ const App: React.FC = () => {
     audio.syncTracks(project.tracks);
   }, [project.tracks]);
 
-  // Audio Engine Sync: Global
+  // Audio Engine Sync: Global & Metronome
   useEffect(() => {
     audio.setMasterVolume(project.masterVolume);
     audio.setDelayLevel(project.effects.delay);
-  }, [project.masterVolume, project.effects]);
+    audio.bpm = project.bpm;
+    audio.metronomeEnabled = project.metronomeOn;
+  }, [project.masterVolume, project.effects, project.bpm, project.metronomeOn]);
 
   // Playback Loop
   useEffect(() => {
     const loop = () => {
       if (isPlaying) {
+        // Scheduler for Metronome
+        audio.scheduler();
+
         const time = audio.getCurrentTime();
         
-        // Loop Logic (only if not recording, usually DAWs don't loop record in basic mode)
+        // Loop Logic
         if (project.isLooping && time >= project.loopEnd && !isRecording) {
             audio.play(project.clips, project.tracks, project.loopStart);
             setCurrentTime(project.loopStart);
@@ -290,6 +296,10 @@ const App: React.FC = () => {
              setProject={setProject}
              currentTime={currentTime}
              isPlaying={isPlaying}
+             isRecording={isRecording}
+             onPlayPause={togglePlay}
+             onStop={stop}
+             onRecord={handleRecordToggle}
              onSeek={handleSeek}
              onSplit={handleSplit}
              zoom={zoom}

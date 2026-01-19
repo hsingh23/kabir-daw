@@ -28,6 +28,7 @@ export interface ProjectState {
   loopStart: number;
   loopEnd: number;
   isLooping: boolean;
+  metronomeOn: boolean;
   masterVolume: number;
   effects: {
     reverb: number; // 0-1
