@@ -1,0 +1,7 @@
+{
+  "name": "PocketStudio DAW",
+  "description": "A professional-grade mobile-first DAW with waveform editing, effects, and local storage.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
