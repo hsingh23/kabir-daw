@@ -1,4 +1,5 @@
-import { Clip, Track } from '../types';
+import { Clip, Track, ProjectState } from '../types';
+import { audioBufferToWav } from './utils';
 
 interface TrackChannel {
     input: GainNode; // Entry point for sources
@@ -208,13 +209,14 @@ class AudioEngine {
       playDuration: number, 
       destination: AudioNode,
       clip: Clip,
-      elapsedClipTime: number
+      elapsedClipTime: number,
+      ctx: BaseAudioContext = this.ctx
     ) {
-    const source = this.ctx.createBufferSource();
+    const source = ctx.createBufferSource();
     source.buffer = buffer;
 
     // Envelope Gain for Fades
-    const envelope = this.ctx.createGain();
+    const envelope = ctx.createGain();
     source.connect(envelope);
     envelope.connect(destination); // Connect to Track Input (Start of chain)
 
@@ -254,7 +256,9 @@ class AudioEngine {
     }
 
     source.start(when, offset, playDuration);
-    this.activeSources.set(clip.id + Math.random(), source);
+    if (ctx === this.ctx) {
+        this.activeSources.set(clip.id + Math.random(), source as AudioBufferSourceNode);
+    }
   }
 
   stop() {
@@ -346,6 +350,71 @@ class AudioEngine {
         };
         this.mediaRecorder.stop();
     });
+  }
+
+  async renderProject(project: ProjectState): Promise<Blob | null> {
+    if (project.clips.length === 0) return null;
+
+    const sampleRate = 44100;
+    const duration = Math.max(...project.clips.map(c => c.start + c.duration)) + 2; // +2s tail
+    const length = Math.ceil(duration * sampleRate);
+    const offlineCtx = new OfflineAudioContext(2, length, sampleRate);
+
+    // Reconstruct Master Chain on Offline Context
+    const masterGain = offlineCtx.createGain();
+    masterGain.gain.value = project.masterVolume;
+    
+    const compressor = offlineCtx.createDynamicsCompressor();
+    masterGain.connect(compressor);
+    compressor.connect(offlineCtx.destination);
+
+    // Create Track Nodes
+    const trackNodes = new Map<string, GainNode>();
+    project.tracks.forEach(track => {
+        const trackGain = offlineCtx.createGain();
+        const isMuted = track.muted || (project.tracks.some(t => t.solo) && !track.solo);
+        trackGain.gain.value = isMuted ? 0 : track.volume;
+        
+        // Simple EQ simulation for offline (filters)
+        const low = offlineCtx.createBiquadFilter();
+        low.type = 'lowshelf';
+        low.frequency.value = 320;
+        low.gain.value = track.eq?.low || 0;
+
+        const mid = offlineCtx.createBiquadFilter();
+        mid.type = 'peaking';
+        mid.frequency.value = 1000;
+        mid.gain.value = track.eq?.mid || 0;
+
+        const high = offlineCtx.createBiquadFilter();
+        high.type = 'highshelf';
+        high.frequency.value = 3200;
+        high.gain.value = track.eq?.high || 0;
+
+        const panner = offlineCtx.createStereoPanner();
+        panner.pan.value = track.pan;
+
+        trackGain.connect(low);
+        low.connect(mid);
+        mid.connect(high);
+        high.connect(panner);
+        panner.connect(masterGain);
+        
+        trackNodes.set(track.id, trackGain);
+    });
+
+    // Schedule Clips
+    project.clips.forEach(clip => {
+        const buffer = this.buffers.get(clip.bufferKey);
+        const trackNode = trackNodes.get(clip.trackId);
+        
+        if (buffer && trackNode) {
+            this.scheduleSource(buffer, clip.start, clip.offset, clip.duration, trackNode, clip, 0, offlineCtx);
+        }
+    });
+
+    const renderedBuffer = await offlineCtx.startRendering();
+    return audioBufferToWav(renderedBuffer);
   }
 }
 
