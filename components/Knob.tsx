@@ -6,9 +6,10 @@ interface KnobProps {
   onChange: (val: number) => void;
   min?: number;
   max?: number;
+  defaultValue?: number;
 }
 
-const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1 }) => {
+const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1, defaultValue }) => {
   const [isDragging, setIsDragging] = useState(false);
   const startY = useRef<number>(0);
   const startValue = useRef<number>(0);
@@ -38,6 +39,12 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1 })
     (e.target as Element).releasePointerCapture(e.pointerId);
   };
 
+  const handleDoubleClick = () => {
+      if (defaultValue !== undefined) {
+          onChange(defaultValue);
+      }
+  };
+
   return (
     <div className="flex flex-col items-center justify-center space-y-2 select-none touch-none">
       <div 
@@ -45,6 +52,7 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1 })
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onDoubleClick={handleDoubleClick}
       >
         {/* Inner metal texture effect */}
         <div className="absolute inset-1 rounded-full bg-gradient-to-tl from-zinc-300 to-zinc-100" />

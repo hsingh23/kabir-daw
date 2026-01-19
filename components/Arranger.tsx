@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2 } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -22,6 +22,8 @@ interface ArrangerProps {
   selectedClipId: string | null;
   onSelectClip: (id: string | null) => void;
   onOpenInspector: (trackId: string) => void;
+  onMoveTrack?: (from: number, to: number) => void;
+  onRenameClip?: (clipId: string, name: string) => void;
 }
 
 const TRACK_HEIGHT = 120; 
@@ -61,7 +63,9 @@ const Arranger: React.FC<ArrangerProps> = ({
     onSelectTrack,
     selectedClipId,
     onSelectClip,
-    onOpenInspector
+    onOpenInspector,
+    onMoveTrack,
+    onRenameClip
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
@@ -91,6 +95,9 @@ const Arranger: React.FC<ArrangerProps> = ({
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const isLongPressRef = useRef(false);
+
+  // Track Dragging State
+  const [trackDrag, setTrackDrag] = useState<{ id: string, startY: number, currentIndex: number, pointerId: number } | null>(null);
 
   // Pinch Zoom State
   const [pinchDist, setPinchDist] = useState<number | null>(null);
@@ -180,6 +187,19 @@ const Arranger: React.FC<ArrangerProps> = ({
     });
   };
 
+  // --- Pointer Events for Track Dragging ---
+  const handleTrackDragStart = (e: React.PointerEvent, trackId: string, index: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    (e.target as Element).setPointerCapture(e.pointerId);
+    setTrackDrag({
+        id: trackId,
+        startY: e.clientY,
+        currentIndex: index,
+        pointerId: e.pointerId
+    });
+  };
+
   // --- Pointer Events for Clips ---
   const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
@@ -235,6 +255,23 @@ const Arranger: React.FC<ArrangerProps> = ({
 
     if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
         onSeek(calculateSeekTime(e.clientX, e.shiftKey));
+        return;
+    }
+
+    if (trackDrag && trackDrag.pointerId === e.pointerId && onMoveTrack) {
+        const scrollContainer = scrollContainerRef.current;
+        if (!scrollContainer) return;
+        const rect = scrollContainer.getBoundingClientRect();
+        // Calculate the hypothetical index based on pointer Y
+        // Offset for ruler (32px) and scroll
+        const scrollTop = scrollContainer.scrollTop;
+        const relativeY = (e.clientY - rect.top) + scrollTop - 32;
+        const newIndex = Math.max(0, Math.min(project.tracks.length - 1, Math.floor(relativeY / TRACK_HEIGHT)));
+        
+        if (newIndex !== trackDrag.currentIndex) {
+            onMoveTrack(trackDrag.currentIndex, newIndex);
+            setTrackDrag(prev => prev ? ({ ...prev, currentIndex: newIndex }) : null);
+        }
         return;
     }
 
@@ -341,6 +378,10 @@ const Arranger: React.FC<ArrangerProps> = ({
         setLoopDrag(null);
         (e.target as Element).releasePointerCapture(e.pointerId);
     }
+    if (trackDrag && trackDrag.pointerId === e.pointerId) {
+        setTrackDrag(null);
+        (e.target as Element).releasePointerCapture(e.pointerId);
+    }
     if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
         setIsScrubbing({ active: false, pointerId: null });
         (e.target as Element).releasePointerCapture(e.pointerId);
@@ -364,6 +405,35 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const onTouchEnd = () => {
       setPinchDist(null);
+  };
+
+  const handleRename = () => {
+      if (contextMenu && onRenameClip) {
+          const clip = project.clips.find(c => c.id === contextMenu.clipId);
+          if (clip) {
+              const name = prompt("Rename clip:", clip.name);
+              if (name) onRenameClip(clip.id, name);
+          }
+          setContextMenu(null);
+      }
+  };
+
+  const handleDelete = () => {
+      if (contextMenu) {
+          setProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== contextMenu.clipId) }));
+          setContextMenu(null);
+      }
+  };
+
+  const handleDuplicate = () => {
+      if (contextMenu) {
+        const clip = project.clips.find(c => c.id === contextMenu.clipId);
+        if (clip) {
+            const newClip = { ...clip, id: crypto.randomUUID(), start: clip.start + clip.duration, name: clip.name + ' copy' };
+            setProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
+        }
+        setContextMenu(null);
+      }
   };
 
   return (
@@ -480,7 +550,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                     }} 
                 />
 
-                {project.tracks.map((track) => (
+                {project.tracks.map((track, index) => (
                     <div key={track.id} className="flex relative z-10 group" style={{ height: TRACK_HEIGHT }}>
                         
                         {/* Sticky Track Header */}
@@ -492,6 +562,14 @@ const Arranger: React.FC<ArrangerProps> = ({
                         >
                              <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center space-x-2 overflow-hidden">
+                                    {/* Drag Handle */}
+                                    <div 
+                                        className="cursor-grab active:cursor-grabbing text-zinc-600 hover:text-zinc-400 p-0.5"
+                                        onPointerDown={(e) => handleTrackDragStart(e, track.id, index)}
+                                    >
+                                        <GripVertical size={12} />
+                                    </div>
+
                                     <div className="w-6 h-6 rounded bg-zinc-900 flex items-center justify-center shadow-inner shrink-0" style={{ color: track.color }}>
                                         <TrackIcon name={track.name} color={track.color} />
                                     </div>
@@ -621,11 +699,15 @@ const Arranger: React.FC<ArrangerProps> = ({
         <div className="fixed inset-0 z-[100]" onClick={() => setContextMenu(null)}>
             <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1"
                 style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
-                <button className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
+                <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
                     <Copy size={14} /> <span>Duplicate</span>
                 </button>
                 <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2">
+                <button onClick={handleRename} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
+                    <Edit2 size={14} /> <span>Rename</span>
+                </button>
+                <div className="h-px bg-zinc-700 mx-2 my-1" />
+                <button onClick={handleDelete} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2">
                     <Trash2 size={14} /> <span>Delete</span>
                 </button>
             </div>

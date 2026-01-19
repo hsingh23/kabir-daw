@@ -4,10 +4,11 @@ interface FaderProps {
   value: number; // 0 to 1
   onChange: (val: number) => void;
   height?: number;
+  defaultValue?: number;
 }
 
 // Re-implementing Fader with Pointer Events for true vertical behavior across all devices
-const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200 }) => {
+const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defaultValue }) => {
     const trackRef = React.useRef<HTMLDivElement>(null);
 
     const handlePointerMove = (e: React.PointerEvent) => {
@@ -18,6 +19,12 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200 }) =>
         // Invert because Y grows downwards
         const newValue = 1 - (y / rect.height);
         onChange(newValue);
+    };
+
+    const handleDoubleClick = () => {
+        if (defaultValue !== undefined) {
+            onChange(defaultValue);
+        }
     };
 
     return (
@@ -33,6 +40,7 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200 }) =>
                 if (e.buttons === 1) handlePointerMove(e);
             }}
             onPointerUp={(e) => (e.target as Element).releasePointerCapture(e.pointerId)}
+            onDoubleClick={handleDoubleClick}
         >
              {/* Rail */}
              <div className="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-1.5 bg-black/40 rounded-full shadow-inner border border-white/5" />
