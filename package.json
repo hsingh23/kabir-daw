@@ -1,23 +1,46 @@
 {
-  "name": "pocketstudio-daw",
-  "private": true,
-  "version": "0.0.0",
+  "name": "pocket-studio-daw",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "validate": "concurrently \"bun:lint\" \"bun:typecheck\" \"bun:test:unit\" \"bun:build\"",
+    "validate:all": "concurrently \"bun:lint\" \"bun:typecheck\" \"bun:test:unit\" \"bun:test:e2e\" \"bun:build\""
   },
   "dependencies": {
-    "react-dom": "^19.2.3",
-    "react": "^19.2.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "lucide-react": "^0.562.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "idb": "^8.0.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@biomejs/biome": "1.5.3",
+    "@playwright/test": "^1.41.0",
+    "@testing-library/react": "^14.2.0",
+    "@testing-library/jest-dom": "^6.4.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/uuid": "^9.0.8",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
+    "jsdom": "^24.0.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.0",
+    "vite-plugin-pwa": "^0.19.0",
+    "vitest": "^1.2.2"
   }
 }
