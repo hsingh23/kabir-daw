@@ -158,6 +158,14 @@ class AudioEngine {
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
 
+    // Smart Loop Logic
+    // If the requested play duration + offset exceeds the natural buffer length, enable looping.
+    if (offset + duration > buffer.duration) {
+        source.loop = true;
+        source.loopStart = 0;
+        source.loopEnd = buffer.duration;
+    }
+
     // Connect Source -> Track Channel (Persistent) -> Master
     source.connect(channel.gain);
 
