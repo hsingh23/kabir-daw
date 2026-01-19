@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ProjectState } from '../types';
 import Knob from './Knob';
 import CustomFader from './Fader';
-import { Play, Pause, Square, Circle } from 'lucide-react';
+import Tanpura from './Tanpura';
+import Tabla from './Tabla';
+import { Play, Pause, Square, Circle, Sliders, Music2 } from 'lucide-react';
 
 interface MixerProps {
   project: ProjectState;
@@ -14,7 +16,8 @@ interface MixerProps {
 }
 
 const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPause, onStop, onRecord }) => {
-  
+  const [tab, setTab] = useState<'tracks' | 'instruments'>('tracks');
+
   const updateTrack = (id: string, updates: Partial<typeof project.tracks[0]>) => {
     setProject(prev => ({
       ...prev,
@@ -80,38 +83,69 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
           </div>
       </div>
 
-      {/* Faders Section */}
-      <div className="flex-1 px-4 overflow-x-auto">
-        <div className="flex space-x-4 min-w-max pb-8 px-4 justify-center">
-            {project.tracks.map(track => (
-                <div key={track.id} className="flex flex-col items-center space-y-3 group p-2 bg-zinc-900/50 rounded-lg border border-zinc-800/50">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center">{track.name}</span>
-                    
-                    {/* Mute/Solo Buttons */}
-                    <div className="flex space-x-1">
-                        <button 
-                            onClick={() => updateTrack(track.id, { muted: !track.muted })}
-                            className={`w-6 h-6 rounded text-[10px] font-bold ${track.muted ? 'bg-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
-                        >M</button>
-                        <button 
-                            onClick={() => updateTrack(track.id, { solo: !track.solo })}
-                            className={`w-6 h-6 rounded text-[10px] font-bold ${track.solo ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
-                        >S</button>
-                    </div>
+      {/* Tabs */}
+      <div className="flex justify-center mb-6">
+          <div className="bg-zinc-900 rounded-full p-1 flex space-x-1 border border-zinc-800">
+              <button 
+                onClick={() => setTab('tracks')} 
+                className={`px-6 py-2 rounded-full text-xs font-bold transition-all flex items-center space-x-2 ${tab === 'tracks' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                  <Sliders size={14} /> <span>Faders</span>
+              </button>
+              <button 
+                onClick={() => setTab('instruments')} 
+                className={`px-6 py-2 rounded-full text-xs font-bold transition-all flex items-center space-x-2 ${tab === 'instruments' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                  <Music2 size={14} /> <span>Backing</span>
+              </button>
+          </div>
+      </div>
 
-                    <CustomFader 
-                        value={track.volume} 
-                        onChange={(v) => updateTrack(track.id, { volume: v })} 
-                        height={200}
-                        defaultValue={0.8}
-                    />
-                    
-                    <div className="w-full flex justify-center">
-                        <div className="w-8 h-8 rounded shadow-md opacity-80" style={{ backgroundColor: track.color }} />
+      {/* Content Section */}
+      <div className="flex-1 px-4 overflow-x-auto pb-8">
+        {tab === 'tracks' ? (
+            <div className="flex space-x-4 min-w-max px-4 justify-center">
+                {project.tracks.map(track => (
+                    <div key={track.id} className="flex flex-col items-center space-y-3 group p-2 bg-zinc-900/50 rounded-lg border border-zinc-800/50">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center">{track.name}</span>
+                        
+                        {/* Mute/Solo Buttons */}
+                        <div className="flex space-x-1">
+                            <button 
+                                onClick={() => updateTrack(track.id, { muted: !track.muted })}
+                                className={`w-6 h-6 rounded text-[10px] font-bold ${track.muted ? 'bg-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
+                            >M</button>
+                            <button 
+                                onClick={() => updateTrack(track.id, { solo: !track.solo })}
+                                className={`w-6 h-6 rounded text-[10px] font-bold ${track.solo ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
+                            >S</button>
+                        </div>
+
+                        <CustomFader 
+                            value={track.volume} 
+                            onChange={(v) => updateTrack(track.id, { volume: v })} 
+                            height={200}
+                            defaultValue={0.8}
+                        />
+                        
+                        <div className="w-full flex justify-center">
+                            <div className="w-8 h-8 rounded shadow-md opacity-80" style={{ backgroundColor: track.color }} />
+                        </div>
                     </div>
-                </div>
-            ))}
-        </div>
+                ))}
+            </div>
+        ) : (
+            <div className="max-w-md mx-auto space-y-6">
+                <Tanpura 
+                    config={project.tanpura} 
+                    onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} 
+                />
+                <Tabla 
+                    config={project.tabla} 
+                    onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} 
+                />
+            </div>
+        )}
       </div>
     </div>
   );

@@ -27,6 +27,22 @@ export interface Track {
   };
 }
 
+export interface TanpuraState {
+  enabled: boolean;
+  volume: number;
+  key: string; // "C", "C#", etc.
+  tuning: 'Pa' | 'Ma' | 'Ni'; // First string tuning relative to Sa
+  tempo: number;
+}
+
+export interface TablaState {
+  enabled: boolean;
+  volume: number;
+  taal: string; // "TeenTaal", "Dadra", "Keherwa"
+  bpm: number;
+  key: string; // Tuning
+}
+
 export interface ProjectState {
   id: string;
   bpm: number;
@@ -41,6 +57,8 @@ export interface ProjectState {
     reverb: number; // 0-1
     delay: number; // 0-1
   };
+  tanpura: TanpuraState;
+  tabla: TablaState;
 }
 
 export enum ToolMode {

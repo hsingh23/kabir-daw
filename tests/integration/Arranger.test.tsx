@@ -30,7 +30,21 @@ const mockProject: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1,
-  effects: { reverb: 0, delay: 0 }
+  effects: { reverb: 0, delay: 0 },
+  tanpura: {
+    enabled: false,
+    volume: 0.5,
+    key: 'C',
+    tuning: 'Pa',
+    tempo: 60
+  },
+  tabla: {
+    enabled: false,
+    volume: 0.5,
+    taal: 'TeenTaal',
+    bpm: 100,
+    key: 'C'
+  }
 };
 
 describe('Arranger Integration', () => {

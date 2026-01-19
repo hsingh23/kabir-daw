@@ -23,11 +23,30 @@ const INITIAL_PROJECT: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1.0,
-  effects: { reverb: 0.2, delay: 0.1 }
+  effects: { reverb: 0.2, delay: 0.1 },
+  tanpura: {
+      enabled: false,
+      volume: 0.5,
+      key: 'C',
+      tuning: 'Pa',
+      tempo: 60
+  },
+  tabla: {
+      enabled: false,
+      volume: 0.5,
+      taal: 'TeenTaal',
+      bpm: 100,
+      key: 'C'
+  }
 };
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'mixer' | 'arranger'>('mixer');
+  // URL State Initialization
+  const [view, setView] = useState<'mixer' | 'arranger'>(() => {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get('view') as 'mixer' | 'arranger') || 'mixer';
+  });
+
   const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
   const [past, setPast] = useState<ProjectState[]>([]);
   const [future, setFuture] = useState<ProjectState[]>([]);
@@ -48,12 +67,21 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveTimeoutRef = useRef<number | null>(null);
 
+  // Sync URL State
+  useEffect(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', view);
+      window.history.replaceState({}, '', url);
+  }, [view]);
+
   // Load Project on Mount
   useEffect(() => {
       const load = async () => {
           const saved = await getProject('default-project');
           if (saved) {
+              // Migration for new state fields
               const migrated = {
+                  ...INITIAL_PROJECT,
                   ...saved,
                   tracks: saved.tracks.map((t: any) => ({
                       ...t,
@@ -215,6 +243,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
+    audio.syncInstruments(project.tanpura, project.tabla);
     audio.setMasterVolume(project.masterVolume);
     audio.setDelayLevel(project.effects.delay);
     audio.bpm = project.bpm;
@@ -384,7 +413,7 @@ const App: React.FC = () => {
   }, [updateProject]);
 
   return (
-    <div className="flex flex-col h-screen bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
+    <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
       
       {/* Header */}
       <div className="h-12 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-4 z-50">
@@ -475,7 +504,7 @@ const App: React.FC = () => {
           </div>
       )}
 
-      <div className="h-16 bg-studio-panel border-t border-zinc-800 flex items-center justify-around z-50 pb-safe">
+      <div className="h-16 bg-studio-panel border-t border-zinc-800 flex items-center justify-around z-50 pb-safe shrink-0">
         <button onClick={() => setView('mixer')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'mixer' ? 'text-studio-accent' : 'text-zinc-500'}`}>
             <Mic size={24} />
             <span className="text-[10px] font-medium">Studio</span>
