@@ -6,7 +6,7 @@ import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare, Maximize, AlignStartVertical, Split } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -460,8 +460,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                         if (newStart < 0) newStart = 0; 
                         
                         let targetTrackId = c.trackId;
-                        // Only allow track changing if a single clip is selected, or if we handle group track shifting (complex)
-                        // For now, only the dragged clip can change tracks if it's the *primary* one.
                         if (c.id === dragState.clipId && scrollContainerRef.current) {
                              const containerRect = scrollContainerRef.current.getBoundingClientRect();
                              const scrollTop = scrollContainerRef.current.scrollTop;
@@ -665,12 +663,55 @@ const Arranger: React.FC<ArrangerProps> = ({
         setContextMenu(null);
       }
   };
+  
+  const handleQuantize = () => {
+      if (contextMenu) {
+          const clip = project.clips.find(c => c.id === contextMenu.clipId);
+          if (clip) {
+              const snap = snapGrid > 0 ? snapGrid : 1;
+              const secondsPerGrid = (60 / project.bpm) * snap;
+              const newStart = Math.round(clip.start / secondsPerGrid) * secondsPerGrid;
+              setProject(prev => ({
+                  ...prev,
+                  clips: prev.clips.map(c => c.id === clip.id ? { ...c, start: newStart } : c)
+              }));
+          }
+          setContextMenu(null);
+      }
+  };
+
+  const handleSplitContextMenu = () => {
+      if (contextMenu) {
+          // Calculate time based on click X relative to timeline
+          // We stored clientX in contextMenu.x
+          // We need container scrollLeft and rect
+          const container = scrollContainerRef.current;
+          if (container) {
+              const rect = container.getBoundingClientRect();
+              const scrollLeft = container.scrollLeft;
+              const clickX = contextMenu.x - rect.left + scrollLeft - headerWidth;
+              const time = Math.max(0, clickX / zoom);
+              onSplit(contextMenu.clipId, time);
+          }
+          setContextMenu(null);
+      }
+  };
 
   const handleColorChange = (color: string) => {
       if (contextMenu && onColorClip) {
           onColorClip(contextMenu.clipId, color);
           setContextMenu(null);
       }
+  };
+  
+  const zoomToFit = () => {
+      if (project.clips.length === 0) return;
+      const end = Math.max(...project.clips.map(c => c.start + c.duration), project.loopEnd);
+      if (end === 0) return;
+      
+      const containerWidth = window.innerWidth - headerWidth - 40; // padding
+      const newZoom = containerWidth / end;
+      setZoom(Math.max(10, Math.min(400, newZoom)));
   };
 
   const handleTrackNameDoubleClick = (e: React.MouseEvent, trackId: string, currentName: string) => {
@@ -715,6 +756,9 @@ const Arranger: React.FC<ArrangerProps> = ({
          </div>
 
          <div className="flex items-center space-x-3 shrink-0">
+             <button onClick={zoomToFit} className="p-1.5 rounded-md text-zinc-500 hover:text-white transition-all bg-zinc-900 border border-zinc-800" title="Zoom to Fit">
+                 <Maximize size={14} />
+             </button>
              <button onClick={() => setShowBacking(!showBacking)} className={`flex items-center space-x-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 hover:text-white transition-colors ${showBacking ? 'border-studio-accent text-studio-accent' : ''}`}>
                 <Music2 size={14} />
              </button>
@@ -931,6 +975,10 @@ const Arranger: React.FC<ArrangerProps> = ({
                     ))}
                 </div>
                 <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Copy size={14} /> <span>Duplicate</span></button>
+                <div className="h-px bg-zinc-700 mx-2 my-1" />
+                <button onClick={handleQuantize} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><AlignStartVertical size={14} /> <span>Quantize Start</span></button>
+                <div className="h-px bg-zinc-700 mx-2 my-1" />
+                <button onClick={handleSplitContextMenu} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Split size={14} /> <span>Split Here</span></button>
                 <div className="h-px bg-zinc-700 mx-2 my-1" />
                 <button onClick={handleRename} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Edit2 size={14} /> <span>Rename</span></button>
                 <div className="h-px bg-zinc-700 mx-2 my-1" />
