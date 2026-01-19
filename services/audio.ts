@@ -72,6 +72,7 @@ class AudioEngine {
   // Recording
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: BlobPart[] = [];
+  private recordingMimeType: string = 'audio/webm';
 
   constructor() {
     this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -79,6 +80,10 @@ class AudioEngine {
     // Master Chain
     this.masterGain = this.ctx.createGain();
     this.compressor = this.ctx.createDynamicsCompressor();
+    this.compressor.knee.value = 10;
+    this.compressor.attack.value = 0.05;
+    this.compressor.release.value = 0.25;
+
     this.masterAnalyser = this.ctx.createAnalyser();
     this.masterAnalyser.fftSize = 256;
     this.masterAnalyser.smoothingTimeConstant = 0.5;
@@ -405,6 +410,11 @@ class AudioEngine {
     this.masterGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
   }
 
+  setMasterCompressor(threshold: number, ratio: number) {
+      this.compressor.threshold.setTargetAtTime(threshold, this.ctx.currentTime, 0.1);
+      this.compressor.ratio.setTargetAtTime(ratio, this.ctx.currentTime, 0.1);
+  }
+
   setMetronomeVolume(val: number) {
       this.metronomeGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
   }
@@ -508,7 +518,13 @@ class AudioEngine {
 
   async startRecording() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.mediaRecorder = new MediaRecorder(stream);
+      
+      // Determine supported MIME type (fixes Safari recording issues)
+      const types = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav'];
+      const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      
+      this.recordingMimeType = mimeType;
+      this.mediaRecorder = new MediaRecorder(stream, { mimeType });
       this.recordedChunks = [];
       
       this.mediaRecorder.ondataavailable = (e) => {
@@ -523,7 +539,7 @@ class AudioEngine {
           if (!this.mediaRecorder) return resolve(undefined);
           
           this.mediaRecorder.onstop = () => {
-              const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+              const blob = new Blob(this.recordedChunks, { type: this.recordingMimeType });
               this.recordedChunks = [];
               if (this.mediaRecorder) {
                 this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
@@ -643,6 +659,10 @@ class AudioEngine {
       masterGain.gain.value = project.masterVolume;
       
       const compressor = offlineCtx.createDynamicsCompressor();
+      if (project.masterCompressor) {
+          compressor.threshold.value = project.masterCompressor.threshold;
+          compressor.ratio.value = project.masterCompressor.ratio;
+      }
       masterGain.connect(compressor);
       compressor.connect(offlineCtx.destination);
       

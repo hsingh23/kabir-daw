@@ -31,6 +31,10 @@ const mockProject: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1,
+  masterCompressor: {
+    threshold: -24,
+    ratio: 12
+  },
   effects: { reverb: 0, delay: 0, chorus: 0 },
   tanpura: {
     enabled: false,

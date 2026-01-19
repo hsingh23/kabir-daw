@@ -42,31 +42,56 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
     }));
   };
 
+  const updateCompressor = (updates: Partial<typeof project.masterCompressor>) => {
+      setProject(prev => ({
+          ...prev,
+          masterCompressor: { ...prev.masterCompressor, ...updates }
+      }));
+  };
+
   return (
     <div className="flex flex-col h-full bg-studio-bg overflow-y-auto no-scrollbar pb-24">
       
       {/* Top Effects Section */}
       <div className="p-6 bg-gradient-to-b from-zinc-800 to-studio-bg border-b border-zinc-700 shadow-xl z-20">
-        <div className="flex justify-around items-center max-w-lg mx-auto">
-           <Knob 
-            label="Reverb" 
-            value={project.effects.reverb} 
-            onChange={(v) => setProject(p => ({...p, effects: {...p.effects, reverb: v}}))} 
-            defaultValue={0.2}
-           />
-           <Knob 
-            label="Delay" 
-            value={project.effects.delay} 
-            onChange={(v) => setProject(p => ({...p, effects: {...p.effects, delay: v}}))} 
-            defaultValue={0.1}
-           />
-           <Knob 
-            label="Chorus" 
-            value={project.effects.chorus} 
-            onChange={(v) => setProject(p => ({...p, effects: {...p.effects, chorus: v}}))} 
-            defaultValue={0.0}
-           />
-           <div className="w-px h-10 bg-zinc-700 mx-2" />
+        <div className="flex justify-around items-center max-w-2xl mx-auto flex-wrap gap-4">
+           {/* Reverb/Delay/Chorus Group */}
+           <div className="flex space-x-2 md:space-x-4">
+               <Knob 
+                label="Reverb" 
+                value={project.effects.reverb} 
+                onChange={(v) => setProject(p => ({...p, effects: {...p.effects, reverb: v}}))} 
+                defaultValue={0.2}
+               />
+               <Knob 
+                label="Delay" 
+                value={project.effects.delay} 
+                onChange={(v) => setProject(p => ({...p, effects: {...p.effects, delay: v}}))} 
+                defaultValue={0.1}
+               />
+           </div>
+
+           <div className="w-px h-10 bg-zinc-700 hidden md:block" />
+
+           {/* Dynamics Group */}
+           <div className="flex space-x-2 md:space-x-4 bg-black/20 p-2 rounded-xl">
+               <Knob 
+                label="Compress" 
+                value={(project.masterCompressor.threshold + 60) / 60} // Map -60..0 to 0..1
+                onChange={(v) => updateCompressor({ threshold: (v * 60) - 60 })} 
+                defaultValue={0.6} // -24dB
+               />
+               <Knob 
+                label="Ratio" 
+                value={(project.masterCompressor.ratio - 1) / 19} // Map 1..20 to 0..1
+                onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} 
+                defaultValue={0.57} // ~12
+               />
+           </div>
+
+           <div className="w-px h-10 bg-zinc-700 hidden md:block" />
+
+           {/* Master Section */}
            <div className="flex space-x-2 h-16 items-center">
              <LevelMeter vertical={true} />
              <Knob 

@@ -1,3 +1,4 @@
+
 import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import Library from '../../components/Library';
@@ -25,11 +26,17 @@ describe('Library Component', () => {
   it('loads and displays assets', async () => {
     (db.getAllAssetKeys as any).mockResolvedValue(['kick.wav', 'snare.wav']);
     
-    const { getByText } = render(<Library />);
+    const { getByText, queryByText } = render(<Library />);
     
+    // Switch to assets tab to trigger load
+    const assetsTab = getByText('Assets');
+    assetsTab.click();
+    
+    // Check loading state
     expect(getByText('Loading library...')).toBeInTheDocument();
     
     await waitFor(() => {
+        expect(queryByText('Loading library...')).not.toBeInTheDocument();
         expect(getByText('kick.wav')).toBeInTheDocument();
         expect(getByText('snare.wav')).toBeInTheDocument();
     });

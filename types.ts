@@ -54,6 +54,10 @@ export interface ProjectState {
   isLooping: boolean;
   metronomeOn: boolean;
   masterVolume: number;
+  masterCompressor: {
+      threshold: number; // -60 to 0 dB
+      ratio: number; // 1 to 20
+  };
   effects: {
     reverb: number; // 0-1
     delay: number; // 0-1

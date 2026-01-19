@@ -1,3 +1,4 @@
+
 // Simple Promise wrapper for IndexedDB
 
 const DB_NAME = 'PocketStudioDB';
@@ -97,6 +98,28 @@ export const getProject = async (id: string): Promise<any> => {
     const store = tx.objectStore(PROJECT_STORE);
     const req = store.get(id);
     req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+};
+
+export const getAllProjects = async (): Promise<any[]> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, 'readonly');
+    const store = tx.objectStore(PROJECT_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+};
+
+export const deleteProject = async (id: string): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PROJECT_STORE, 'readwrite');
+    const store = tx.objectStore(PROJECT_STORE);
+    const req = store.delete(id);
+    req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
 };
