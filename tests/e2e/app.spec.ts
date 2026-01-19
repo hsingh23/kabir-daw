@@ -18,8 +18,32 @@ test.describe('PocketStudio E2E', () => {
     // Navigate to Arranger View
     const arrangerBtn = page.getByText('Arranger');
     await arrangerBtn.click();
-
     await expect(page.getByText('TRACKS')).toBeVisible();
+
+    // Go back to Studio (Mixer)
+    const studioBtn = page.getByText('Studio');
+    await studioBtn.click();
+    await expect(page.getByText('Studio Mix')).toBeVisible();
+  });
+
+  test('instruments tab functionality', async ({ page }) => {
+    // Switch to Backing Tab
+    await page.getByText('Backing').click();
+    
+    // Check Tanpura presence
+    await expect(page.getByText('TANPURA DRONE')).toBeVisible();
+    await expect(page.getByText('First String')).toBeVisible();
+    
+    // Check Tabla presence
+    await expect(page.getByText('TABLA PERCUSSION')).toBeVisible();
+    await expect(page.getByText('Taal Pattern')).toBeVisible();
+
+    // Verify URL update
+    expect(page.url()).toContain('mixerTab=instruments');
+    
+    // Reload page to verify state persistence
+    await page.reload();
+    await expect(page.getByText('TANPURA DRONE')).toBeVisible();
   });
 
   test('export functionality check', async ({ page }) => {
