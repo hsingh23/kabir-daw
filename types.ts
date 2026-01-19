@@ -46,6 +46,7 @@ export interface AssetMetadata {
   name: string;
   type: 'loop' | 'oneshot' | 'stem' | 'song';
   instrument: string; // 'Drums', 'Bass', 'Synth', etc.
+  group?: string; // Song Name or Pack Name
   key?: string;
   bpm?: number;
   tags: string[];

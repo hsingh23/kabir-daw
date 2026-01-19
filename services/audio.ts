@@ -219,10 +219,15 @@ class AudioEngine {
   async loadAudio(key: string, blob: Blob): Promise<AudioBuffer> {
     if (this.buffers.has(key)) return this.buffers.get(key)!;
 
-    const arrayBuffer = await blob.arrayBuffer();
-    const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-    this.buffers.set(key, audioBuffer);
-    return audioBuffer;
+    try {
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+        this.buffers.set(key, audioBuffer);
+        return audioBuffer;
+    } catch (e) {
+        console.error("Error decoding audio data:", e);
+        throw new Error("Failed to decode audio. The file format may not be supported.");
+    }
   }
 
   getTrackChannel(trackId: string): TrackChannel {
