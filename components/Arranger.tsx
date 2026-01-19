@@ -9,7 +9,7 @@ interface ArrangerProps {
   currentTime: number;
   isPlaying: boolean;
   isRecording: boolean;
-  recordingStartTime?: number; // Added for ghost clip calculation
+  recordingStartTime?: number;
   onPlayPause: () => void;
   onStop: () => void;
   onRecord: () => void;
@@ -25,7 +25,6 @@ interface ArrangerProps {
 }
 
 const TRACK_HEIGHT = 120; 
-const HEADER_WIDTH = 160; 
 
 const SNAP_OPTIONS = [
     { label: 'Off', value: 0 },
@@ -67,6 +66,15 @@ const Arranger: React.FC<ArrangerProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
   const [snapGrid, setSnapGrid] = useState(1); 
+  
+  // Responsive Header Logic
+  const [headerWidth, setHeaderWidth] = useState(160);
+  useEffect(() => {
+    const handleResize = () => setHeaderWidth(window.innerWidth < 768 ? 110 : 160);
+    handleResize(); // Init
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   
   // Interaction State
   const [dragState, setDragState] = useState<{
@@ -118,16 +126,15 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Auto-scroll during playback
   useEffect(() => {
     if ((isPlaying || isRecording) && scrollContainerRef.current) {
-        const playheadX = (currentTime * zoom) + HEADER_WIDTH;
+        const playheadX = (currentTime * zoom) + headerWidth;
         const container = scrollContainerRef.current;
-        // Follow playhead more strictly when recording
         const threshold = isRecording ? 0.8 : 0.9;
         
         if (playheadX > container.scrollLeft + container.clientWidth * threshold) {
-            container.scrollLeft = playheadX - HEADER_WIDTH - (container.clientWidth * 0.1);
+            container.scrollLeft = playheadX - headerWidth - (container.clientWidth * 0.1);
         }
     }
-  }, [currentTime, isPlaying, isRecording, zoom]);
+  }, [currentTime, isPlaying, isRecording, zoom, headerWidth]);
 
   const updateTrack = (id: string, updates: Partial<Track>) => {
     setProject(prev => ({
@@ -141,7 +148,7 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (!rect) return 0;
     const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
     const contentX = clientX - rect.left + scrollLeft;
-    const timelineX = contentX - HEADER_WIDTH;
+    const timelineX = contentX - headerWidth;
     const time = Math.max(0, timelineX / zoom);
     
     if (snap && snapGrid > 0) {
@@ -177,20 +184,17 @@ const Arranger: React.FC<ArrangerProps> = ({
   const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
     
-    // Right Click
     if (e.button === 2) {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
         return;
     }
 
-    // Long Press Detection for Touch
     if (e.pointerType === 'touch') {
         isLongPressRef.current = false;
         longPressTimerRef.current = window.setTimeout(() => {
             isLongPressRef.current = true;
             setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
-            // Cancel drag if long press triggers
             setDragState(null);
         }, 600);
     }
@@ -199,7 +203,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     onSelectClip(clip.id);
     setContextMenu(null);
 
-    // Tools
     if (tool === ToolMode.SPLIT && mode === 'MOVE') {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
@@ -213,7 +216,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         return;
     }
 
-    // Start Drag
     (e.target as Element).setPointerCapture(e.pointerId);
     setDragState({
         clipId: clip.id,
@@ -226,7 +228,6 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleGlobalPointerMove = (e: React.PointerEvent) => {
-    // Clear long press if moved significantly
     if (longPressTimerRef.current && Math.abs(e.movementX) + Math.abs(e.movementY) > 5) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
@@ -237,7 +238,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         return;
     }
 
-    // Don't drag if we just triggered a long press menu
     if (isLongPressRef.current) return;
 
     if (dragState && dragState.pointerId === e.pointerId) {
@@ -254,7 +254,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
             updatedClip.start = Math.max(0, newStart);
 
-            // Vertical Track Moving
             if (scrollContainerRef.current) {
                 const containerRect = scrollContainerRef.current.getBoundingClientRect();
                 const scrollTop = scrollContainerRef.current.scrollTop;
@@ -348,7 +347,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     }
   };
 
-  // Pinch Zoom Handlers
   const onTouchMove = (e: React.TouchEvent) => {
       if (e.touches.length === 2) {
           const t1 = e.touches[0];
@@ -389,7 +387,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             
             <div className="w-px h-6 bg-zinc-800 shrink-0" />
 
-            {/* Metronome & Snap */}
             <div className="flex items-center space-x-2 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
                 <button 
                     onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))} 
@@ -410,7 +407,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                 </select>
             </div>
 
-            {/* BPM */}
             <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
                 <Activity size={14} className="text-zinc-500" />
                 <input 
@@ -422,38 +418,30 @@ const Arranger: React.FC<ArrangerProps> = ({
             </div>
          </div>
 
-         {/* Transport & Zoom */}
          <div className="flex items-center space-x-3 shrink-0">
              <div className="text-zinc-400 font-mono flex items-center bg-black/40 px-3 py-1.5 rounded-md border border-zinc-800/50 shadow-inner">
                  <span className="text-white font-bold">{Math.floor(currentTime / secondsPerBar) + 1}</span>
                  <span className="text-zinc-600 mx-1">.</span>
                  <span className="text-white">{Math.floor((currentTime % secondsPerBar) / secondsPerBeat) + 1}</span>
-                 <span className="text-zinc-600 mx-1">.</span>
-                 <span className="text-zinc-500 text-[10px]">{Math.floor(((currentTime % secondsPerBeat) / secondsPerBeat) * 4) + 1}</span>
              </div>
              <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded-md transition-all ${project.isLooping ? 'text-yellow-400 bg-yellow-400/10' : 'text-zinc-500'}`}>
                 <Repeat size={16} />
             </button>
-             <div className="flex bg-zinc-900 rounded-lg p-1 space-x-1 h-8 items-center border border-zinc-800">
-                <button onClick={() => setZoom(Math.max(10, zoom - 10))} className="p-1.5 rounded text-zinc-500 hover:text-white"><ZoomOut size={16} /></button>
-                <button onClick={() => setZoom(Math.min(300, zoom + 10))} className="p-1.5 rounded text-zinc-500 hover:text-white"><ZoomIn size={16} /></button>
-             </div>
          </div>
       </div>
 
-      {/* Main Scroll Container */}
       <div 
         ref={scrollContainerRef}
         className="flex-1 overflow-auto bg-zinc-900 relative overscroll-contain"
         style={{ touchAction: 'pan-x pan-y' }} 
       >
-        <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + HEADER_WIDTH }}>
+        <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + headerWidth }}>
            
             {/* 1. Sticky Top Ruler */}
             <div className="sticky top-0 z-40 flex h-8 bg-zinc-900 border-b border-zinc-800 shadow-sm">
                 <div 
                     className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800 shadow-md" 
-                    style={{ width: HEADER_WIDTH }}
+                    style={{ width: headerWidth }}
                 >
                     <span className="text-[10px] font-bold text-zinc-600 tracking-widest">TRACKS</span>
                 </div>
@@ -462,7 +450,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                     className="relative flex-1 bg-zinc-900 cursor-pointer touch-none"
                     onPointerDown={handleRulerPointerDown}
                 >
-                     {/* Loop Region */}
                      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
                         <div 
                             className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 pointer-events-auto group ${project.isLooping ? 'opacity-100' : 'opacity-0'}`}
@@ -474,7 +461,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                         </div>
                      </div>
 
-                     {/* Grid Numbers */}
                      {[...Array(totalBars)].map((_, i) => (
                         <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-700 pl-1 select-none h-4 flex items-end pb-0.5 font-medium" style={{ left: i * pixelsPerBar }}>
                             {i + 1}
@@ -485,11 +471,10 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             {/* 2. Tracks Container */}
             <div className="relative">
-                {/* Background Grid - Dynamic Density */}
                 <div 
                     className="absolute inset-0 z-0 pointer-events-none" 
                     style={{
-                        left: HEADER_WIDTH,
+                        left: headerWidth,
                         backgroundImage: gridImage,
                         backgroundSize: gridSize
                     }} 
@@ -501,7 +486,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                         {/* Sticky Track Header */}
                         <div 
                             className={`sticky left-0 z-30 bg-studio-panel border-r border-zinc-800 border-b border-zinc-800/50 shrink-0 flex flex-col p-2 relative transition-colors ${selectedTrackId === track.id ? 'bg-zinc-800' : ''}`}
-                            style={{ width: HEADER_WIDTH }}
+                            style={{ width: headerWidth }}
                             onClick={() => onSelectTrack(track.id)}
                             onDoubleClick={() => onOpenInspector(track.id)}
                         >
@@ -512,32 +497,33 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     </div>
                                     <span className={`font-bold text-xs truncate ${selectedTrackId === track.id ? 'text-white' : 'text-zinc-400'}`}>{track.name}</span>
                                 </div>
-                                <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300">
+                                <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 md:block hidden">
                                     <Sliders size={12} />
                                 </button>
                              </div>
                              
-                             <div className="flex space-x-2 mt-auto">
+                             <div className="flex space-x-1 mt-auto">
                                  <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.muted ? 'bg-red-500 text-white shadow-red-500/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>M</button>
                                  <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.solo ? 'bg-yellow-400 text-black shadow-yellow-400/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>S</button>
                              </div>
                              
-                             <div className="mt-2 flex items-center space-x-2">
-                                <input 
-                                    type="range" min="0" max="1" step="0.01" 
-                                    value={track.volume} 
-                                    onClick={(e) => e.stopPropagation()} 
-                                    onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} 
-                                    className="w-full h-1 bg-zinc-900 rounded-lg appearance-none cursor-pointer accent-zinc-500" 
-                                />
-                             </div>
+                             {headerWidth > 120 && (
+                                <div className="mt-2 flex items-center space-x-2">
+                                    <input 
+                                        type="range" min="0" max="1" step="0.01" 
+                                        value={track.volume} 
+                                        onClick={(e) => e.stopPropagation()} 
+                                        onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} 
+                                        className="w-full h-1 bg-zinc-900 rounded-lg appearance-none cursor-pointer accent-zinc-500" 
+                                    />
+                                </div>
+                             )}
 
                              <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
                         </div>
 
                         {/* Track Lane */}
                         <div className="relative flex-1 border-b border-zinc-800/30 bg-zinc-900/20">
-                            {/* Recording Ghost Clip */}
                             {isRecording && selectedTrackId === track.id && (
                                 <div 
                                     className="absolute rounded-lg overflow-hidden z-20 shadow-xl opacity-80 border-2 border-red-500 bg-red-900/40"
@@ -573,7 +559,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         }}
                                         onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
                                     >
-                                        {/* Clip Header */}
                                         <div 
                                             className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate"
                                             style={{ backgroundColor: track.color }}
@@ -581,22 +566,18 @@ const Arranger: React.FC<ArrangerProps> = ({
                                             <span className="truncate">{clip.name}</span>
                                         </div>
 
-                                        {/* Waveform Area */}
                                         <div className="absolute inset-0 top-5 bottom-0 bg-black/40 pointer-events-none">
                                             <Waveform bufferKey={clip.bufferKey} color={track.color} />
                                         </div>
                                         
-                                        {/* Fades Visuals */}
                                         <svg className="absolute inset-0 pointer-events-none z-20 opacity-50" width="100%" height="100%" preserveAspectRatio="none">
                                             {clip.fadeIn > 0 && <path d={`M 0 100 L ${clip.fadeIn * zoom} 0 L 0 0 Z`} fill="black" />}
                                             {clip.fadeOut > 0 && <path d={`M ${clip.duration * zoom} 100 L ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} 0 Z`} fill="black" />}
                                         </svg>
 
-                                        {/* Resize Handles */}
                                         <div className={`absolute inset-y-0 left-0 w-6 -ml-3 cursor-w-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')} />
                                         <div className={`absolute inset-y-0 right-0 w-6 -mr-3 cursor-e-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')} />
                                         
-                                        {/* Fade Handles */}
                                         <div className={`absolute top-0 w-4 h-4 -ml-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ left: clip.fadeIn * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_IN')} />
                                         <div className={`absolute top-0 w-4 h-4 -mr-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ right: clip.fadeOut * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_OUT')} />
 
@@ -607,10 +588,9 @@ const Arranger: React.FC<ArrangerProps> = ({
                     </div>
                 ))}
                 
-                {/* Playhead */}
                 <div 
                     className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]"
-                    style={{ left: HEADER_WIDTH + (currentTime * zoom) }}
+                    style={{ left: headerWidth + (currentTime * zoom) }}
                 >
                     <div className="w-3 h-3 bg-red-500 rounded-full -ml-1.5 -mt-1.5 shadow-sm transform -translate-x-px" />
                     <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-red-500 -ml-[5.5px]" />
@@ -619,7 +599,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         </div>
       </div>
 
-      {/* Floating Transport Control */}
       <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center space-x-6 bg-zinc-900/90 backdrop-blur-xl px-8 py-3 rounded-2xl border border-zinc-700/50 shadow-2xl">
             <button onClick={onStop} className="group">
                 <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">
@@ -638,7 +617,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             </button>
       </div>
       
-      {/* Context Menu */}
       {contextMenu && (
         <div className="fixed inset-0 z-[100]" onClick={() => setContextMenu(null)}>
             <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1"

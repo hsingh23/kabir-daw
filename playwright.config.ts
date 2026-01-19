@@ -1,4 +1,5 @@
-import { defineConfig, devices } from '@playwright/test';
+import * as pwt from '@playwright/test';
+const { defineConfig, devices } = pwt;
 
 export default defineConfig({
   testDir: './tests/e2e',

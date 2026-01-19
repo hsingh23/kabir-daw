@@ -5,7 +5,7 @@ import Arranger from './components/Arranger';
 import TrackInspector from './components/TrackInspector';
 import { audio } from './services/audio';
 import { saveAudioBlob, saveProject, getProject } from './services/db';
-import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2 } from 'lucide-react';
+import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
@@ -33,6 +33,7 @@ const App: React.FC = () => {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [recordingStartTime, setRecordingStartTime] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(50); 
@@ -51,7 +52,6 @@ const App: React.FC = () => {
       const load = async () => {
           const saved = await getProject('default-project');
           if (saved) {
-              // Ensure old saves have new properties like eq
               const migrated = {
                   ...saved,
                   tracks: saved.tracks.map((t: any) => ({
@@ -60,7 +60,6 @@ const App: React.FC = () => {
                   }))
               };
               setProject(migrated);
-              // Also load audio into buffers for clips
               for (const clip of migrated.clips) {
                   const blob = await import('./services/db').then(m => m.getAudioBlob(clip.bufferKey));
                   if (blob) {
@@ -72,12 +71,11 @@ const App: React.FC = () => {
       load();
   }, []);
 
-  // Auto-Save Project
   useEffect(() => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
           saveProject(project);
-      }, 2000) as unknown as number; // Auto-save after 2 seconds of inactivity
+      }, 2000) as unknown as number; 
   }, [project]);
 
   const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
@@ -102,7 +100,6 @@ const App: React.FC = () => {
       if (past.length === 0) return;
       const previous = past[past.length - 1];
       const newPast = past.slice(0, past.length - 1);
-      
       setFuture(prev => [project, ...prev]);
       setProject(previous);
       setPast(newPast);
@@ -112,13 +109,11 @@ const App: React.FC = () => {
       if (future.length === 0) return;
       const next = future[0];
       const newFuture = future.slice(1);
-
       setPast(prev => [...prev, project]);
       setProject(next);
       setFuture(newFuture);
   };
 
-  // Keyboard Shortcuts for Undo/Redo
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
           if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
@@ -134,7 +129,6 @@ const App: React.FC = () => {
       return () => window.removeEventListener('keydown', handleKeyDown);
   }, [past, future, project]);
 
-  // Audio Engine Sync
   useEffect(() => {
     audio.syncTracks(project.tracks);
     audio.setMasterVolume(project.masterVolume);
@@ -143,7 +137,6 @@ const App: React.FC = () => {
     audio.metronomeEnabled = project.metronomeOn;
   }, [project]);
 
-  // Playback Loop
   useEffect(() => {
     const loop = () => {
       if (isPlaying) {
@@ -246,6 +239,32 @@ const App: React.FC = () => {
     }
   };
 
+  const handleExport = async () => {
+      if (project.clips.length === 0) {
+          alert("Nothing to export!");
+          return;
+      }
+      setIsExporting(true);
+      if (isPlaying) stop();
+      
+      try {
+          const blob = await audio.renderProject(project);
+          if (blob) {
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `PocketStudio_Mix_${new Date().toISOString().slice(0,10)}.wav`;
+              a.click();
+              URL.revokeObjectURL(url);
+          }
+      } catch (e) {
+          console.error(e);
+          alert("Export failed.");
+      } finally {
+          setIsExporting(false);
+      }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -325,29 +344,43 @@ const App: React.FC = () => {
       
       {/* Header */}
       <div className="h-12 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-4 z-50">
-        <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">PocketStudio</h1>
-        
-        <div className="flex space-x-2">
-            <button onClick={undo} disabled={past.length === 0} className={`p-1 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
-                <Undo2 size={18} />
-            </button>
-            <button onClick={redo} disabled={future.length === 0} className={`p-1 rounded ${future.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
-                <Redo2 size={18} />
-            </button>
+        <div className="flex items-center space-x-4">
+            <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent hidden sm:block">PocketStudio</h1>
+            <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent sm:hidden">PS</h1>
+            
+            <div className="flex space-x-1 border-l border-zinc-700 pl-4">
+                <button onClick={undo} disabled={past.length === 0} className={`p-1.5 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
+                    <Undo2 size={16} />
+                </button>
+                <button onClick={redo} disabled={future.length === 0} className={`p-1.5 rounded ${future.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
+                    <Redo2 size={16} />
+                </button>
+            </div>
         </div>
 
-        <div className="flex space-x-4">
-             <button onClick={() => fileInputRef.current?.click()} className="text-zinc-400 hover:text-white active:scale-90 transition-transform">
-                <Upload size={20} />
+        <div className="flex space-x-3 items-center">
+             <button 
+                onClick={handleExport} 
+                disabled={isExporting}
+                className={`p-1.5 rounded text-zinc-400 hover:text-white transition-all flex items-center space-x-2 ${isExporting ? 'animate-pulse text-yellow-500' : ''}`}
+                title="Export Mix"
+             >
+                <Download size={18} />
+                {isExporting && <span className="text-xs font-bold text-yellow-500">Exporting...</span>}
              </button>
-             <button onClick={addTrack} className="text-zinc-400 hover:text-white active:scale-90 transition-transform">
-                <Plus size={20} />
+
+             <div className="w-px h-6 bg-zinc-700" />
+             
+             <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform">
+                <Upload size={18} />
+             </button>
+             <button onClick={addTrack} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform">
+                <Plus size={18} />
              </button>
              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*" className="hidden" />
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 overflow-hidden relative">
         {view === 'mixer' ? (
            <Mixer 
@@ -381,7 +414,6 @@ const App: React.FC = () => {
            />
         )}
 
-        {/* Track Inspector Modal */}
         {inspectorTrackId && (
             <TrackInspector 
                 track={project.tracks.find(t => t.id === inspectorTrackId)!} 
