@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectState, Track, Clip } from './types';
 import Mixer from './components/Mixer';
@@ -24,7 +25,7 @@ const INITIAL_PROJECT: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1.0,
-  effects: { reverb: 0.2, delay: 0.1 },
+  effects: { reverb: 0.2, delay: 0.1, chorus: 0.0 },
   tanpura: {
       enabled: false,
       volume: 0.5,
@@ -84,6 +85,7 @@ const App: React.FC = () => {
               const migrated = {
                   ...INITIAL_PROJECT,
                   ...saved,
+                  effects: { ...INITIAL_PROJECT.effects, ...saved.effects },
                   tracks: saved.tracks.map((t: any) => ({
                       ...t,
                       eq: t.eq || { low: 0, mid: 0, high: 0 }
@@ -247,6 +249,8 @@ const App: React.FC = () => {
     audio.syncInstruments(project.tanpura, project.tabla);
     audio.setMasterVolume(project.masterVolume);
     audio.setDelayLevel(project.effects.delay);
+    audio.setReverbLevel(project.effects.reverb);
+    audio.setChorusLevel(project.effects.chorus);
     audio.bpm = project.bpm;
     audio.metronomeEnabled = project.metronomeOn;
   }, [project]);

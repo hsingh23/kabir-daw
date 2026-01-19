@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { ProjectState } from '../types';
 import Knob from './Knob';
@@ -45,7 +46,7 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
       
       {/* Top Effects Section */}
       <div className="p-6 bg-gradient-to-b from-zinc-800 to-studio-bg border-b border-zinc-700 shadow-xl z-20">
-        <div className="flex justify-around items-center max-w-md mx-auto">
+        <div className="flex justify-around items-center max-w-lg mx-auto">
            <Knob 
             label="Reverb" 
             value={project.effects.reverb} 
@@ -58,6 +59,13 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
             onChange={(v) => setProject(p => ({...p, effects: {...p.effects, delay: v}}))} 
             defaultValue={0.1}
            />
+           <Knob 
+            label="Chorus" 
+            value={project.effects.chorus} 
+            onChange={(v) => setProject(p => ({...p, effects: {...p.effects, chorus: v}}))} 
+            defaultValue={0.0}
+           />
+           <div className="w-px h-10 bg-zinc-700 mx-2" />
            <Knob 
             label="Master" 
             value={project.masterVolume} 

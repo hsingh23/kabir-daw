@@ -1,3 +1,4 @@
+
 import { Clip, Track, ProjectState, TanpuraState, TablaState } from '../types';
 import { audioBufferToWav } from './utils';
 
@@ -19,9 +20,22 @@ const NOTE_FREQS: Record<string, number> = {
 class AudioEngine {
   ctx: AudioContext;
   masterGain: GainNode;
+  
+  // FX Sends/Returns
+  reverbInput: GainNode;
   reverbNode: ConvolverNode;
+  reverbReturn: GainNode;
+
+  delayInput: GainNode;
   delayNode: DelayNode;
-  delayGain: GainNode;
+  delayReturn: GainNode;
+  
+  chorusInput: GainNode;
+  chorusDelay: DelayNode;
+  chorusLFO: OscillatorNode;
+  chorusLFOGain: GainNode;
+  chorusReturn: GainNode;
+
   compressor: DynamicsCompressorNode;
   metronomeGain: GainNode;
   
@@ -64,10 +78,24 @@ class AudioEngine {
     this.masterGain = this.ctx.createGain();
     this.compressor = this.ctx.createDynamicsCompressor();
     
-    // Effects Bus
+    // --- Effects Bus Setup ---
+    
+    // 1. Reverb
+    this.reverbInput = this.ctx.createGain();
     this.reverbNode = this.ctx.createConvolver();
+    this.reverbReturn = this.ctx.createGain();
+
+    // 2. Delay
+    this.delayInput = this.ctx.createGain();
     this.delayNode = this.ctx.createDelay();
-    this.delayGain = this.ctx.createGain();
+    this.delayReturn = this.ctx.createGain();
+
+    // 3. Chorus
+    this.chorusInput = this.ctx.createGain();
+    this.chorusDelay = this.ctx.createDelay();
+    this.chorusLFO = this.ctx.createOscillator();
+    this.chorusLFOGain = this.ctx.createGain();
+    this.chorusReturn = this.ctx.createGain();
 
     // Metronome
     this.metronomeGain = this.ctx.createGain();
@@ -86,25 +114,47 @@ class AudioEngine {
     this.masterGain.connect(this.compressor);
     this.compressor.connect(this.ctx.destination);
 
-    // Effects Default Settings
-    this.delayNode.delayTime.value = 0.4;
-    this.delayGain.gain.value = 0.0; // Default dry
-    
-    // Connect FX to Master
-    this.delayNode.connect(this.delayGain);
-    this.delayGain.connect(this.masterGain);
+    // -- Reverb Routing --
+    this.reverbInput.connect(this.reverbNode);
+    this.reverbNode.connect(this.reverbReturn);
+    this.reverbReturn.connect(this.masterGain);
 
-    // Connect Metronome directly to destination
+    // -- Delay Routing --
+    this.delayNode.delayTime.value = 0.4;
+    this.delayReturn.gain.value = 0.0; 
+    this.delayInput.connect(this.delayNode);
+    // Simple feedback loop for delay
+    const feedback = this.ctx.createGain();
+    feedback.gain.value = 0.4;
+    this.delayNode.connect(feedback);
+    feedback.connect(this.delayNode);
+    this.delayNode.connect(this.delayReturn);
+    this.delayReturn.connect(this.masterGain);
+
+    // -- Chorus Routing --
+    this.chorusDelay.delayTime.value = 0.03; // 30ms base delay
+    this.chorusLFO.type = 'sine';
+    this.chorusLFO.frequency.value = 1.5; // Rate
+    this.chorusLFOGain.gain.value = 0.002; // Depth
+    
+    this.chorusLFO.connect(this.chorusLFOGain);
+    this.chorusLFOGain.connect(this.chorusDelay.delayTime);
+    
+    this.chorusInput.connect(this.chorusDelay);
+    this.chorusDelay.connect(this.chorusReturn);
+    this.chorusReturn.connect(this.masterGain);
+    
+    this.chorusLFO.start();
+
+    // -- Metronome --
     this.metronomeGain.connect(this.masterGain);
 
-    // Connect Instruments
-    this.tanpuraGain.connect(this.reverbNode); // Send Tanpura to reverb for ambience
+    // -- Instruments --
+    this.tanpuraGain.connect(this.reverbInput); // Send to Reverb
     this.tanpuraGain.connect(this.masterGain);
     
     this.tablaGain.connect(this.masterGain);
-    this.tablaGain.connect(this.reverbNode); // Some reverb on Tabla
-
-    this.reverbNode.connect(this.masterGain);
+    this.tablaGain.connect(this.reverbInput);
   }
 
   async loadImpulseResponse() {
@@ -158,7 +208,12 @@ class AudioEngine {
       midFilter.connect(highFilter);
       highFilter.connect(gain);
       gain.connect(panner);
+      
+      // 3. Connect to Master and Effects Sends
       panner.connect(this.masterGain);
+      panner.connect(this.reverbInput);
+      panner.connect(this.delayInput);
+      panner.connect(this.chorusInput);
       
       this.trackChannels.set(trackId, { 
           input, 
@@ -208,18 +263,9 @@ class AudioEngine {
       const tablaVol = tabla.enabled ? tabla.volume : 0;
       this.tablaGain.gain.setTargetAtTime(tablaVol, currentTime, 0.1);
 
-      // If just enabled, we need to make sure scheduler picks them up
       if ((tanpura.enabled || tabla.enabled) && this.ctx.state === 'suspended') {
           this.ctx.resume();
       }
-      
-      // Start independent loops if DAW is stopped? 
-      // For now, instruments play when DAW plays OR when enabled? 
-      // User likely wants them as backing for practice even if timeline isn't running?
-      // Let's attach them to the main `isPlaying` or create a separate "Practice Mode".
-      // For Simplicity, let's make them play when `isPlaying` is true, 
-      // BUT also we might want them to play independently.
-      // Let's assume they run when the DAW Transport is running.
   }
 
   play(clips: Clip[], tracks: Track[], startTime: number = 0) {
@@ -282,7 +328,7 @@ class AudioEngine {
     // Envelope Gain for Fades
     const envelope = ctx.createGain();
     source.connect(envelope);
-    envelope.connect(destination); // Connect to Track Input (Start of chain)
+    envelope.connect(destination); 
 
     // Fade Logic
     const clipFadeIn = clip.fadeIn || 0;
@@ -342,7 +388,15 @@ class AudioEngine {
   }
 
   setDelayLevel(val: number) {
-    this.delayGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
+    this.delayReturn.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
+  }
+
+  setReverbLevel(val: number) {
+    this.reverbReturn.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
+  }
+
+  setChorusLevel(val: number) {
+      this.chorusReturn.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
   }
 
   getCurrentTime(): number {
@@ -370,31 +424,27 @@ class AudioEngine {
     osc.stop(time + 0.05);
   }
 
-  // --- Synthesis for Instruments ---
+  // --- Synthesis for Instruments (Refactored for Reusability) ---
 
-  // Tanpura Synthesis
-  playTanpuraNote(freq: number, time: number, duration: number) {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      const filter = this.ctx.createBiquadFilter();
+  playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
 
-      // Sawtooth for rich harmonics
       osc.type = 'sawtooth';
       osc.frequency.value = freq;
 
-      // Low pass to soften the buzz
       filter.type = 'lowpass';
       filter.frequency.value = 2000;
       filter.Q.value = 1;
 
-      // ADSR
       gain.gain.setValueAtTime(0, time);
-      gain.gain.linearRampToValueAtTime(0.3, time + 0.5); // Slow attack
+      gain.gain.linearRampToValueAtTime(0.3, time + 0.5); 
       gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
 
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(this.tanpuraGain);
+      gain.connect(destination);
 
       osc.start(time);
       osc.stop(time + duration);
@@ -403,61 +453,52 @@ class AudioEngine {
   scheduleTanpura() {
       if (!this.tanpuraConfig || !this.tanpuraConfig.enabled) return;
       
-      // Standard Tuning: Pa (Lower), Sa (Middle), Sa (Middle), Sa (Lower)
-      // Or Ma, or Ni based on tuning
       const sa = NOTE_FREQS[this.tanpuraConfig.key] || 261.63;
       const lowerSa = sa / 2;
       
-      let firstStringFreq = sa * 0.75; // Pa (Perfect 5th below Sa?? No, Pa is 1.5x Sa, usually Lower Pa is 0.75x)
-      if (this.tanpuraConfig.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; // Lower Ma
-      if (this.tanpuraConfig.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; // Lower Ni
-      if (this.tanpuraConfig.tuning === 'Pa') firstStringFreq = sa * 0.75; // Lower Pa
+      let firstStringFreq = sa * 0.75; 
+      if (this.tanpuraConfig.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; 
+      if (this.tanpuraConfig.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; 
+      if (this.tanpuraConfig.tuning === 'Pa') firstStringFreq = sa * 0.75; 
 
       const freqs = [firstStringFreq, sa, sa, lowerSa];
-      // Cycle Timing
-      const speed = this.tanpuraConfig.tempo || 60; // BPM effectively
+      const speed = this.tanpuraConfig.tempo || 60;
       const interval = 60 / speed;
 
       while (this.nextTanpuraNoteTime < this.ctx.currentTime + 0.2) {
-          this.playTanpuraNote(freqs[this.currentTanpuraString], this.nextTanpuraNoteTime, interval * 4); // Long sustain
+          this.playTanpuraNote(this.ctx, this.tanpuraGain, freqs[this.currentTanpuraString], this.nextTanpuraNoteTime, interval * 4);
           this.nextTanpuraNoteTime += interval;
           this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
       }
   }
 
-  // Tabla Synthesis (Simplified)
-  playTablaHit(type: 'dha' | 'dhin' | 'tin' | 'na' | 'ge' | 'ka', time: number) {
-      // Base freq for 'Sa'
-      const sa = NOTE_FREQS[this.tablaConfig?.key || 'C'] || 261.63;
-      // We usually tune the Dayan to Sa.
-      
+  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, type: 'dha' | 'dhin' | 'tin' | 'na' | 'ge' | 'ka', time: number) {
+      const sa = NOTE_FREQS[key] || 261.63;
       const t = time;
       
       if (type === 'na' || type === 'tin' || type === 'dha' || type === 'dhin') {
-          // Resonant high pitch (Dayan)
-          const osc = this.ctx.createOscillator();
-          const gain = this.ctx.createGain();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
           osc.frequency.setValueAtTime(sa, t);
           gain.gain.setValueAtTime(0, t);
           gain.gain.linearRampToValueAtTime(0.6, t + 0.01);
           gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
           osc.connect(gain);
-          gain.connect(this.tablaGain);
+          gain.connect(destination);
           osc.start(t);
           osc.stop(t + 0.3);
       }
 
       if (type === 'ge' || type === 'dha' || type === 'dhin') {
-          // Bass swoop (Bayan)
-          const osc = this.ctx.createOscillator();
-          const gain = this.ctx.createGain();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
           osc.frequency.setValueAtTime(100, t);
-          osc.frequency.exponentialRampToValueAtTime(60, t + 0.3); // Pitch bend
+          osc.frequency.exponentialRampToValueAtTime(60, t + 0.3);
           gain.gain.setValueAtTime(0, t);
           gain.gain.linearRampToValueAtTime(0.8, t + 0.02);
           gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
           osc.connect(gain);
-          gain.connect(this.tablaGain);
+          gain.connect(destination);
           osc.start(t);
           osc.stop(t + 0.4);
       }
@@ -469,7 +510,6 @@ class AudioEngine {
       const bpm = this.tablaConfig.bpm || 100;
       const beatTime = 60 / bpm;
       
-      // Patterns
       const patterns: Record<string, string[]> = {
           'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
           'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
@@ -480,7 +520,7 @@ class AudioEngine {
 
       while (this.nextTablaBeatTime < this.ctx.currentTime + 0.2) {
           const hit = pattern[this.currentTablaBeat % pattern.length];
-          this.playTablaHit(hit as any, this.nextTablaBeatTime);
+          this.playTablaHit(this.ctx, this.tablaGain, this.tablaConfig.key, hit as any, this.nextTablaBeatTime);
           this.nextTablaBeatTime += beatTime;
           this.currentTablaBeat++;
       }
@@ -544,17 +584,51 @@ class AudioEngine {
     if (project.clips.length === 0) return null;
 
     const sampleRate = 44100;
-    const duration = Math.max(...project.clips.map(c => c.start + c.duration)) + 2; // +2s tail
+    const duration = Math.max(...project.clips.map(c => c.start + c.duration), project.loopEnd) + 2; 
     const length = Math.ceil(duration * sampleRate);
     const offlineCtx = new OfflineAudioContext(2, length, sampleRate);
 
-    // Reconstruct Master Chain on Offline Context
+    // --- Offline Graph Setup (Mirroring Realtime) ---
     const masterGain = offlineCtx.createGain();
     masterGain.gain.value = project.masterVolume;
     
     const compressor = offlineCtx.createDynamicsCompressor();
     masterGain.connect(compressor);
     compressor.connect(offlineCtx.destination);
+
+    // FX Bus
+    const reverbReturn = offlineCtx.createGain();
+    reverbReturn.gain.value = project.effects.reverb;
+    const reverbNode = offlineCtx.createConvolver();
+    // Copy buffer from live context
+    reverbNode.buffer = this.reverbNode.buffer;
+    reverbNode.connect(reverbReturn);
+    reverbReturn.connect(masterGain);
+
+    const delayReturn = offlineCtx.createGain();
+    delayReturn.gain.value = project.effects.delay;
+    const delayNode = offlineCtx.createDelay();
+    delayNode.delayTime.value = 0.4;
+    const delayFeedback = offlineCtx.createGain();
+    delayFeedback.gain.value = 0.4;
+    delayNode.connect(delayFeedback);
+    delayFeedback.connect(delayNode);
+    delayNode.connect(delayReturn);
+    delayReturn.connect(masterGain);
+
+    const chorusReturn = offlineCtx.createGain();
+    chorusReturn.gain.value = project.effects.chorus;
+    const chorusDelay = offlineCtx.createDelay();
+    chorusDelay.delayTime.value = 0.03;
+    const chorusLFO = offlineCtx.createOscillator();
+    chorusLFO.frequency.value = 1.5;
+    const chorusLFOGain = offlineCtx.createGain();
+    chorusLFOGain.gain.value = 0.002;
+    chorusLFO.connect(chorusLFOGain);
+    chorusLFOGain.connect(chorusDelay.delayTime);
+    chorusDelay.connect(chorusReturn);
+    chorusReturn.connect(masterGain);
+    chorusLFO.start(0);
 
     // Create Track Nodes
     const trackNodes = new Map<string, GainNode>();
@@ -563,21 +637,12 @@ class AudioEngine {
         const isMuted = track.muted || (project.tracks.some(t => t.solo) && !track.solo);
         trackGain.gain.value = isMuted ? 0 : track.volume;
         
-        // Simple EQ simulation for offline (filters)
         const low = offlineCtx.createBiquadFilter();
-        low.type = 'lowshelf';
-        low.frequency.value = 320;
-        low.gain.value = track.eq?.low || 0;
-
+        low.type = 'lowshelf'; low.frequency.value = 320; low.gain.value = track.eq?.low || 0;
         const mid = offlineCtx.createBiquadFilter();
-        mid.type = 'peaking';
-        mid.frequency.value = 1000;
-        mid.gain.value = track.eq?.mid || 0;
-
+        mid.type = 'peaking'; mid.frequency.value = 1000; mid.gain.value = track.eq?.mid || 0;
         const high = offlineCtx.createBiquadFilter();
-        high.type = 'highshelf';
-        high.frequency.value = 3200;
-        high.gain.value = track.eq?.high || 0;
+        high.type = 'highshelf'; high.frequency.value = 3200; high.gain.value = track.eq?.high || 0;
 
         const panner = offlineCtx.createStereoPanner();
         panner.pan.value = track.pan;
@@ -586,7 +651,12 @@ class AudioEngine {
         low.connect(mid);
         mid.connect(high);
         high.connect(panner);
+        
+        // Connect Panner to Master and FX Sends
         panner.connect(masterGain);
+        panner.connect(reverbNode);
+        panner.connect(delayNode);
+        panner.connect(chorusDelay);
         
         trackNodes.set(track.id, trackGain);
     });
@@ -600,6 +670,59 @@ class AudioEngine {
             this.scheduleSource(buffer, clip.start, clip.offset, clip.duration, trackNode, clip, 0, offlineCtx);
         }
     });
+
+    // --- Schedule Instruments Offline ---
+    
+    // Tanpura
+    if (project.tanpura.enabled) {
+        const tanpuraGain = offlineCtx.createGain();
+        tanpuraGain.gain.value = project.tanpura.volume;
+        tanpuraGain.connect(masterGain);
+        tanpuraGain.connect(reverbNode);
+
+        const sa = NOTE_FREQS[project.tanpura.key] || 261.63;
+        const lowerSa = sa / 2;
+        let firstStringFreq = sa * 0.75;
+        if (project.tanpura.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2;
+        if (project.tanpura.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2;
+
+        const freqs = [firstStringFreq, sa, sa, lowerSa];
+        const interval = 60 / project.tanpura.tempo;
+        
+        let time = 0;
+        let sIdx = 0;
+        while (time < duration) {
+            this.playTanpuraNote(offlineCtx, tanpuraGain, freqs[sIdx], time, interval * 4);
+            time += interval;
+            sIdx = (sIdx + 1) % 4;
+        }
+    }
+
+    // Tabla
+    if (project.tabla.enabled) {
+        const tablaGain = offlineCtx.createGain();
+        tablaGain.gain.value = project.tabla.volume;
+        tablaGain.connect(masterGain);
+        tablaGain.connect(reverbNode);
+
+        const bpm = project.tabla.bpm;
+        const beatTime = 60 / bpm;
+        const patterns: Record<string, string[]> = {
+             'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
+             'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
+             'Dadra': ['dha', 'dhin', 'na', 'dha', 'tin', 'na']
+        };
+        const pattern = patterns[project.tabla.taal] || patterns['TeenTaal'];
+
+        let time = 0;
+        let bIdx = 0;
+        while (time < duration) {
+            const hit = pattern[bIdx % pattern.length];
+            this.playTablaHit(offlineCtx, tablaGain, project.tabla.key, hit as any, time);
+            time += beatTime;
+            bIdx++;
+        }
+    }
 
     const renderedBuffer = await offlineCtx.startRendering();
     return audioBufferToWav(renderedBuffer);

@@ -1,3 +1,4 @@
+
 export interface Clip {
   id: string;
   trackId: string;
@@ -56,6 +57,7 @@ export interface ProjectState {
   effects: {
     reverb: number; // 0-1
     delay: number; // 0-1
+    chorus: number; // 0-1
   };
   tanpura: TanpuraState;
   tabla: TablaState;

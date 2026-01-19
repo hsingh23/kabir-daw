@@ -1,3 +1,4 @@
+
 import { render } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import Arranger from '../../components/Arranger';
@@ -30,7 +31,7 @@ const mockProject: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1,
-  effects: { reverb: 0, delay: 0 },
+  effects: { reverb: 0, delay: 0, chorus: 0 },
   tanpura: {
     enabled: false,
     volume: 0.5,
