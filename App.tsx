@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectState, Track, Clip } from './types';
 import Mixer from './components/Mixer';
@@ -216,9 +215,14 @@ const App: React.FC = () => {
     }
   }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: handleRecordToggle causes infinite updates if added
+  // Global Keyboard Shortcuts
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+          // Ignore inputs
+          if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+            return;
+          }
+
           if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
               if (e.shiftKey) {
                   redo();
@@ -228,10 +232,8 @@ const App: React.FC = () => {
               e.preventDefault();
               return;
           }
+          
           if (e.code === 'Space') {
-              if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
-                  return;
-              }
               e.preventDefault();
               if (isRecording) {
                   handleRecordToggle();
@@ -239,10 +241,20 @@ const App: React.FC = () => {
                   togglePlay();
               }
           }
+
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (selectedClipId && !isRecording) {
+                updateProject(prev => ({
+                    ...prev,
+                    clips: prev.clips.filter(c => c.id !== selectedClipId)
+                }));
+                setSelectedClipId(null);
+            }
+          }
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [past, future, project, isRecording, togglePlay, undo, redo]); 
+  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipId, handleRecordToggle, updateProject]); 
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
@@ -417,12 +429,31 @@ const App: React.FC = () => {
       }));
   }, [updateProject]);
 
+  const handleColorClip = useCallback((clipId: string, newColor: string) => {
+      updateProject(prev => ({
+          ...prev,
+          clips: prev.clips.map(c => c.id === clipId ? { ...c, color: newColor } : c)
+      }));
+  }, [updateProject]);
+
   const handleRenameTrack = useCallback((trackId: string, newName: string) => {
       updateProject(prev => ({
           ...prev,
           tracks: prev.tracks.map(t => t.id === trackId ? { ...t, name: newName } : t)
       }));
   }, [updateProject]);
+
+  const handleDeleteTrack = useCallback((trackId: string) => {
+    if (confirm('Delete track and all its clips?')) {
+        updateProject(prev => ({
+            ...prev,
+            tracks: prev.tracks.filter(t => t.id !== trackId),
+            clips: prev.clips.filter(c => c.trackId !== trackId)
+        }));
+        setInspectorTrackId(null);
+        if (selectedTrackId === trackId) setSelectedTrackId(null);
+    }
+  }, [updateProject, selectedTrackId]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
@@ -499,6 +530,7 @@ const App: React.FC = () => {
              onMoveTrack={handleMoveTrack}
              onRenameClip={handleRenameClip}
              onRenameTrack={handleRenameTrack}
+             onColorClip={handleColorClip}
            />
         ) : (
             <Library />
@@ -508,6 +540,7 @@ const App: React.FC = () => {
             <TrackInspector 
                 track={project.tracks.find(t => t.id === inspectorTrackId)!} 
                 updateTrack={updateTrack}
+                onDeleteTrack={handleDeleteTrack}
                 onClose={() => setInspectorTrackId(null)}
             />
         )}

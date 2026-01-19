@@ -1,10 +1,9 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -27,6 +26,7 @@ interface ArrangerProps {
   onOpenInspector: (trackId: string) => void;
   onMoveTrack?: (from: number, to: number) => void;
   onRenameClip?: (clipId: string, name: string) => void;
+  onColorClip?: (clipId: string, color: string) => void;
   onRenameTrack?: (trackId: string, name: string) => void;
 }
 
@@ -38,6 +38,16 @@ const SNAP_OPTIONS = [
     { label: '1/4', value: 1 },
     { label: '1/8', value: 0.5 },
     { label: '1/16', value: 0.25 },
+];
+
+const CLIP_COLORS = [
+    '#ef4444', // Red
+    '#3b82f6', // Blue
+    '#22c55e', // Green
+    '#eab308', // Yellow
+    '#a855f7', // Purple
+    '#f97316', // Orange
+    '#06b6d4', // Cyan
 ];
 
 const TrackIcon = ({ name, color }: { name: string, color: string }) => {
@@ -70,6 +80,7 @@ const Arranger: React.FC<ArrangerProps> = ({
     onOpenInspector,
     onMoveTrack,
     onRenameClip,
+    onColorClip,
     onRenameTrack
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -442,6 +453,13 @@ const Arranger: React.FC<ArrangerProps> = ({
       }
   };
 
+  const handleColorChange = (color: string) => {
+      if (contextMenu && onColorClip) {
+          onColorClip(contextMenu.clipId, color);
+          setContextMenu(null);
+      }
+  };
+
   const handleTrackNameDoubleClick = (e: React.MouseEvent, trackId: string, currentName: string) => {
     e.stopPropagation();
     if (onRenameTrack) {
@@ -685,6 +703,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
                             {project.clips.filter(c => c.trackId === track.id).map(clip => {
                                 const isSelected = selectedClipId === clip.id;
+                                const clipColor = clip.color || track.color;
                                 return (
                                     <div
                                         key={clip.id}
@@ -697,19 +716,19 @@ const Arranger: React.FC<ArrangerProps> = ({
                                             top: 4,
                                             bottom: 4,
                                             backgroundColor: '#18181b',
-                                            borderLeft: `4px solid ${track.color}`
+                                            borderLeft: `4px solid ${clipColor}`
                                         }}
                                         onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
                                     >
                                         <div 
                                             className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate"
-                                            style={{ backgroundColor: track.color }}
+                                            style={{ backgroundColor: clipColor }}
                                         >
                                             <span className="truncate">{clip.name}</span>
                                         </div>
 
                                         <div className="absolute inset-0 top-5 bottom-0 bg-black/40 pointer-events-none">
-                                            <Waveform bufferKey={clip.bufferKey} color={track.color} />
+                                            <Waveform bufferKey={clip.bufferKey} color={clipColor} />
                                         </div>
                                         
                                         <svg className="absolute inset-0 pointer-events-none z-20 opacity-50" width="100%" height="100%" preserveAspectRatio="none">
@@ -769,6 +788,18 @@ const Arranger: React.FC<ArrangerProps> = ({
         >
             <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1"
                 style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
+                
+                <div className="px-4 py-2 flex items-center justify-between gap-1 border-b border-zinc-700/50">
+                    {CLIP_COLORS.map(color => (
+                        <button 
+                            key={color} 
+                            onClick={(e) => { e.stopPropagation(); handleColorChange(color); }}
+                            className="w-5 h-5 rounded-full hover:scale-110 transition-transform shadow-sm"
+                            style={{ backgroundColor: color }}
+                        />
+                    ))}
+                </div>
+
                 <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
                     <Copy size={14} /> <span>Duplicate</span>
                 </button>
