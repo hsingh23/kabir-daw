@@ -1,12 +1,12 @@
 
 import React, { useRef, useState, useEffect } from 'react';
-import { ProjectState, Clip, ToolMode, Track } from '../types';
+import { ProjectState, Clip, ToolMode, Track, Marker } from '../types';
 import Waveform from './Waveform';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2 } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -24,8 +24,8 @@ interface ArrangerProps {
   setZoom: (z: number) => void;
   selectedTrackId: string | null;
   onSelectTrack: (id: string) => void;
-  selectedClipId: string | null;
-  onSelectClip: (id: string | null) => void;
+  selectedClipIds: string[];
+  onSelectClip: (ids: string[]) => void;
   onOpenInspector: (trackId: string) => void;
   onMoveTrack?: (from: number, to: number) => void;
   onRenameClip?: (clipId: string, name: string) => void;
@@ -63,40 +63,26 @@ const TrackIcon = ({ name, color }: { name: string, color: string }) => {
 };
 
 const LoopMarkers = ({ clip, zoom }: { clip: Clip, zoom: number }) => {
-    // Only render markers if clip is longer than buffer (looping)
     const buffer = audio.buffers.get(clip.bufferKey);
     if (!buffer) return null;
-    
     const B = buffer.duration;
     if (B === 0) return null;
-    
     const O = clip.offset;
     const D = clip.duration;
     
     const markers = [];
-    // First loop point is when the buffer finishes for the first time
-    // Current pos in buffer is O. Remaining is B - O.
     let time = B - (O % B); 
-    
     while (time < D) {
         markers.push(time);
         time += B;
     }
-
     if (markers.length === 0) return null;
 
     return (
         <>
             {markers.map((t, i) => (
-                <div 
-                    key={i} 
-                    className="absolute top-0 bottom-0 border-l border-white/40 border-dashed z-20 pointer-events-none"
-                    style={{ left: t * zoom }}
-                >
-                     {/* Loop Icon */}
-                     <div className="text-[8px] text-white/70 pl-0.5 pt-0.5 opacity-70">
-                        <Repeat size={8} />
-                     </div>
+                <div key={i} className="absolute top-0 bottom-0 border-l border-white/40 border-dashed z-20 pointer-events-none" style={{ left: t * zoom }}>
+                     <div className="text-[8px] text-white/70 pl-0.5 pt-0.5 opacity-70"><Repeat size={8} /></div>
                 </div>
             ))}
         </>
@@ -119,7 +105,7 @@ const Arranger: React.FC<ArrangerProps> = ({
     setZoom,
     selectedTrackId,
     onSelectTrack,
-    selectedClipId,
+    selectedClipIds,
     onSelectClip,
     onOpenInspector,
     onMoveTrack,
@@ -129,41 +115,38 @@ const Arranger: React.FC<ArrangerProps> = ({
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [snapGrid, setSnapGrid] = useState(1); 
   const [showBacking, setShowBacking] = useState(false);
   
-  // Responsive Header Logic
   const [headerWidth, setHeaderWidth] = useState(160);
   useEffect(() => {
     const handleResize = () => setHeaderWidth(window.innerWidth < 768 ? 110 : 160);
-    handleResize(); // Init
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
   
-  // Interaction State
   const [dragState, setDragState] = useState<{
-      clipId: string;
+      initialClips: { id: string, start: number }[]; // Store initial states for group drag
       mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT';
       startX: number;
       startY: number;
-      original: Clip;
+      clipId: string; // The clip being dragged primarily
+      original: Clip; // The clip being dragged
       pointerId: number;
   } | null>(null);
 
   const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number, pointerId: number } | null>(null);
+  const [markerDrag, setMarkerDrag] = useState<{ id: string, startX: number, originalTime: number, pointerId: number } | null>(null);
   const [isScrubbing, setIsScrubbing] = useState<{ active: boolean, pointerId: number | null }>({ active: false, pointerId: null });
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const isLongPressRef = useRef(false);
 
-  // Track Dragging State
   const [trackDrag, setTrackDrag] = useState<{ id: string, startY: number, currentIndex: number, pointerId: number } | null>(null);
-
-  // Pinch Zoom State
   const [pinchDist, setPinchDist] = useState<number | null>(null);
 
-  // --- Musical Calculations ---
   const secondsPerBeat = 60 / project.bpm;
   const beatsPerBar = 4;
   const secondsPerBar = secondsPerBeat * beatsPerBar;
@@ -171,7 +154,6 @@ const Arranger: React.FC<ArrangerProps> = ({
   const pixelsPerBeat = zoom * secondsPerBeat;
   const pixelsPerBar = pixelsPerBeat * beatsPerBar;
 
-  // Render more space if recording to allow infinite scrolling feel
   const maxTime = Math.max(
       project.loopEnd + 10,
       ...project.clips.map(c => c.start + c.duration),
@@ -181,7 +163,6 @@ const Arranger: React.FC<ArrangerProps> = ({
   const totalBars = Math.ceil(maxTime / secondsPerBar) + 2;
   const totalWidth = totalBars * pixelsPerBar;
 
-  // Grid Visualization Logic
   const showBeats = pixelsPerBeat > 15;
   const gridImage = showBeats 
         ? `linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
@@ -191,7 +172,6 @@ const Arranger: React.FC<ArrangerProps> = ({
         ? `${pixelsPerBar}px 100%, ${pixelsPerBeat}px 100%`
         : `${pixelsPerBar}px 100%`;
 
-  // Auto-scroll during playback
   useEffect(() => {
     if ((isPlaying || isRecording) && scrollContainerRef.current) {
         const playheadX = (currentTime * zoom) + headerWidth;
@@ -226,15 +206,55 @@ const Arranger: React.FC<ArrangerProps> = ({
     return time;
   };
 
+  // --- Markers ---
+  const handleAddMarker = (time: number) => {
+      const newMarker: Marker = {
+          id: crypto.randomUUID(),
+          time,
+          text: `Marker ${project.markers.length + 1}`,
+          color: '#eab308'
+      };
+      setProject(prev => ({ ...prev, markers: [...prev.markers, newMarker] }));
+  };
+
+  const handleMarkerPointerDown = (e: React.PointerEvent, marker: Marker) => {
+      e.stopPropagation();
+      e.preventDefault();
+      (e.target as Element).setPointerCapture(e.pointerId);
+      setMarkerDrag({
+          id: marker.id,
+          startX: e.clientX,
+          originalTime: marker.time,
+          pointerId: e.pointerId
+      });
+  };
+
+  const handleMarkerDoubleClick = (e: React.MouseEvent, marker: Marker) => {
+      e.stopPropagation();
+      const newName = prompt('Marker Name:', marker.text);
+      if (newName !== null) {
+          if (newName.trim() === '') {
+              // Delete
+              setProject(prev => ({ ...prev, markers: prev.markers.filter(m => m.id !== marker.id) }));
+          } else {
+              setProject(prev => ({ ...prev, markers: prev.markers.map(m => m.id === marker.id ? { ...m, text: newName } : m) }));
+          }
+      }
+  };
+
   // --- Pointer Events for Ruler ---
   const handleRulerPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
+    if (e.detail === 2) {
+        // Double click to add marker
+        handleAddMarker(calculateSeekTime(e.clientX, true));
+        return;
+    }
     (e.target as Element).setPointerCapture(e.pointerId);
     setIsScrubbing({ active: true, pointerId: e.pointerId });
     onSeek(calculateSeekTime(e.clientX, e.shiftKey));
   };
 
-  // --- Pointer Events for Loop ---
   const handleLoopPointerDown = (e: React.PointerEvent, type: 'start' | 'end' | 'move') => {
     e.stopPropagation();
     e.preventDefault();
@@ -248,7 +268,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     });
   };
 
-  // --- Pointer Events for Track Dragging ---
   const handleTrackDragStart = (e: React.PointerEvent, trackId: string, index: number) => {
     e.stopPropagation();
     e.preventDefault();
@@ -261,7 +280,6 @@ const Arranger: React.FC<ArrangerProps> = ({
     });
   };
 
-  // --- Pointer Events for Clips ---
   const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
     
@@ -280,34 +298,82 @@ const Arranger: React.FC<ArrangerProps> = ({
         }, 600);
     }
 
+    // Selection Logic
+    const isSelected = selectedClipIds.includes(clip.id);
+    let newSelectedIds = [...selectedClipIds];
+
+    if (tool === ToolMode.POINTER) {
+        if (multiSelectMode || e.metaKey || e.ctrlKey || e.shiftKey) {
+            if (isSelected) {
+                // If dragging, don't deselect yet. Deselect on click-release if not dragged?
+                // For simplicity, just keep selected for dragging.
+                // If just clicking (no drag), we handle that later? 
+                // Toggle logic on down:
+                if (!e.ctrlKey && !e.metaKey && !multiSelectMode) {
+                    // Standard click on a selected group -> keep group
+                } else {
+                    // Toggle
+                    // If we toggle off here, dragging won't work for this clip. 
+                    // Let's rely on standard OS behavior: MouseDown doesn't toggle OFF if part of selection, unless it's a dedicated toggle command.
+                    // But for simple "toggle" interaction:
+                    if (isSelected && (e.ctrlKey || e.metaKey || multiSelectMode)) {
+                        newSelectedIds = newSelectedIds.filter(id => id !== clip.id);
+                        onSelectClip(newSelectedIds);
+                        return; // Don't start drag if toggling off
+                    } else if (!isSelected) {
+                        newSelectedIds.push(clip.id);
+                        onSelectClip(newSelectedIds);
+                    }
+                }
+            } else {
+                if (e.ctrlKey || e.metaKey || multiSelectMode) {
+                    newSelectedIds.push(clip.id);
+                } else {
+                    newSelectedIds = [clip.id];
+                }
+                onSelectClip(newSelectedIds);
+            }
+        } else {
+            // Normal click
+            if (!isSelected) {
+                newSelectedIds = [clip.id];
+                onSelectClip(newSelectedIds);
+            }
+            // If already selected, do nothing to selection, wait for drag.
+        }
+    }
+
     onSelectTrack(clip.trackId);
-    onSelectClip(clip.id);
     setContextMenu(null);
 
     if (tool === ToolMode.SPLIT && mode === 'MOVE') {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
         let splitTime = clip.start + (clickX / zoom);
-        
-        // Apply Snap for Split
         if (!e.shiftKey && snapGrid > 0) {
              const snapSeconds = snapGrid * secondsPerBeat;
              splitTime = Math.round(splitTime / snapSeconds) * snapSeconds;
         }
-        // Clamp
         splitTime = Math.max(clip.start + 0.01, Math.min(clip.start + clip.duration - 0.01, splitTime));
-
         onSplit(clip.id, splitTime);
         return;
     }
     if (tool === ToolMode.ERASER) {
         setProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== clip.id) }));
-        onSelectClip(null);
+        onSelectClip([]);
         return;
     }
 
     (e.target as Element).setPointerCapture(e.pointerId);
+    
+    // Prepare initial positions for all selected clips (for group move)
+    const initialClips = newSelectedIds.map(id => {
+        const c = project.clips.find(pc => pc.id === id);
+        return c ? { id: c.id, start: c.start } : null;
+    }).filter(c => c !== null) as { id: string, start: number }[];
+
     setDragState({
+        initialClips,
         clipId: clip.id,
         mode,
         startX: e.clientX,
@@ -325,6 +391,23 @@ const Arranger: React.FC<ArrangerProps> = ({
 
     if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
         onSeek(calculateSeekTime(e.clientX, e.shiftKey));
+        return;
+    }
+
+    if (markerDrag && markerDrag.pointerId === e.pointerId) {
+        const deltaX = e.clientX - markerDrag.startX;
+        const deltaSeconds = deltaX / zoom;
+        let newTime = Math.max(0, markerDrag.originalTime + deltaSeconds);
+        
+        if (!e.shiftKey && snapGrid > 0) {
+            const snapSeconds = snapGrid * secondsPerBeat;
+            newTime = Math.round(newTime / snapSeconds) * snapSeconds;
+        }
+
+        setProject(prev => ({
+            ...prev,
+            markers: prev.markers.map(m => m.id === markerDrag.id ? { ...m, time: newTime } : m)
+        }));
         return;
     }
 
@@ -355,50 +438,72 @@ const Arranger: React.FC<ArrangerProps> = ({
         const activeSnapSeconds = activeSnapBeats * secondsPerBeat;
 
         if (dragState.mode === 'MOVE') {
-            let newStart = original.start + deltaSeconds;
-            if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
-            updatedClip.start = Math.max(0, newStart);
+            // Calculate base delta
+            let primaryNewStart = original.start + deltaSeconds;
+            if (activeSnapSeconds > 0) primaryNewStart = Math.round(primaryNewStart / activeSnapSeconds) * activeSnapSeconds;
+            const primaryDelta = Math.max(0, primaryNewStart) - original.start;
 
-            if (scrollContainerRef.current) {
-                const containerRect = scrollContainerRef.current.getBoundingClientRect();
-                const scrollTop = scrollContainerRef.current.scrollTop;
-                const relativeY = (e.clientY - containerRect.top) + scrollTop - 32; 
-                
-                const trackIndex = Math.floor(relativeY / TRACK_HEIGHT);
-                if (trackIndex >= 0 && trackIndex < project.tracks.length) {
-                    updatedClip.trackId = project.tracks[trackIndex].id;
-                }
+            // Apply delta to ALL selected clips
+            setProject(prev => ({
+                ...prev,
+                clips: prev.clips.map(c => {
+                    const init = dragState.initialClips.find(ic => ic.id === c.id);
+                    if (init) {
+                        let newStart = init.start + primaryDelta;
+                        // Prevent negative start
+                        if (newStart < 0) newStart = 0; // Simple clamp, might distort relative timing if hitting 0
+                        
+                        // Handle Track changing only for the PRIMARY clip being dragged (simpler UX)
+                        // Or allow group track move? Complex. Let's stick to horizontal group move.
+                        let targetTrackId = c.trackId;
+                        if (c.id === dragState.clipId && scrollContainerRef.current) {
+                             const containerRect = scrollContainerRef.current.getBoundingClientRect();
+                             const scrollTop = scrollContainerRef.current.scrollTop;
+                             const relativeY = (e.clientY - containerRect.top) + scrollTop - 32; 
+                             const trackIndex = Math.floor(relativeY / TRACK_HEIGHT);
+                             if (trackIndex >= 0 && trackIndex < project.tracks.length) {
+                                 targetTrackId = project.tracks[trackIndex].id;
+                             }
+                        }
+
+                        return { ...c, start: newStart, trackId: targetTrackId };
+                    }
+                    return c;
+                })
+            }));
+        } 
+        else {
+            // Trim/Fade affects ONLY the dragged clip
+            if (dragState.mode === 'TRIM_START') {
+                let newStart = original.start + deltaSeconds;
+                if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
+                const effectiveDelta = newStart - original.start;
+                const maxDelta = original.duration - 0.1;
+                const minDelta = -original.offset;
+                const clampedDelta = Math.min(maxDelta, Math.max(minDelta, effectiveDelta));
+
+                updatedClip.start = original.start + clampedDelta;
+                updatedClip.offset = original.offset + clampedDelta;
+                updatedClip.duration = original.duration - clampedDelta;
+            } 
+            else if (dragState.mode === 'TRIM_END') {
+                let newEnd = original.start + original.duration + deltaSeconds;
+                if (activeSnapSeconds > 0) newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
+                const newDuration = newEnd - original.start;
+                updatedClip.duration = Math.max(0.1, newDuration);
             }
-        } 
-        else if (dragState.mode === 'TRIM_START') {
-            let newStart = original.start + deltaSeconds;
-            if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
-            const effectiveDelta = newStart - original.start;
-            const maxDelta = original.duration - 0.1;
-            const minDelta = -original.offset;
-            const clampedDelta = Math.min(maxDelta, Math.max(minDelta, effectiveDelta));
+            else if (dragState.mode === 'FADE_IN') {
+                 updatedClip.fadeIn = Math.max(0, Math.min(original.duration - original.fadeOut, original.fadeIn + deltaSeconds));
+            }
+            else if (dragState.mode === 'FADE_OUT') {
+                 updatedClip.fadeOut = Math.max(0, Math.min(original.duration - original.fadeIn, original.fadeOut - deltaSeconds));
+            }
 
-            updatedClip.start = original.start + clampedDelta;
-            updatedClip.offset = original.offset + clampedDelta;
-            updatedClip.duration = original.duration - clampedDelta;
-        } 
-        else if (dragState.mode === 'TRIM_END') {
-            let newEnd = original.start + original.duration + deltaSeconds;
-            if (activeSnapSeconds > 0) newEnd = Math.round(newEnd / activeSnapSeconds) * activeSnapSeconds;
-            const newDuration = newEnd - original.start;
-            updatedClip.duration = Math.max(0.1, newDuration);
+            setProject(prev => ({
+                ...prev,
+                clips: prev.clips.map(c => c.id === dragState.clipId ? updatedClip : c)
+            }));
         }
-        else if (dragState.mode === 'FADE_IN') {
-             updatedClip.fadeIn = Math.max(0, Math.min(original.duration - original.fadeOut, original.fadeIn + deltaSeconds));
-        }
-        else if (dragState.mode === 'FADE_OUT') {
-             updatedClip.fadeOut = Math.max(0, Math.min(original.duration - original.fadeIn, original.fadeOut - deltaSeconds));
-        }
-
-        setProject(prev => ({
-            ...prev,
-            clips: prev.clips.map(c => c.id === dragState.clipId ? updatedClip : c)
-        }));
     } 
     
     if (loopDrag && loopDrag.pointerId === e.pointerId) {
@@ -448,6 +553,10 @@ const Arranger: React.FC<ArrangerProps> = ({
         setLoopDrag(null);
         (e.target as Element).releasePointerCapture(e.pointerId);
     }
+    if (markerDrag && markerDrag.pointerId === e.pointerId) {
+        setMarkerDrag(null);
+        (e.target as Element).releasePointerCapture(e.pointerId);
+    }
     if (trackDrag && trackDrag.pointerId === e.pointerId) {
         setTrackDrag(null);
         (e.target as Element).releasePointerCapture(e.pointerId);
@@ -483,7 +592,6 @@ const Arranger: React.FC<ArrangerProps> = ({
           const zoomDelta = -e.deltaY * 0.1;
           setZoom(Math.max(10, Math.min(400, zoom + zoomDelta)));
       }
-      // Horizontal scroll is usually handled natively by browser or trackpad gestures
   };
 
   const handleRename = () => {
@@ -500,6 +608,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   const handleDelete = () => {
       if (contextMenu) {
           setProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== contextMenu.clipId) }));
+          onSelectClip([]);
           setContextMenu(null);
       }
   };
@@ -548,86 +657,31 @@ const Arranger: React.FC<ArrangerProps> = ({
          <div className="flex space-x-3 items-center">
             <div className="flex bg-zinc-900 rounded-lg p-1 space-x-1 shrink-0 border border-zinc-800">
                 <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded-md transition-all ${tool === ToolMode.POINTER ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><MousePointer size={16} /></button>
+                <button onClick={() => setMultiSelectMode(!multiSelectMode)} className={`p-1.5 rounded-md transition-all ${multiSelectMode ? 'bg-blue-600 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`} title="Multi-Select Mode"><CheckSquare size={16} /></button>
                 <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded-md transition-all ${tool === ToolMode.SPLIT ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><Scissors size={16} /></button>
                 <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded-md transition-all ${tool === ToolMode.ERASER ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}><Trash2 size={16} /></button>
             </div>
             
             <div className="w-px h-6 bg-zinc-800 shrink-0" />
 
-            {/* Metronome & Grid */}
             <div className="flex items-center space-x-2 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
-                <div className="flex items-center space-x-1 border-r border-zinc-800 pr-2 mr-2">
-                    <button 
-                        onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))} 
-                        className={`p-1 rounded transition-colors ${project.metronomeOn ? 'text-studio-accent' : 'text-zinc-500'}`}
-                        title="Metronome"
-                    >
-                        <Zap size={14} fill={project.metronomeOn ? "currentColor" : "none"} />
-                    </button>
-                    {project.metronomeOn && (
-                        <div className="flex items-center group relative">
-                            <Volume2 size={12} className="text-zinc-500 cursor-pointer hover:text-white" />
-                            <div className="hidden group-hover:flex absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-zinc-800 p-2 rounded shadow-xl border border-zinc-700">
-                                <input 
-                                    type="range" min="0" max="1" step="0.1" 
-                                    defaultValue="0.5" 
-                                    onChange={(e) => audio.setMetronomeVolume(parseFloat(e.target.value))} 
-                                    className="w-16 h-1 bg-zinc-600 rounded-lg appearance-none cursor-pointer accent-white"
-                                />
-                            </div>
-                        </div>
-                    )}
-                </div>
-                
                 <Grid size={14} className="text-zinc-500" />
-                <select 
-                    value={snapGrid} 
-                    onChange={(e) => setSnapGrid(parseFloat(e.target.value))}
-                    className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium cursor-pointer w-14"
-                >
-                    {SNAP_OPTIONS.map(opt => (
-                        <option key={opt.label} value={opt.value}>{opt.label}</option>
-                    ))}
+                <select value={snapGrid} onChange={(e) => setSnapGrid(parseFloat(e.target.value))} className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium cursor-pointer w-14">
+                    {SNAP_OPTIONS.map(opt => <option key={opt.label} value={opt.value}>{opt.label}</option>)}
                 </select>
-            </div>
-
-            <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
-                <Activity size={14} className="text-zinc-500" />
-                <input 
-                    type="number" 
-                    value={project.bpm} 
-                    onChange={(e) => setProject(p => ({...p, bpm: parseInt(e.target.value, 10) || 120}))}
-                    className="bg-transparent text-zinc-300 outline-none text-[10px] font-medium w-8 text-center"
-                />
             </div>
          </div>
 
          <div className="flex items-center space-x-3 shrink-0">
-             <button 
-                onClick={() => setShowBacking(!showBacking)}
-                className={`flex items-center space-x-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 hover:text-white transition-colors ${showBacking ? 'border-studio-accent text-studio-accent' : ''}`}
-             >
+             <button onClick={() => setShowBacking(!showBacking)} className={`flex items-center space-x-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-400 hover:text-white transition-colors ${showBacking ? 'border-studio-accent text-studio-accent' : ''}`}>
                 <Music2 size={14} />
-                <span className="hidden md:inline font-bold">Backing</span>
              </button>
-
-             <div className="flex items-center space-x-1 bg-zinc-900 rounded-lg p-1 border border-zinc-800">
-                 <button onClick={() => setZoom(Math.max(10, zoom * 0.8))} className="p-1 text-zinc-400 hover:text-white"><ZoomOut size={14} /></button>
-                 <button onClick={() => setZoom(Math.min(400, zoom * 1.2))} className="p-1 text-zinc-400 hover:text-white"><ZoomIn size={14} /></button>
-             </div>
-
-             <div className="text-zinc-400 font-mono flex items-center bg-black/40 px-3 py-1.5 rounded-md border border-zinc-800/50 shadow-inner">
-                 <span className="text-white font-bold">{Math.floor(currentTime / secondsPerBar) + 1}</span>
-                 <span className="text-zinc-600 mx-1">.</span>
-                 <span className="text-white">{Math.floor((currentTime % secondsPerBar) / secondsPerBeat) + 1}</span>
-             </div>
              <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded-md transition-all ${project.isLooping ? 'text-yellow-400 bg-yellow-400/10' : 'text-zinc-500'}`}>
                 <Repeat size={16} />
             </button>
          </div>
       </div>
       
-      {/* Backing Popover */}
       {showBacking && (
           <div className="absolute top-14 right-4 z-50 w-80 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 flex flex-col space-y-4 animate-in fade-in zoom-in-95 duration-200">
               <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
@@ -649,8 +703,8 @@ const Arranger: React.FC<ArrangerProps> = ({
       >
         <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + headerWidth }}>
            
-            {/* 1. Sticky Top Ruler */}
-            <div className="sticky top-0 z-40 flex h-8 bg-zinc-900 border-b border-zinc-800 shadow-sm">
+            {/* 1. Sticky Top Ruler with Markers */}
+            <div className="sticky top-0 z-40 flex h-10 bg-zinc-900 border-b border-zinc-800 shadow-sm">
                 <div 
                     className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800 shadow-md" 
                     style={{ width: headerWidth }}
@@ -662,6 +716,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                     className="relative flex-1 bg-zinc-900 cursor-pointer touch-none group"
                     onPointerDown={handleRulerPointerDown}
                 >
+                     {/* Loop Region */}
                      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
                         <div 
                             className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 ${project.isLooping ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
@@ -673,13 +728,31 @@ const Arranger: React.FC<ArrangerProps> = ({
                         </div>
                      </div>
 
+                     {/* Grid Numbers */}
                      {[...Array(totalBars)].map((_, i) => (
-                        <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-700 pl-1 select-none h-4 flex items-end pb-0.5 font-medium" style={{ left: i * pixelsPerBar }}>
+                        <div key={i} className="absolute bottom-0 text-[10px] text-zinc-500 border-l border-zinc-700 pl-1 select-none h-5 flex items-end pb-1 font-medium" style={{ left: i * pixelsPerBar }}>
                             {i + 1}
                         </div>
                      ))}
+
+                     {/* Markers */}
+                     {project.markers.map(marker => (
+                         <div 
+                            key={marker.id}
+                            className="absolute top-0 h-full z-30 group"
+                            style={{ left: marker.time * zoom }}
+                            onPointerDown={(e) => handleMarkerPointerDown(e, marker)}
+                            onDoubleClick={(e) => handleMarkerDoubleClick(e, marker)}
+                         >
+                             <div className="relative flex flex-col items-center">
+                                 <Bookmark size={12} fill={marker.color} color={marker.color} className="drop-shadow-sm transform translate-y-0.5" />
+                                 <span className="text-[10px] font-bold text-white bg-zinc-800/80 px-1 rounded -mt-0.5 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none absolute top-4">{marker.text}</span>
+                             </div>
+                             <div className="w-px h-screen bg-white/20 absolute top-3 left-1.5 pointer-events-none" />
+                         </div>
+                     ))}
                      
-                     {/* Playhead Cap (In Ruler) */}
+                     {/* Playhead Cap */}
                      <div 
                         className="absolute top-0 h-full z-50 pointer-events-none flex flex-col items-center justify-end pb-1"
                         style={{ left: currentTime * zoom, transform: 'translateX(-50%)' }}
@@ -711,15 +784,9 @@ const Arranger: React.FC<ArrangerProps> = ({
                             style={{ width: headerWidth }}
                             onClick={() => onSelectTrack(track.id)}
                             onDoubleClick={() => onOpenInspector(track.id)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                    onSelectTrack(track.id);
-                                }
-                            }}
                         >
                              <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center space-x-2 overflow-hidden">
-                                    {/* Drag Handle */}
                                     <div 
                                         className="cursor-grab active:cursor-grabbing text-zinc-600 hover:text-zinc-400 p-0.5"
                                         onPointerDown={(e) => handleTrackDragStart(e, track.id, index)}
@@ -730,108 +797,57 @@ const Arranger: React.FC<ArrangerProps> = ({
                                     <div className="w-6 h-6 rounded bg-zinc-900 flex items-center justify-center shadow-inner shrink-0" style={{ color: track.color }}>
                                         <TrackIcon name={track.name} color={track.color} />
                                     </div>
-                                    <span 
-                                        className={`font-bold text-xs truncate cursor-text ${selectedTrackId === track.id ? 'text-white' : 'text-zinc-400'}`}
-                                        onDoubleClick={(e) => handleTrackNameDoubleClick(e, track.id, track.name)}
-                                    >
-                                        {track.name}
-                                    </span>
+                                    <span className="font-bold text-xs truncate cursor-text text-zinc-400" onDoubleClick={(e) => handleTrackNameDoubleClick(e, track.id, track.name)}>{track.name}</span>
                                 </div>
-                                <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 md:block hidden">
-                                    <Sliders size={12} />
-                                </button>
+                                <button onClick={(e) => {e.stopPropagation(); onOpenInspector(track.id)}} className="p-1 hover:bg-zinc-700 rounded text-zinc-500 hover:text-zinc-300 md:block hidden"><Sliders size={12} /></button>
                              </div>
                              
                              <div className="flex space-x-1 mt-auto">
-                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.muted ? 'bg-red-500 text-white shadow-red-500/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>M</button>
-                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.solo ? 'bg-yellow-400 text-black shadow-yellow-400/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>S</button>
+                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.muted ? 'bg-red-500 text-white' : 'bg-zinc-700 text-zinc-400'}`}>M</button>
+                                 <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.solo ? 'bg-yellow-400 text-black' : 'bg-zinc-700 text-zinc-400'}`}>S</button>
                              </div>
 
-                             {/* Level Meter Strip */}
                              <div className="mt-2 h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden">
                                 <LevelMeter trackId={track.id} vertical={false} />
                              </div>
                              
                              {headerWidth > 120 && (
                                 <div className="mt-1 flex items-center space-x-2">
-                                    <input 
-                                        type="range" min="0" max="1" step="0.01" 
-                                        value={track.volume} 
-                                        onClick={(e) => e.stopPropagation()} 
-                                        onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} 
-                                        className="w-full h-1 bg-zinc-900 rounded-lg appearance-none cursor-pointer accent-zinc-500" 
-                                    />
+                                    <input type="range" min="0" max="1" step="0.01" value={track.volume} onClick={(e) => e.stopPropagation()} onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })} className="w-full h-1 bg-zinc-900 rounded-lg appearance-none cursor-pointer accent-zinc-500" />
                                 </div>
                              )}
-
                              <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
                         </div>
 
                         {/* Track Lane */}
                         <div className="relative flex-1 border-b border-zinc-800/30 bg-zinc-900/20">
                             {isRecording && selectedTrackId === track.id && (
-                                <div 
-                                    className="absolute rounded-lg overflow-hidden z-20 shadow-xl opacity-80 border-2 border-red-500 bg-red-900/40"
-                                    style={{
-                                        left: recordingStartTime * zoom,
-                                        width: Math.max(10, (currentTime - recordingStartTime) * zoom),
-                                        top: 4,
-                                        bottom: 4,
-                                    }}
-                                >
-                                     <div className="absolute top-2 left-2 flex items-center space-x-2">
-                                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                                        <span className="text-[10px] font-bold text-red-200">Recording...</span>
-                                     </div>
+                                <div className="absolute rounded-lg overflow-hidden z-20 shadow-xl opacity-80 border-2 border-red-500 bg-red-900/40" style={{ left: recordingStartTime * zoom, width: Math.max(10, (currentTime - recordingStartTime) * zoom), top: 4, bottom: 4 }}>
+                                     <div className="absolute top-2 left-2 flex items-center space-x-2"><div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /><span className="text-[10px] font-bold text-red-200">Recording...</span></div>
                                 </div>
                             )}
 
                             {project.clips.filter(c => c.trackId === track.id).map(clip => {
-                                const isSelected = selectedClipId === clip.id;
+                                const isSelected = selectedClipIds.includes(clip.id);
                                 const clipColor = clip.color || track.color;
                                 const isMuted = track.muted || (project.tracks.some(t => t.solo) && !track.solo);
 
                                 return (
                                     <div
                                         key={clip.id}
-                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none touch-none transition-all ${
-                                            isSelected ? 'ring-2 ring-white z-20 shadow-xl' : 'hover:brightness-110 z-10 shadow-md'
-                                        } ${isMuted ? 'opacity-50 grayscale' : ''}`}
-                                        style={{
-                                            left: clip.start * zoom,
-                                            width: clip.duration * zoom,
-                                            top: 4,
-                                            bottom: 4,
-                                            backgroundColor: '#18181b',
-                                            borderLeft: `4px solid ${clipColor}`
-                                        }}
+                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none touch-none transition-all ${isSelected ? 'ring-2 ring-white z-20 shadow-xl' : 'hover:brightness-110 z-10 shadow-md'} ${isMuted ? 'opacity-50 grayscale' : ''}`}
+                                        style={{ left: clip.start * zoom, width: clip.duration * zoom, top: 4, bottom: 4, backgroundColor: '#18181b', borderLeft: `4px solid ${clipColor}` }}
                                         onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
                                     >
                                         <LoopMarkers clip={clip} zoom={zoom} />
-
-                                        <div 
-                                            className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate relative z-10"
-                                            style={{ backgroundColor: clipColor }}
-                                        >
+                                        <div className="h-5 px-2 flex items-center justify-between text-[10px] font-bold text-white/90 truncate relative z-10" style={{ backgroundColor: clipColor }}>
                                             <span className="truncate">{clip.name}</span>
                                         </div>
-
-                                        <div className="absolute inset-0 top-5 bottom-0 bg-black/40 pointer-events-none">
-                                            <Waveform bufferKey={clip.bufferKey} color={clipColor} />
-                                        </div>
-                                        
-                                        <svg className="absolute inset-0 pointer-events-none z-20 opacity-50" width="100%" height="100%" preserveAspectRatio="none">
-                                            <title>Clip Fades</title>
-                                            {clip.fadeIn > 0 && <path d={`M 0 100 L ${clip.fadeIn * zoom} 0 L 0 0 Z`} fill="black" />}
-                                            {clip.fadeOut > 0 && <path d={`M ${clip.duration * zoom} 100 L ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} 0 Z`} fill="black" />}
-                                        </svg>
-
+                                        <div className="absolute inset-0 top-5 bottom-0 bg-black/40 pointer-events-none"><Waveform bufferKey={clip.bufferKey} color={clipColor} /></div>
                                         <div className={`absolute inset-y-0 left-0 w-6 -ml-3 cursor-w-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')} />
                                         <div className={`absolute inset-y-0 right-0 w-6 -mr-3 cursor-e-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')} />
-                                        
                                         <div className={`absolute top-0 w-4 h-4 -ml-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ left: clip.fadeIn * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_IN')} />
                                         <div className={`absolute top-0 w-4 h-4 -mr-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ right: clip.fadeOut * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_OUT')} />
-
                                     </div>
                                 )
                             })}
@@ -839,67 +855,30 @@ const Arranger: React.FC<ArrangerProps> = ({
                     </div>
                 ))}
                 
-                {/* Playhead Line (No Head, follows scroll) */}
-                <div 
-                    className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]"
-                    style={{ left: headerWidth + (currentTime * zoom) }}
-                >
-                     {/* Simplified to just line */}
-                </div>
+                <div className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]" style={{ left: headerWidth + (currentTime * zoom) }} />
             </div>
         </div>
       </div>
 
       <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center space-x-6 bg-zinc-900/90 backdrop-blur-xl px-8 py-3 rounded-2xl border border-zinc-700/50 shadow-2xl">
-            <button onClick={onStop} className="group">
-                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">
-                    <Square fill="currentColor" size={12} className="text-zinc-400 group-hover:text-white" />
-                </div>
-            </button>
-            <button onClick={onRecord} className="group relative">
-                <div className={`w-14 h-14 rounded-full flex items-center justify-center group-active:scale-95 transition-all shadow-lg border-4 border-zinc-800 ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-500'}`}>
-                    <Circle fill="white" size={16} className="text-white" />
-                </div>
-            </button>
-            <button onClick={onPlayPause} className="group">
-                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">
-                     {isPlaying ? <Pause fill="currentColor" size={14} className="text-zinc-200" /> : <Play fill="currentColor" size={14} className="text-zinc-200 ml-0.5" />}
-                </div>
-            </button>
+            <button onClick={onStop} className="group"><div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner"><Square fill="currentColor" size={12} className="text-zinc-400 group-hover:text-white" /></div></button>
+            <button onClick={onRecord} className="group relative"><div className={`w-14 h-14 rounded-full flex items-center justify-center group-active:scale-95 transition-all shadow-lg border-4 border-zinc-800 ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-500'}`}><Circle fill="white" size={16} className="text-white" /></div></button>
+            <button onClick={onPlayPause} className="group"><div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center group-active:scale-95 transition-all shadow-inner">{isPlaying ? <Pause fill="currentColor" size={14} className="text-zinc-200" /> : <Play fill="currentColor" size={14} className="text-zinc-200 ml-0.5" />}</div></button>
       </div>
       
       {contextMenu && (
-        <div 
-            className="fixed inset-0 z-[100]" 
-            onClick={() => setContextMenu(null)}
-            onKeyDown={(e) => { if(e.key === 'Escape') setContextMenu(null) }}
-            role="presentation"
-        >
-            <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1"
-                style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
-                
+        <div className="fixed inset-0 z-[100]" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if(e.key === 'Escape') setContextMenu(null) }} role="presentation">
+            <div className="absolute bg-zinc-800 border border-zinc-700 shadow-2xl rounded-xl overflow-hidden min-w-[160px] animate-in fade-in zoom-in-95 duration-100 py-1" style={{ left: Math.min(window.innerWidth - 170, contextMenu.x), top: Math.min(window.innerHeight - 200, contextMenu.y) }}>
                 <div className="px-4 py-2 flex items-center justify-between gap-1 border-b border-zinc-700/50">
                     {CLIP_COLORS.map(color => (
-                        <button 
-                            key={color} 
-                            onClick={(e) => { e.stopPropagation(); handleColorChange(color); }}
-                            className="w-5 h-5 rounded-full hover:scale-110 transition-transform shadow-sm"
-                            style={{ backgroundColor: color }}
-                        />
+                        <button key={color} onClick={(e) => { e.stopPropagation(); handleColorChange(color); }} className="w-5 h-5 rounded-full hover:scale-110 transition-transform shadow-sm" style={{ backgroundColor: color }} />
                     ))}
                 </div>
-
-                <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
-                    <Copy size={14} /> <span>Duplicate</span>
-                </button>
+                <button onClick={handleDuplicate} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Copy size={14} /> <span>Duplicate</span></button>
                 <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button onClick={handleRename} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2">
-                    <Edit2 size={14} /> <span>Rename</span>
-                </button>
+                <button onClick={handleRename} className="w-full text-left px-4 py-2.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center space-x-2"><Edit2 size={14} /> <span>Rename</span></button>
                 <div className="h-px bg-zinc-700 mx-2 my-1" />
-                <button onClick={handleDelete} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2">
-                    <Trash2 size={14} /> <span>Delete</span>
-                </button>
+                <button onClick={handleDelete} className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-700 flex items-center space-x-2"><Trash2 size={14} /> <span>Delete</span></button>
             </div>
         </div>
       )}

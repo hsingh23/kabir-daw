@@ -26,6 +26,7 @@ const mockProject: ProjectState = {
   clips: [
     { id: 'c1', trackId: 't1', name: 'Riff 1', start: 0, offset: 0, duration: 4, bufferKey: 'key1', fadeIn: 0, fadeOut: 0 }
   ],
+  markers: [],
   loopStart: 0,
   loopEnd: 4,
   isLooping: false,
@@ -76,7 +77,7 @@ describe('Arranger Integration', () => {
         setZoom={setZoom}
         selectedTrackId={null}
         onSelectTrack={onSelectTrack}
-        selectedClipId={null}
+        selectedClipIds={[]}
         onSelectClip={onSelectClip}
         onOpenInspector={() => {}}
       />

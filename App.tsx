@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ProjectState, Track, Clip } from './types';
+import { ProjectState, Track, Clip, Marker } from './types';
 import Mixer from './components/Mixer';
 import Arranger from './components/Arranger';
 import Library from './components/Library';
@@ -20,6 +20,7 @@ const INITIAL_PROJECT: ProjectState = {
     { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -22, ratio: 3, attack: 0.02, release: 0.2 }, sends: { reverb: 0.3, delay: 0.1, chorus: 0 } },
   ],
   clips: [],
+  markers: [],
   loopStart: 0,
   loopEnd: 8,
   isLooping: false,
@@ -57,7 +58,7 @@ const App: React.FC = () => {
   const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
   const [past, setPast] = useState<ProjectState[]>([]);
   const [future, setFuture] = useState<ProjectState[]>([]);
-  const [clipboard, setClipboard] = useState<Clip | null>(null);
+  const [clipboard, setClipboard] = useState<Clip[]>([]); // Changed to array for multi-select
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -66,7 +67,7 @@ const App: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(50); 
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>('1');
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]); // Changed to array
   
   // Track Inspector Modal
   const [inspectorTrackId, setInspectorTrackId] = useState<string | null>(null);
@@ -107,6 +108,7 @@ const App: React.FC = () => {
             effects: { ...INITIAL_PROJECT.effects, ...saved.effects },
             masterCompressor: saved.masterCompressor || INITIAL_PROJECT.masterCompressor,
             masterEq: saved.masterEq || INITIAL_PROJECT.masterEq,
+            markers: saved.markers || [],
             tracks: saved.tracks.map((t: any) => ({
                 ...t,
                 eq: t.eq || { low: 0, mid: 0, high: 0 },
@@ -222,7 +224,7 @@ const App: React.FC = () => {
                 ...prev,
                 clips: [...prev.clips, newClip]
             }));
-            setSelectedClipId(newClip.id);
+            setSelectedClipIds([newClip.id]);
         }
     } else {
         if (!selectedTrackId) {
@@ -263,10 +265,10 @@ const App: React.FC = () => {
 
           // Copy (Cmd/Ctrl + C)
           if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-             if (selectedClipId) {
-                 const clip = project.clips.find(c => c.id === selectedClipId);
-                 if (clip) {
-                     setClipboard(clip);
+             if (selectedClipIds.length > 0) {
+                 const clips = project.clips.filter(c => selectedClipIds.includes(c.id));
+                 if (clips.length > 0) {
+                     setClipboard(clips);
                      e.preventDefault();
                  }
              }
@@ -274,52 +276,77 @@ const App: React.FC = () => {
 
           // Paste (Cmd/Ctrl + V)
           if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-              if (clipboard) {
-                  const targetTrackId = selectedTrackId || clipboard.trackId;
-                  const newClip: Clip = {
-                      ...clipboard,
-                      id: crypto.randomUUID(),
-                      trackId: targetTrackId,
-                      start: currentTime, // Paste at playhead
-                      name: `${clipboard.name} (Copy)`
-                  };
-                  updateProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
-                  setSelectedClipId(newClip.id);
+              if (clipboard.length > 0) {
+                  // Find the earliest start time in clipboard to calculate relative offsets
+                  const minStart = Math.min(...clipboard.map(c => c.start));
+                  
+                  // If single track selected, try to paste onto it if clipboard has 1 clip,
+                  // or preserve relative tracks if clipboard has multiple?
+                  // Simple approach: Paste all onto their original tracks (or map to selected if 1)
+                  
+                  const newClips = clipboard.map(clip => {
+                      const offsetFromGroupStart = clip.start - minStart;
+                      // If only 1 clip and track selected, paste there. Else original track or intelligent mapping.
+                      // For now: Original track index logic is complex without track index in Clip.
+                      // Let's just use original trackId if exists, otherwise selectedTrack.
+                      
+                      let targetTrackId = clip.trackId;
+                      // Fallback if track doesn't exist? (Project specific)
+                      if (!project.tracks.find(t => t.id === targetTrackId)) {
+                          targetTrackId = selectedTrackId || project.tracks[0].id;
+                      }
+                      // If user explicitly selected a track and we are pasting ONE clip, use that.
+                      if (clipboard.length === 1 && selectedTrackId) {
+                          targetTrackId = selectedTrackId;
+                      }
+
+                      return {
+                          ...clip,
+                          id: crypto.randomUUID(),
+                          trackId: targetTrackId,
+                          start: currentTime + offsetFromGroupStart,
+                          name: `${clip.name} (Copy)`
+                      };
+                  });
+
+                  updateProject(prev => ({ ...prev, clips: [...prev.clips, ...newClips] }));
+                  setSelectedClipIds(newClips.map(c => c.id));
                   e.preventDefault();
               }
           }
 
           // Duplicate (Cmd/Ctrl + D)
           if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
-              if (selectedClipId) {
-                  const clip = project.clips.find(c => c.id === selectedClipId);
-                  if (clip) {
-                      const newClip = {
+              if (selectedClipIds.length > 0) {
+                  const clips = project.clips.filter(c => selectedClipIds.includes(c.id));
+                  if (clips.length > 0) {
+                      const newClips = clips.map(clip => ({
                           ...clip,
                           id: crypto.randomUUID(),
                           start: clip.start + clip.duration, // Append after
                           name: `${clip.name} (Dup)`
-                      };
-                      updateProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
-                      setSelectedClipId(newClip.id);
+                      }));
+                      updateProject(prev => ({ ...prev, clips: [...prev.clips, ...newClips] }));
+                      setSelectedClipIds(newClips.map(c => c.id));
                       e.preventDefault();
                   }
               }
           }
 
           // Nudge (Arrows)
-          if (selectedClipId && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-              const clip = project.clips.find(c => c.id === selectedClipId);
-              if (clip) {
-                  e.preventDefault();
-                  const amount = e.shiftKey ? 0.1 : 0.01; // Shift for coarse, normal for fine
-                  const delta = e.key === 'ArrowLeft' ? -amount : amount;
-                  const newStart = Math.max(0, clip.start + delta);
-                  updateProject(prev => ({
-                      ...prev,
-                      clips: prev.clips.map(c => c.id === clip.id ? { ...c, start: newStart } : c)
-                  }));
-              }
+          if (selectedClipIds.length > 0 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+              e.preventDefault();
+              const amount = e.shiftKey ? 0.1 : 0.01;
+              const delta = e.key === 'ArrowLeft' ? -amount : amount;
+              
+              updateProject(prev => ({
+                  ...prev,
+                  clips: prev.clips.map(c => 
+                      selectedClipIds.includes(c.id) 
+                      ? { ...c, start: Math.max(0, c.start + delta) } 
+                      : c
+                  )
+              }));
           }
           
           if (e.code === 'Space') {
@@ -332,18 +359,18 @@ const App: React.FC = () => {
           }
 
           if (e.key === 'Delete' || e.key === 'Backspace') {
-            if (selectedClipId && !isRecording) {
+            if (selectedClipIds.length > 0 && !isRecording) {
                 updateProject(prev => ({
                     ...prev,
-                    clips: prev.clips.filter(c => c.id !== selectedClipId)
+                    clips: prev.clips.filter(c => !selectedClipIds.includes(c.id))
                 }));
-                setSelectedClipId(null);
+                setSelectedClipIds([]);
             }
           }
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipId, handleRecordToggle, updateProject, clipboard, currentTime, selectedTrackId]); 
+  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, updateProject, clipboard, currentTime, selectedTrackId]); 
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
@@ -368,10 +395,7 @@ const App: React.FC = () => {
         audio.scheduler();
         const time = audio.getCurrentTime();
         
-        // Visual Metronome Logic
         const secondsPerBeat = 60 / project.bpm;
-        const currentBeat = Math.floor(time / secondsPerBeat);
-        // Blink on the beat (within first 100ms)
         const timeSinceBeat = time % secondsPerBeat;
         setVisualBeat(timeSinceBeat < 0.1 && project.metronomeOn);
 
@@ -395,9 +419,7 @@ const App: React.FC = () => {
   }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks, project.bpm, project.metronomeOn]);
 
   const handlePlayPauseClick = useCallback(() => {
-      // Must resume context inside the event handler for iOS
       audio.resumeContext();
-      
       if (isRecording) {
           handleRecordToggle();
           return;
@@ -430,7 +452,6 @@ const App: React.FC = () => {
       }
       setIsExporting(true);
       if (isPlaying) stop();
-      
       try {
           const blob = await audio.renderProject(project);
           if (blob) {
@@ -474,7 +495,7 @@ const App: React.FC = () => {
         ...prev,
         clips: [...prev.clips, newClip]
       }));
-      setSelectedClipId(newClip.id);
+      setSelectedClipIds([newClip.id]);
     }
   }, [selectedTrackId, project.tracks, currentTime, updateProject]);
 
@@ -505,7 +526,7 @@ const App: React.FC = () => {
         ...prev,
         clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
     }));
-    setSelectedClipId(clipB.id);
+    setSelectedClipIds([clipB.id]);
   }, [project.clips, updateProject]);
 
   const addTrack = useCallback(() => {
@@ -567,14 +588,12 @@ const App: React.FC = () => {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
-      
       {/* Header */}
       <div className="h-12 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-4 z-50">
         <div className="flex items-center space-x-4">
             <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent hidden sm:block">PocketStudio</h1>
             <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent sm:hidden">PS</h1>
             
-            {/* Project Indicator / Metronome Flash */}
             {visualBeat && <div className="w-3 h-3 rounded-full bg-studio-accent shadow-[0_0_10px_#ef4444]" />}
 
             <div className="flex space-x-1 border-l border-zinc-700 pl-4">
@@ -637,8 +656,8 @@ const App: React.FC = () => {
              setZoom={setZoom}
              selectedTrackId={selectedTrackId}
              onSelectTrack={setSelectedTrackId}
-             selectedClipId={selectedClipId}
-             onSelectClip={setSelectedClipId}
+             selectedClipIds={selectedClipIds}
+             onSelectClip={setSelectedClipIds}
              onOpenInspector={setInspectorTrackId}
              onMoveTrack={handleMoveTrack}
              onRenameClip={handleRenameClip}
