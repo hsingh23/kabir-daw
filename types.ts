@@ -56,11 +56,19 @@ export interface TablaState {
   key: string; // Tuning
 }
 
+export interface Marker {
+  id: string;
+  time: number;
+  text: string;
+  color: string;
+}
+
 export interface ProjectState {
   id: string;
   bpm: number;
   tracks: Track[];
   clips: Clip[];
+  markers: Marker[];
   loopStart: number;
   loopEnd: number;
   isLooping: boolean;

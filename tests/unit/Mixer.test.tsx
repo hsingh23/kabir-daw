@@ -20,6 +20,7 @@ const mockProject: ProjectState = {
     { id: 't2', name: 'Track 2', volume: 0.5, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
   ],
   clips: [],
+  markers: [],
   loopStart: 0,
   loopEnd: 4,
   isLooping: false,
