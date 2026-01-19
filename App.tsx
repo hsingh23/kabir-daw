@@ -365,6 +365,7 @@ const App: React.FC = () => {
              currentTime={currentTime}
              isPlaying={isPlaying}
              isRecording={isRecording}
+             recordingStartTime={recordingStartTime}
              onPlayPause={togglePlay}
              onStop={stop}
              onRecord={handleRecordToggle}
