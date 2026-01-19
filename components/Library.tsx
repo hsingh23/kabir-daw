@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { getAllAssetsMetadata, saveAudioBlob, saveAssetMetadata, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject } from '../services/db';
 import { AssetMetadata } from '../types';
-import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Tag, Globe, Upload, Edit2, Check, X, Filter } from 'lucide-react';
+import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Tag, Globe, Upload, Edit2, Check, X, Filter, Layers, Music } from 'lucide-react';
 import { audio } from '../services/audio';
 
 interface LibraryProps {
@@ -41,6 +41,12 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
 
   // Edit Metadata State
   const [editingAsset, setEditingAsset] = useState<AssetMetadata | null>(null);
+  const [batchEditIds, setBatchEditIds] = useState<string[]>([]);
+  const [batchMetadata, setBatchMetadata] = useState<{group: string, bpm?: number, key: string, type: 'stem' | 'loop' | 'oneshot'}>({
+      group: '',
+      key: '',
+      type: 'stem'
+  });
 
   useEffect(() => {
     if (activeTab === 'assets') loadAssets();
@@ -78,18 +84,17 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
       if (e.target.files && e.target.files.length > 0) {
           setLoadingAssets(true);
           const files = Array.from(e.target.files);
+          const newIds: string[] = [];
           
           for (const file of files) {
               try {
                   const key = crypto.randomUUID();
                   await saveAudioBlob(key, file);
                   
-                  // Quick analyze duration (optional, expensive for many files so maybe skip or do async)
-                  // For now, save placeholder duration
                   const meta: AssetMetadata = {
                       id: key,
                       name: file.name.replace(/\.[^/.]+$/, ""),
-                      type: 'oneshot',
+                      type: files.length > 1 ? 'stem' : 'oneshot',
                       instrument: 'Other',
                       tags: [],
                       duration: 0,
@@ -97,28 +102,60 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                       fileType: file.type
                   };
                   await saveAssetMetadata(meta);
+                  newIds.push(key);
               } catch (err) {
                   console.error(`Failed to upload ${file.name}`, err);
+                  alert(`Failed to load ${file.name}. Format might not be supported.`);
               }
           }
           await loadAssets();
           e.target.value = ''; // Reset input
+          
+          // If multiple files, trigger batch edit
+          if (newIds.length > 1) {
+              setBatchEditIds(newIds);
+              // Guess group name from first file (common prefix logic could go here)
+              setBatchMetadata(prev => ({...prev, group: 'New Song'}));
+          }
       }
+  };
+
+  const handleBatchSave = async () => {
+      const updates = batchEditIds.map(async (id) => {
+          const original = assets.find(a => a.id === id);
+          if (original) {
+              const updated = {
+                  ...original,
+                  group: batchMetadata.group,
+                  bpm: batchMetadata.bpm,
+                  key: batchMetadata.key || original.key,
+                  type: batchMetadata.type as any
+              };
+              await saveAssetMetadata(updated);
+          }
+      });
+      await Promise.all(updates);
+      setBatchEditIds([]);
+      loadAssets();
   };
 
   const handleUrlImport = async () => {
       if (!urlInput) return;
       setIsUrlImporting(true);
       try {
-          // Note: This relies on the URL serving CORS headers allowing the fetch
           const response = await fetch(urlInput);
           if (!response.ok) throw new Error('Network response was not ok');
           const blob = await response.blob();
           
+          // Verify it's audio
+          if (!blob.type.startsWith('audio/')) {
+              alert('The URL did not return an audio file.');
+              return;
+          }
+
           const key = crypto.randomUUID();
           await saveAudioBlob(key, blob);
           
-          // Try to guess name from URL
           const urlName = urlInput.split('/').pop()?.split('?')[0] || `Imported Audio`;
           
           const meta: AssetMetadata = {
@@ -182,24 +219,25 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
             const source = audio.ctx.createBufferSource();
             source.buffer = buffer;
             source.connect(audio.ctx.destination);
-            // Simple loop if typed as loop
             if (asset.type === 'loop') source.loop = true;
             
             source.start();
             setPreviewing(asset.id);
-            // Only auto-stop visual if not looping
             if (!source.loop) {
                 source.onended = () => setPreviewing(null);
             }
         }
     } catch (e) {
         console.error("Preview failed", e);
+        alert("Could not play audio. File might be corrupt.");
     }
   };
 
   // --- Filtering ---
   const filteredAssets = assets.filter(a => {
-      const matchSearch = a.name.toLowerCase().includes(searchQuery.toLowerCase()) || a.tags.some(t => t.includes(searchQuery.toLowerCase()));
+      const matchSearch = a.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          a.tags.some(t => t.includes(searchQuery.toLowerCase())) ||
+                          (a.group && a.group.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchInst = filterInstrument ? a.instrument === filterInstrument : true;
       const matchType = filterType ? a.type === filterType : true;
       return matchSearch && matchInst && matchType;
@@ -302,7 +340,8 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                             <button onClick={() => fileInputRef.current?.click()} className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 p-1.5 rounded-md" title="Upload Files">
                                 <Upload size={16} />
                             </button>
-                            <input type="file" ref={fileInputRef} onChange={handleFileUpload} multiple accept="audio/*" className="hidden" />
+                            {/* Explicitly list extensions for better mobile support */}
+                            <input type="file" ref={fileInputRef} onChange={handleFileUpload} multiple accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" className="hidden" />
                             
                             <button onClick={() => setShowUrlInput(!showUrlInput)} className={`border border-zinc-700 text-zinc-300 p-1.5 rounded-md ${showUrlInput ? 'bg-zinc-700 text-white' : 'bg-zinc-800 hover:bg-zinc-700'}`} title="Import from URL">
                                 <Globe size={16} />
@@ -373,6 +412,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                         <div className="flex items-center gap-2">
                                             <span className="font-bold text-xs text-zinc-200 truncate">{asset.name}</span>
                                             {asset.type === 'loop' && <span className="text-[9px] bg-blue-900/50 text-blue-300 px-1 rounded border border-blue-800">LOOP</span>}
+                                            {asset.group && <span className="text-[9px] bg-zinc-700 text-zinc-300 px-1 rounded truncate max-w-[80px]">{asset.group}</span>}
                                         </div>
                                         <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-0.5">
                                             <span>{asset.instrument}</span>
@@ -414,7 +454,61 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
             </div>
         )}
 
-        {/* Edit Metadata Modal */}
+        {/* Batch Edit Modal */}
+        {batchEditIds.length > 0 && (
+            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+                    <div className="px-4 py-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-800/50">
+                        <h3 className="font-bold text-zinc-200">Import {batchEditIds.length} Files</h3>
+                        <button onClick={() => setBatchEditIds([])} className="text-zinc-500 hover:text-white"><X size={18} /></button>
+                    </div>
+                    <div className="p-4 space-y-4">
+                        <p className="text-xs text-zinc-400">Add common metadata for these stems/loops.</p>
+                        
+                        <div>
+                            <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Group / Song Name</label>
+                            <input 
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                value={batchMetadata.group}
+                                onChange={e => setBatchMetadata({...batchMetadata, group: e.target.value})}
+                                placeholder="e.g. Summer Hits Vol 1"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Type</label>
+                                <select 
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                    value={batchMetadata.type}
+                                    onChange={e => setBatchMetadata({...batchMetadata, type: e.target.value as any})}
+                                >
+                                    {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">BPM</label>
+                                <input 
+                                    type="number"
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                    value={batchMetadata.bpm || ''}
+                                    placeholder="Optional"
+                                    onChange={e => setBatchMetadata({...batchMetadata, bpm: parseFloat(e.target.value) || undefined})}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <div className="p-4 border-t border-zinc-800 bg-zinc-800/30 flex justify-end gap-2">
+                        <button onClick={() => setBatchEditIds([])} className="px-4 py-2 rounded text-xs font-bold text-zinc-400 hover:text-white">Skip</button>
+                        <button onClick={handleBatchSave} className="px-4 py-2 rounded bg-studio-accent hover:bg-red-600 text-white text-xs font-bold flex items-center gap-2">
+                            <Check size={14} /> Save All
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Single Edit Modal (same as before but updated with group) */}
         {editingAsset && (
             <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
@@ -429,6 +523,15 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
                                 value={editingAsset.name}
                                 onChange={e => setEditingAsset({...editingAsset, name: e.target.value})}
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Group / Song</label>
+                            <input 
+                                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none"
+                                value={editingAsset.group || ''}
+                                onChange={e => setEditingAsset({...editingAsset, group: e.target.value})}
                             />
                         </div>
                         

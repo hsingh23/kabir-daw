@@ -632,17 +632,23 @@ const App: React.FC = () => {
               targetTrackId = newTrack.id;
           }
 
+          // Auto-speed matching if it's a loop with known BPM
+          let speed = 1;
+          if (asset.type === 'loop' && asset.bpm) {
+              speed = project.bpm / asset.bpm;
+          }
+
           const newClip: Clip = {
               id: crypto.randomUUID(),
               trackId: targetTrackId,
               name: asset.name,
               start: currentTime,
               offset: 0,
-              duration: duration,
+              duration: duration / speed, // Adjust timeline duration based on speed
               bufferKey: asset.id,
               fadeIn: 0,
               fadeOut: 0,
-              speed: 1
+              speed: speed
           };
 
           updateProject(prev => ({
@@ -657,7 +663,7 @@ const App: React.FC = () => {
       } catch (e) {
           console.error("Failed to add asset to project", e);
       }
-  }, [selectedTrackId, project.tracks, currentTime, updateProject]);
+  }, [selectedTrackId, project.tracks, currentTime, updateProject, project.bpm]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
@@ -698,7 +704,8 @@ const App: React.FC = () => {
              <button onClick={addTrack} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform">
                 <Plus size={18} />
              </button>
-             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*" className="hidden" />
+             {/* Updated file input for better compatibility */}
+             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" className="hidden" />
         </div>
       </div>
 
