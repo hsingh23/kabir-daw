@@ -7,6 +7,7 @@ interface TrackChannel {
     lowFilter: BiquadFilterNode;
     midFilter: BiquadFilterNode;
     highFilter: BiquadFilterNode;
+    compressor: DynamicsCompressorNode; // Per-track compressor
     gain: GainNode; // Volume fader
     panner: StereoPannerNode; // Pan
     analyser: AnalyserNode; // For metering
@@ -216,6 +217,11 @@ class AudioEngine {
       highFilter.type = 'highshelf';
       highFilter.frequency.value = 3200;
 
+      const compressor = this.ctx.createDynamicsCompressor();
+      // Default innocuous settings
+      compressor.threshold.value = 0; 
+      compressor.ratio.value = 1;
+
       const gain = this.ctx.createGain(); // Fader
       const analyser = this.ctx.createAnalyser();
       analyser.fftSize = 256;
@@ -223,12 +229,13 @@ class AudioEngine {
 
       const panner = this.ctx.createStereoPanner(); // Pan
       
-      // 2. Connect Chain
+      // 2. Connect Chain: EQ -> Compressor -> Fader -> Panner
       input.connect(lowFilter);
       lowFilter.connect(midFilter);
       midFilter.connect(highFilter);
-      highFilter.connect(gain);
-      gain.connect(analyser); // Metering post-fader (or pre-pan)
+      highFilter.connect(compressor);
+      compressor.connect(gain);
+      gain.connect(analyser); // Metering post-fader
       analyser.connect(panner);
       
       // 3. Connect to Master and Effects Sends
@@ -241,7 +248,8 @@ class AudioEngine {
           input, 
           lowFilter, 
           midFilter, 
-          highFilter, 
+          highFilter,
+          compressor, 
           gain, 
           panner,
           analyser 
@@ -269,6 +277,20 @@ class AudioEngine {
           channel.lowFilter.gain.setTargetAtTime(track.eq.low, currentTime, 0.1);
           channel.midFilter.gain.setTargetAtTime(track.eq.mid, currentTime, 0.1);
           channel.highFilter.gain.setTargetAtTime(track.eq.high, currentTime, 0.1);
+      }
+
+      // Update Compressor
+      if (track.compressor) {
+          if (track.compressor.enabled) {
+              channel.compressor.threshold.setTargetAtTime(track.compressor.threshold, currentTime, 0.1);
+              channel.compressor.ratio.setTargetAtTime(track.compressor.ratio, currentTime, 0.1);
+              channel.compressor.attack.setTargetAtTime(track.compressor.attack || 0.003, currentTime, 0.1);
+              channel.compressor.release.setTargetAtTime(track.compressor.release || 0.25, currentTime, 0.1);
+          } else {
+              // Bypass
+              channel.compressor.threshold.setTargetAtTime(0, currentTime, 0.1);
+              channel.compressor.ratio.setTargetAtTime(1, currentTime, 0.1);
+          }
       }
     });
   }
@@ -696,6 +718,7 @@ class AudioEngine {
           const tLow = offlineCtx.createBiquadFilter(); tLow.type = 'lowshelf'; tLow.frequency.value = 320;
           const tMid = offlineCtx.createBiquadFilter(); tMid.type = 'peaking'; tMid.frequency.value = 1000;
           const tHigh = offlineCtx.createBiquadFilter(); tHigh.type = 'highshelf'; tHigh.frequency.value = 3200;
+          const tCompressor = offlineCtx.createDynamicsCompressor();
           const tGain = offlineCtx.createGain();
           const tPan = offlineCtx.createStereoPanner();
 
@@ -705,6 +728,17 @@ class AudioEngine {
               tMid.gain.value = track.eq.mid;
               tHigh.gain.value = track.eq.high;
           }
+
+          if (track.compressor && track.compressor.enabled) {
+              tCompressor.threshold.value = track.compressor.threshold;
+              tCompressor.ratio.value = track.compressor.ratio;
+              tCompressor.attack.value = track.compressor.attack;
+              tCompressor.release.value = track.compressor.release;
+          } else {
+              tCompressor.threshold.value = 0;
+              tCompressor.ratio.value = 1;
+          }
+
           tGain.gain.value = (track.muted || (project.tracks.some(t => t.solo) && !track.solo)) ? 0 : track.volume;
           tPan.pan.value = track.pan;
 
@@ -712,7 +746,8 @@ class AudioEngine {
           tInput.connect(tLow);
           tLow.connect(tMid);
           tMid.connect(tHigh);
-          tHigh.connect(tGain);
+          tHigh.connect(tCompressor);
+          tCompressor.connect(tGain);
           tGain.connect(tPan);
           
           tPan.connect(masterGain);

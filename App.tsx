@@ -14,10 +14,10 @@ const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
   bpm: 120,
   tracks: [
-    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 } },
-    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6', eq: { low: 0, mid: 0, high: 0 } },
-    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7', eq: { low: 0, mid: 0, high: 0 } },
-    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 } },
+    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 } },
+    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 } },
+    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -18, ratio: 2.5, attack: 0.05, release: 0.2 } },
+    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -22, ratio: 3, attack: 0.02, release: 0.2 } },
   ],
   clips: [],
   loopStart: 0,
@@ -106,7 +106,8 @@ const App: React.FC = () => {
             masterCompressor: saved.masterCompressor || INITIAL_PROJECT.masterCompressor,
             tracks: saved.tracks.map((t: any) => ({
                 ...t,
-                eq: t.eq || { low: 0, mid: 0, high: 0 }
+                eq: t.eq || { low: 0, mid: 0, high: 0 },
+                compressor: t.compressor || { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 }
             }))
         };
         setProject(migrated);
@@ -447,7 +448,8 @@ const App: React.FC = () => {
           muted: false,
           solo: false,
           color: `hsl(${Math.random() * 360}, 70%, 50%)`,
-          eq: { low: 0, mid: 0, high: 0 }
+          eq: { low: 0, mid: 0, high: 0 },
+          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 }
       };
       updateProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       setSelectedTrackId(newTrack.id);

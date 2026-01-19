@@ -26,6 +26,13 @@ export interface Track {
     mid: number; // Gain in dB
     high: number; // Gain in dB
   };
+  compressor?: {
+    enabled: boolean;
+    threshold: number; // -60 to 0 dB
+    ratio: number; // 1 to 20
+    attack: number; // 0 to 1
+    release: number; // 0 to 1
+  };
 }
 
 export interface TanpuraState {
