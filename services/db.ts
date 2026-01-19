@@ -1,9 +1,11 @@
 
 // Simple Promise wrapper for IndexedDB
+import { AssetMetadata } from '../types';
 
 const DB_NAME = 'PocketStudioDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bumped version for metadata store
 const ASSET_STORE = 'assets'; // Stores AudioBlobs
+const ASSET_INFO_STORE = 'asset_metadata'; // Stores Metadata
 const PROJECT_STORE = 'projects';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -21,6 +23,9 @@ const openDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains(PROJECT_STORE)) {
         db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(ASSET_INFO_STORE)) {
+        db.createObjectStore(ASSET_INFO_STORE, { keyPath: 'id' });
       }
     };
 
@@ -47,6 +52,17 @@ export const saveAudioBlob = async (key: string, blob: Blob): Promise<void> => {
   });
 };
 
+export const saveAssetMetadata = async (metadata: AssetMetadata): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(ASSET_INFO_STORE, 'readwrite');
+    const store = tx.objectStore(ASSET_INFO_STORE);
+    const req = store.put(metadata);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+};
+
 export const getAudioBlob = async (key: string): Promise<Blob | undefined> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -61,11 +77,11 @@ export const getAudioBlob = async (key: string): Promise<Blob | undefined> => {
 export const deleteAudioBlob = async (key: string): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(ASSET_STORE, 'readwrite');
-    const store = tx.objectStore(ASSET_STORE);
-    const req = store.delete(key);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    const tx = db.transaction([ASSET_STORE, ASSET_INFO_STORE], 'readwrite');
+    tx.objectStore(ASSET_STORE).delete(key);
+    tx.objectStore(ASSET_INFO_STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 };
 
@@ -76,6 +92,17 @@ export const getAllAssetKeys = async (): Promise<string[]> => {
     const store = tx.objectStore(ASSET_STORE);
     const req = store.getAllKeys();
     req.onsuccess = () => resolve(req.result as string[]);
+    req.onerror = () => reject(req.error);
+  });
+};
+
+export const getAllAssetsMetadata = async (): Promise<AssetMetadata[]> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(ASSET_INFO_STORE, 'readonly');
+    const store = tx.objectStore(ASSET_INFO_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 };
