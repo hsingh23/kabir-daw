@@ -128,15 +128,17 @@ const Arranger: React.FC<ArrangerProps> = ({
   }, []);
   
   const [dragState, setDragState] = useState<{
-      initialClips: { id: string, start: number }[]; // Store initial states for group drag
+      initialClips: { id: string, start: number }[]; 
       mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT';
       startX: number;
       startY: number;
-      clipId: string; // The clip being dragged primarily
-      original: Clip; // The clip being dragged
+      clipId: string;
+      original: Clip; 
       pointerId: number;
   } | null>(null);
 
+  const [selectionBox, setSelectionBox] = useState<{ startX: number, startY: number, currentX: number, currentY: number } | null>(null);
+  
   const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number, pointerId: number } | null>(null);
   const [markerDrag, setMarkerDrag] = useState<{ id: string, startX: number, originalTime: number, pointerId: number } | null>(null);
   const [isScrubbing, setIsScrubbing] = useState<{ active: boolean, pointerId: number | null }>({ active: false, pointerId: null });
@@ -280,6 +282,26 @@ const Arranger: React.FC<ArrangerProps> = ({
     });
   };
 
+  // --- Background Interaction (Marquee) ---
+  const handleBackgroundPointerDown = (e: React.PointerEvent) => {
+      // Only start marquee if Shift is held OR Multi-Select mode is active
+      if (multiSelectMode || e.shiftKey) {
+          e.preventDefault();
+          (e.currentTarget as Element).setPointerCapture(e.pointerId);
+          setSelectionBox({
+              startX: e.clientX,
+              startY: e.clientY,
+              currentX: e.clientX,
+              currentY: e.clientY
+          });
+          
+          // If not shift, clear previous selection to start new group
+          if (!e.shiftKey) {
+              onSelectClip([]);
+          }
+      }
+  };
+
   const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
     
@@ -305,33 +327,16 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (tool === ToolMode.POINTER) {
         if (multiSelectMode || e.metaKey || e.ctrlKey || e.shiftKey) {
             if (isSelected) {
-                // If dragging, don't deselect yet. Deselect on click-release if not dragged?
-                // For simplicity, just keep selected for dragging.
-                // If just clicking (no drag), we handle that later? 
-                // Toggle logic on down:
-                if (!e.ctrlKey && !e.metaKey && !multiSelectMode) {
-                    // Standard click on a selected group -> keep group
-                } else {
-                    // Toggle
-                    // If we toggle off here, dragging won't work for this clip. 
-                    // Let's rely on standard OS behavior: MouseDown doesn't toggle OFF if part of selection, unless it's a dedicated toggle command.
-                    // But for simple "toggle" interaction:
-                    if (isSelected && (e.ctrlKey || e.metaKey || multiSelectMode)) {
-                        newSelectedIds = newSelectedIds.filter(id => id !== clip.id);
-                        onSelectClip(newSelectedIds);
-                        return; // Don't start drag if toggling off
-                    } else if (!isSelected) {
-                        newSelectedIds.push(clip.id);
-                        onSelectClip(newSelectedIds);
-                    }
-                }
+               // Toggle logic
+               if (isSelected && (e.ctrlKey || e.metaKey || multiSelectMode)) {
+                   // If toggling off, we do it immediately but return to avoid drag
+                   newSelectedIds = newSelectedIds.filter(id => id !== clip.id);
+                   onSelectClip(newSelectedIds);
+                   return; 
+               } 
             } else {
-                if (e.ctrlKey || e.metaKey || multiSelectMode) {
-                    newSelectedIds.push(clip.id);
-                } else {
-                    newSelectedIds = [clip.id];
-                }
-                onSelectClip(newSelectedIds);
+               newSelectedIds.push(clip.id);
+               onSelectClip(newSelectedIds);
             }
         } else {
             // Normal click
@@ -339,7 +344,6 @@ const Arranger: React.FC<ArrangerProps> = ({
                 newSelectedIds = [clip.id];
                 onSelectClip(newSelectedIds);
             }
-            // If already selected, do nothing to selection, wait for drag.
         }
     }
 
@@ -387,6 +391,11 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (longPressTimerRef.current && Math.abs(e.movementX) + Math.abs(e.movementY) > 5) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
+    }
+
+    if (selectionBox) {
+        setSelectionBox(prev => prev ? ({ ...prev, currentX: e.clientX, currentY: e.clientY }) : null);
+        return;
     }
 
     if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
@@ -438,24 +447,21 @@ const Arranger: React.FC<ArrangerProps> = ({
         const activeSnapSeconds = activeSnapBeats * secondsPerBeat;
 
         if (dragState.mode === 'MOVE') {
-            // Calculate base delta
             let primaryNewStart = original.start + deltaSeconds;
             if (activeSnapSeconds > 0) primaryNewStart = Math.round(primaryNewStart / activeSnapSeconds) * activeSnapSeconds;
             const primaryDelta = Math.max(0, primaryNewStart) - original.start;
 
-            // Apply delta to ALL selected clips
             setProject(prev => ({
                 ...prev,
                 clips: prev.clips.map(c => {
                     const init = dragState.initialClips.find(ic => ic.id === c.id);
                     if (init) {
                         let newStart = init.start + primaryDelta;
-                        // Prevent negative start
-                        if (newStart < 0) newStart = 0; // Simple clamp, might distort relative timing if hitting 0
+                        if (newStart < 0) newStart = 0; 
                         
-                        // Handle Track changing only for the PRIMARY clip being dragged (simpler UX)
-                        // Or allow group track move? Complex. Let's stick to horizontal group move.
                         let targetTrackId = c.trackId;
+                        // Only allow track changing if a single clip is selected, or if we handle group track shifting (complex)
+                        // For now, only the dragged clip can change tracks if it's the *primary* one.
                         if (c.id === dragState.clipId && scrollContainerRef.current) {
                              const containerRect = scrollContainerRef.current.getBoundingClientRect();
                              const scrollTop = scrollContainerRef.current.scrollTop;
@@ -473,7 +479,6 @@ const Arranger: React.FC<ArrangerProps> = ({
             }));
         } 
         else {
-            // Trim/Fade affects ONLY the dragged clip
             if (dragState.mode === 'TRIM_START') {
                 let newStart = original.start + deltaSeconds;
                 if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
@@ -543,6 +548,43 @@ const Arranger: React.FC<ArrangerProps> = ({
     if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
+    }
+
+    if (selectionBox) {
+        const rect = scrollContainerRef.current?.getBoundingClientRect();
+        if (rect) {
+            const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
+            const scrollTop = scrollContainerRef.current?.scrollTop || 0;
+            
+            const x1 = Math.min(selectionBox.startX, selectionBox.currentX) - rect.left + scrollLeft - headerWidth;
+            const x2 = Math.max(selectionBox.startX, selectionBox.currentX) - rect.left + scrollLeft - headerWidth;
+            const y1 = Math.min(selectionBox.startY, selectionBox.currentY) - rect.top + scrollTop;
+            const y2 = Math.max(selectionBox.startY, selectionBox.currentY) - rect.top + scrollTop;
+            
+            const t1 = x1 / zoom;
+            const t2 = x2 / zoom;
+            
+            const intersectIds = project.clips.filter(clip => {
+                const clipEnd = clip.start + clip.duration;
+                const timeOverlap = Math.max(0, Math.min(clipEnd, t2) - Math.max(clip.start, t1)) > 0;
+                
+                if (!timeOverlap) return false;
+
+                const trackIndex = project.tracks.findIndex(t => t.id === clip.trackId);
+                if (trackIndex === -1) return false;
+                
+                const trackTop = trackIndex * TRACK_HEIGHT;
+                const trackBottom = trackTop + TRACK_HEIGHT;
+                
+                const yOverlap = Math.max(0, Math.min(trackBottom, y2) - Math.max(trackTop, y1)) > 0;
+                return yOverlap;
+            }).map(c => c.id);
+            
+            const finalSelection = e.shiftKey ? [...new Set([...selectedClipIds, ...intersectIds])] : intersectIds;
+            onSelectClip(finalSelection);
+        }
+        setSelectionBox(null);
+        (e.target as Element).releasePointerCapture(e.pointerId);
     }
 
     if (dragState && dragState.pointerId === e.pointerId) {
@@ -698,8 +740,9 @@ const Arranger: React.FC<ArrangerProps> = ({
       <div 
         ref={scrollContainerRef}
         className="flex-1 overflow-auto bg-zinc-900 relative overscroll-contain"
-        style={{ touchAction: 'pan-x pan-y' }}
+        style={{ touchAction: multiSelectMode ? 'none' : 'pan-x pan-y' }}
         onWheel={handleWheel}
+        onPointerDown={handleBackgroundPointerDown}
       >
         <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + headerWidth }}>
            
@@ -856,6 +899,19 @@ const Arranger: React.FC<ArrangerProps> = ({
                 ))}
                 
                 <div className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]" style={{ left: headerWidth + (currentTime * zoom) }} />
+                
+                {/* Marquee Selection Overlay */}
+                {selectionBox && (
+                    <div 
+                        className="fixed border border-blue-500 bg-blue-500/20 z-50 pointer-events-none"
+                        style={{
+                            left: Math.min(selectionBox.startX, selectionBox.currentX),
+                            top: Math.min(selectionBox.startY, selectionBox.currentY),
+                            width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                            height: Math.abs(selectionBox.currentY - selectionBox.startY)
+                        }}
+                    />
+                )}
             </div>
         </div>
       </div>

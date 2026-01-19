@@ -244,6 +244,36 @@ const App: React.FC = () => {
     }
   }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject]);
 
+  const handleSplit = useCallback((clipId: string, time: number) => {
+    const clip = project.clips.find(c => c.id === clipId);
+    if (!clip) return;
+    if (time <= clip.start || time >= clip.start + clip.duration) return;
+
+    const splitOffset = time - clip.start;
+    
+    const clipA: Clip = {
+        ...clip,
+        duration: splitOffset,
+        fadeOut: 0.05 
+    };
+
+    const clipB: Clip = {
+        ...clip,
+        id: crypto.randomUUID(),
+        start: time,
+        offset: clip.offset + splitOffset,
+        duration: clip.duration - splitOffset,
+        name: `${clip.name} (cut)`,
+        fadeIn: 0.05
+    };
+
+    updateProject(prev => ({
+        ...prev,
+        clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
+    }));
+    setSelectedClipIds([clipB.id]);
+  }, [project.clips, updateProject]);
+
   // Global Keyboard Shortcuts
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -277,25 +307,14 @@ const App: React.FC = () => {
           // Paste (Cmd/Ctrl + V)
           if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
               if (clipboard.length > 0) {
-                  // Find the earliest start time in clipboard to calculate relative offsets
                   const minStart = Math.min(...clipboard.map(c => c.start));
-                  
-                  // If single track selected, try to paste onto it if clipboard has 1 clip,
-                  // or preserve relative tracks if clipboard has multiple?
-                  // Simple approach: Paste all onto their original tracks (or map to selected if 1)
                   
                   const newClips = clipboard.map(clip => {
                       const offsetFromGroupStart = clip.start - minStart;
-                      // If only 1 clip and track selected, paste there. Else original track or intelligent mapping.
-                      // For now: Original track index logic is complex without track index in Clip.
-                      // Let's just use original trackId if exists, otherwise selectedTrack.
-                      
                       let targetTrackId = clip.trackId;
-                      // Fallback if track doesn't exist? (Project specific)
                       if (!project.tracks.find(t => t.id === targetTrackId)) {
                           targetTrackId = selectedTrackId || project.tracks[0].id;
                       }
-                      // If user explicitly selected a track and we are pasting ONE clip, use that.
                       if (clipboard.length === 1 && selectedTrackId) {
                           targetTrackId = selectedTrackId;
                       }
@@ -330,6 +349,21 @@ const App: React.FC = () => {
                       setSelectedClipIds(newClips.map(c => c.id));
                       e.preventDefault();
                   }
+              }
+          }
+
+          // Split (Cmd/Ctrl + B)
+          if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+              e.preventDefault();
+              if (selectedClipIds.length > 0) {
+                  selectedClipIds.forEach(id => handleSplit(id, currentTime));
+              } else if (selectedTrackId) {
+                  const clipsToSplit = project.clips.filter(c => 
+                      c.trackId === selectedTrackId && 
+                      c.start < currentTime && 
+                      (c.start + c.duration) > currentTime
+                  );
+                  clipsToSplit.forEach(c => handleSplit(c.id, currentTime));
               }
           }
 
@@ -370,7 +404,7 @@ const App: React.FC = () => {
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, updateProject, clipboard, currentTime, selectedTrackId]); 
+  }, [past, future, project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, updateProject, clipboard, currentTime, selectedTrackId, handleSplit]); 
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
@@ -498,36 +532,6 @@ const App: React.FC = () => {
       setSelectedClipIds([newClip.id]);
     }
   }, [selectedTrackId, project.tracks, currentTime, updateProject]);
-
-  const handleSplit = useCallback((clipId: string, time: number) => {
-    const clip = project.clips.find(c => c.id === clipId);
-    if (!clip) return;
-    if (time <= clip.start || time >= clip.start + clip.duration) return;
-
-    const splitOffset = time - clip.start;
-    
-    const clipA: Clip = {
-        ...clip,
-        duration: splitOffset,
-        fadeOut: 0.05 
-    };
-
-    const clipB: Clip = {
-        ...clip,
-        id: crypto.randomUUID(),
-        start: time,
-        offset: clip.offset + splitOffset,
-        duration: clip.duration - splitOffset,
-        name: `${clip.name} (cut)`,
-        fadeIn: 0.05
-    };
-
-    updateProject(prev => ({
-        ...prev,
-        clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
-    }));
-    setSelectedClipIds([clipB.id]);
-  }, [project.clips, updateProject]);
 
   const addTrack = useCallback(() => {
       const newTrack: Track = {
