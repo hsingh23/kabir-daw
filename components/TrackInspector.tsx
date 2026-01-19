@@ -1,8 +1,9 @@
+
 import React from 'react';
 import { Track } from '../types';
 import Knob from './Knob';
 import CustomFader from './Fader';
-import { X, Mic, Music, Drum, Guitar, Keyboard, Trash2 } from 'lucide-react';
+import { X, Mic, Music, Drum, Guitar, Keyboard, Trash2, Zap } from 'lucide-react';
 
 interface TrackInspectorProps {
   track: Track;
@@ -31,6 +32,20 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
       });
   };
 
+  const updateCompressor = (updates: Partial<NonNullable<Track['compressor']>>) => {
+      updateTrack(track.id, {
+          compressor: {
+              enabled: false,
+              threshold: -20,
+              ratio: 4,
+              attack: 0.01,
+              release: 0.1,
+              ...track.compressor,
+              ...updates
+          }
+      });
+  };
+
   return (
     <div className="fixed inset-x-0 bottom-0 top-12 bg-studio-panel z-[100] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
       
@@ -50,38 +65,71 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-20">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-20">
           
-          {/* EQ Section */}
-          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-              <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
-                  <span className="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
-                  3-Band Equalizer
-              </h3>
-              <div className="flex justify-around items-center">
-                  <Knob 
-                    label="High" 
-                    value={(track.eq?.high + 12) / 24} // map -12..12 to 0..1
-                    min={0} max={1}
-                    onChange={(v) => updateEQ('high', (v * 24) - 12)} 
-                  />
-                  <Knob 
-                    label="Mid" 
-                    value={(track.eq?.mid + 12) / 24} 
-                    min={0} max={1}
-                    onChange={(v) => updateEQ('mid', (v * 24) - 12)} 
-                  />
-                  <Knob 
-                    label="Low" 
-                    value={(track.eq?.low + 12) / 24} 
-                    min={0} max={1}
-                    onChange={(v) => updateEQ('low', (v * 24) - 12)} 
-                  />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* EQ Section */}
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
+                      <span className="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
+                      EQ
+                  </h3>
+                  <div className="flex justify-around items-center">
+                      <Knob 
+                        label="High" 
+                        value={(track.eq.high + 12) / 24} // map -12..12 to 0..1
+                        min={0} max={1}
+                        onChange={(v) => updateEQ('high', (v * 24) - 12)} 
+                      />
+                      <Knob 
+                        label="Mid" 
+                        value={(track.eq.mid + 12) / 24} 
+                        min={0} max={1}
+                        onChange={(v) => updateEQ('mid', (v * 24) - 12)} 
+                      />
+                      <Knob 
+                        label="Low" 
+                        value={(track.eq.low + 12) / 24} 
+                        min={0} max={1}
+                        onChange={(v) => updateEQ('low', (v * 24) - 12)} 
+                      />
+                  </div>
+              </div>
+
+              {/* Dynamics Section */}
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50 relative">
+                  <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center">
+                          <span className={`w-2 h-2 rounded-full mr-2 ${track.compressor?.enabled ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]' : 'bg-zinc-700'}`}></span>
+                          Dynamics
+                      </h3>
+                      <button 
+                         onClick={() => updateCompressor({ enabled: !track.compressor?.enabled })}
+                         className={`p-1.5 rounded-md transition-colors ${track.compressor?.enabled ? 'bg-green-900/30 text-green-400' : 'bg-zinc-800 text-zinc-600'}`}
+                      >
+                          <Zap size={14} fill={track.compressor?.enabled ? "currentColor" : "none"} />
+                      </button>
+                  </div>
+                  
+                  <div className={`flex justify-around items-center transition-opacity ${track.compressor?.enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                      <Knob 
+                        label="Thresh" 
+                        value={((track.compressor?.threshold ?? -20) + 60) / 60} // -60 to 0
+                        min={0} max={1}
+                        onChange={(v) => updateCompressor({ threshold: (v * 60) - 60 })} 
+                      />
+                      <Knob 
+                        label="Ratio" 
+                        value={((track.compressor?.ratio ?? 4) - 1) / 19} // 1 to 20
+                        min={0} max={1}
+                        onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} 
+                      />
+                  </div>
               </div>
           </div>
 
           {/* Fader & Pan Section */}
-          <div className="flex-1 flex justify-center space-x-8 items-end h-64">
+          <div className="flex-1 flex justify-center space-x-8 items-end h-64 bg-zinc-900/30 rounded-xl border border-zinc-800 p-4">
               <div className="flex flex-col items-center space-y-4">
                   <Knob 
                     label="Pan" 
@@ -96,7 +144,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                   <CustomFader 
                     value={track.volume} 
                     onChange={(v) => updateTrack(track.id, { volume: v })} 
-                    height={220}
+                    height={200}
                   />
                   <div className="text-xs text-zinc-400 font-mono">{Math.round(track.volume * 100)}%</div>
               </div>
