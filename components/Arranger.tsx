@@ -1,9 +1,12 @@
+
 import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette } from 'lucide-react';
+import LevelMeter from './LevelMeter';
+import { audio } from '../services/audio';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2 } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -492,14 +495,31 @@ const Arranger: React.FC<ArrangerProps> = ({
             
             <div className="w-px h-6 bg-zinc-800 shrink-0" />
 
+            {/* Metronome & Grid */}
             <div className="flex items-center space-x-2 bg-zinc-900 rounded-lg px-2 h-8 shrink-0 border border-zinc-800">
-                <button 
-                    onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))} 
-                    className={`p-1 rounded transition-colors ${project.metronomeOn ? 'text-studio-accent' : 'text-zinc-500'}`}
-                >
-                    <Zap size={14} fill={project.metronomeOn ? "currentColor" : "none"} />
-                </button>
-                <div className="w-px h-4 bg-zinc-800" />
+                <div className="flex items-center space-x-1 border-r border-zinc-800 pr-2 mr-2">
+                    <button 
+                        onClick={() => setProject(p => ({...p, metronomeOn: !p.metronomeOn}))} 
+                        className={`p-1 rounded transition-colors ${project.metronomeOn ? 'text-studio-accent' : 'text-zinc-500'}`}
+                        title="Metronome"
+                    >
+                        <Zap size={14} fill={project.metronomeOn ? "currentColor" : "none"} />
+                    </button>
+                    {project.metronomeOn && (
+                        <div className="flex items-center group relative">
+                            <Volume2 size={12} className="text-zinc-500 cursor-pointer hover:text-white" />
+                            <div className="hidden group-hover:flex absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-zinc-800 p-2 rounded shadow-xl border border-zinc-700">
+                                <input 
+                                    type="range" min="0" max="1" step="0.1" 
+                                    defaultValue="0.5" 
+                                    onChange={(e) => audio.setMetronomeVolume(parseFloat(e.target.value))} 
+                                    className="w-16 h-1 bg-zinc-600 rounded-lg appearance-none cursor-pointer accent-white"
+                                />
+                            </div>
+                        </div>
+                    )}
+                </div>
+                
                 <Grid size={14} className="text-zinc-500" />
                 <select 
                     value={snapGrid} 
@@ -666,9 +686,14 @@ const Arranger: React.FC<ArrangerProps> = ({
                                  <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { muted: !track.muted })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.muted ? 'bg-red-500 text-white shadow-red-500/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>M</button>
                                  <button onClick={(e) => { e.stopPropagation(); updateTrack(track.id, { solo: !track.solo })}} className={`flex-1 h-6 rounded text-[10px] font-bold border border-black/20 ${track.solo ? 'bg-yellow-400 text-black shadow-yellow-400/20 shadow-lg' : 'bg-zinc-700 text-zinc-400'}`}>S</button>
                              </div>
+
+                             {/* Level Meter Strip */}
+                             <div className="mt-2 h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden">
+                                <LevelMeter trackId={track.id} vertical={false} />
+                             </div>
                              
                              {headerWidth > 120 && (
-                                <div className="mt-2 flex items-center space-x-2">
+                                <div className="mt-1 flex items-center space-x-2">
                                     <input 
                                         type="range" min="0" max="1" step="0.01" 
                                         value={track.volume} 

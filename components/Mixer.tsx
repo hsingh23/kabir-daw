@@ -5,6 +5,7 @@ import Knob from './Knob';
 import CustomFader from './Fader';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
+import LevelMeter from './LevelMeter';
 import { Play, Pause, Square, Circle, Sliders, Music2 } from 'lucide-react';
 
 interface MixerProps {
@@ -66,12 +67,15 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
             defaultValue={0.0}
            />
            <div className="w-px h-10 bg-zinc-700 mx-2" />
-           <Knob 
-            label="Master" 
-            value={project.masterVolume} 
-            onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
-            defaultValue={1.0}
-           />
+           <div className="flex space-x-2 h-16 items-center">
+             <LevelMeter vertical={true} />
+             <Knob 
+              label="Master" 
+              value={project.masterVolume} 
+              onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
+              defaultValue={1.0}
+             />
+           </div>
         </div>
       </div>
 
@@ -144,12 +148,15 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                             >S</button>
                         </div>
 
-                        <CustomFader 
-                            value={track.volume} 
-                            onChange={(v) => updateTrack(track.id, { volume: v })} 
-                            height={200}
-                            defaultValue={0.8}
-                        />
+                        <div className="flex space-x-2 h-[200px]">
+                            <CustomFader 
+                                value={track.volume} 
+                                onChange={(v) => updateTrack(track.id, { volume: v })} 
+                                height={200}
+                                defaultValue={0.8}
+                            />
+                            <LevelMeter trackId={track.id} vertical={true} />
+                        </div>
                         
                         <div className="w-full flex justify-center">
                             <div className="w-8 h-8 rounded shadow-md opacity-80" style={{ backgroundColor: track.color }} />

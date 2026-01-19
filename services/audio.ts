@@ -9,6 +9,7 @@ interface TrackChannel {
     highFilter: BiquadFilterNode;
     gain: GainNode; // Volume fader
     panner: StereoPannerNode; // Pan
+    analyser: AnalyserNode; // For metering
 }
 
 // Frequency map for keys (Middle Sa)
@@ -20,6 +21,7 @@ const NOTE_FREQS: Record<string, number> = {
 class AudioEngine {
   ctx: AudioContext;
   masterGain: GainNode;
+  masterAnalyser: AnalyserNode;
   
   // FX Sends/Returns
   reverbInput: GainNode;
@@ -77,6 +79,9 @@ class AudioEngine {
     // Master Chain
     this.masterGain = this.ctx.createGain();
     this.compressor = this.ctx.createDynamicsCompressor();
+    this.masterAnalyser = this.ctx.createAnalyser();
+    this.masterAnalyser.fftSize = 256;
+    this.masterAnalyser.smoothingTimeConstant = 0.5;
     
     // --- Effects Bus Setup ---
     
@@ -118,7 +123,8 @@ class AudioEngine {
   setupRouting() {
     // Master Routing
     this.masterGain.connect(this.compressor);
-    this.compressor.connect(this.ctx.destination);
+    this.compressor.connect(this.masterAnalyser);
+    this.masterAnalyser.connect(this.ctx.destination);
 
     // -- Reverb Routing --
     this.reverbInput.connect(this.reverbNode);
@@ -206,6 +212,10 @@ class AudioEngine {
       highFilter.frequency.value = 3200;
 
       const gain = this.ctx.createGain(); // Fader
+      const analyser = this.ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.5;
+
       const panner = this.ctx.createStereoPanner(); // Pan
       
       // 2. Connect Chain
@@ -213,7 +223,8 @@ class AudioEngine {
       lowFilter.connect(midFilter);
       midFilter.connect(highFilter);
       highFilter.connect(gain);
-      gain.connect(panner);
+      gain.connect(analyser); // Metering post-fader (or pre-pan)
+      analyser.connect(panner);
       
       // 3. Connect to Master and Effects Sends
       panner.connect(this.masterGain);
@@ -227,7 +238,8 @@ class AudioEngine {
           midFilter, 
           highFilter, 
           gain, 
-          panner 
+          panner,
+          analyser 
       });
     }
     return this.trackChannels.get(trackId)!;
@@ -393,6 +405,10 @@ class AudioEngine {
     this.masterGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
   }
 
+  setMetronomeVolume(val: number) {
+      this.metronomeGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
+  }
+
   setDelayLevel(val: number) {
     this.delayReturn.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
   }
@@ -412,6 +428,27 @@ class AudioEngine {
   
   get isPlaying() {
       return this._isPlaying;
+  }
+
+  // --- Metering ---
+  private getRMS(analyser: AnalyserNode) {
+    const data = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+        sum += data[i] * data[i];
+    }
+    return Math.sqrt(sum / data.length);
+  }
+
+  measureTrackLevel(trackId: string): number {
+    const channel = this.trackChannels.get(trackId);
+    if (!channel) return 0;
+    return this.getRMS(channel.analyser);
+  }
+
+  measureMasterLevel(): number {
+      return this.getRMS(this.masterAnalyser);
   }
 
   scheduler() {
