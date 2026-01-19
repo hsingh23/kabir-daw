@@ -116,15 +116,20 @@ const App: React.FC = () => {
                 sends: t.sends || { reverb: 0, delay: 0, chorus: 0 }
             }))
         };
-        setProject(migrated);
         
-        // Load Audio Buffers
-        for (const clip of migrated.clips) {
+        // Load Audio Buffers concurrently
+        const bufferPromises = migrated.clips.map(async (clip: Clip) => {
             const blob = await import('./services/db').then(m => m.getAudioBlob(clip.bufferKey));
             if (blob) {
                 await audio.loadAudio(clip.bufferKey, blob);
             }
-        }
+        });
+        
+        await Promise.all(bufferPromises);
+        
+        // Set project AFTER buffers are ready to ensure Waveform components can find data
+        setProject(migrated);
+        
     } else if (projectId !== 'default-project') {
         // If loading a new ID that doesn't exist, init it
         setProject({ ...INITIAL_PROJECT, id: projectId });
@@ -217,7 +222,8 @@ const App: React.FC = () => {
                 duration: (await audio.loadAudio(key, blob)).duration,
                 bufferKey: key,
                 fadeIn: 0,
-                fadeOut: 0
+                fadeOut: 0,
+                speed: 1
             };
             
             updateProject(prev => ({
@@ -264,7 +270,8 @@ const App: React.FC = () => {
         offset: clip.offset + splitOffset,
         duration: clip.duration - splitOffset,
         name: `${clip.name} (cut)`,
-        fadeIn: 0.05
+        fadeIn: 0.05,
+        speed: clip.speed || 1
     };
 
     updateProject(prev => ({
@@ -324,7 +331,8 @@ const App: React.FC = () => {
                           id: crypto.randomUUID(),
                           trackId: targetTrackId,
                           start: currentTime + offsetFromGroupStart,
-                          name: `${clip.name} (Copy)`
+                          name: `${clip.name} (Copy)`,
+                          speed: clip.speed || 1
                       };
                   });
 
@@ -343,7 +351,8 @@ const App: React.FC = () => {
                           ...clip,
                           id: crypto.randomUUID(),
                           start: clip.start + clip.duration, // Append after
-                          name: `${clip.name} (Dup)`
+                          name: `${clip.name} (Dup)`,
+                          speed: clip.speed || 1
                       }));
                       updateProject(prev => ({ ...prev, clips: [...prev.clips, ...newClips] }));
                       setSelectedClipIds(newClips.map(c => c.id));
@@ -522,7 +531,8 @@ const App: React.FC = () => {
         duration: audio.buffers.get(key)?.duration || 5, 
         bufferKey: key,
         fadeIn: 0,
-        fadeOut: 0
+        fadeOut: 0,
+        speed: 1
       };
 
       updateProject(prev => ({

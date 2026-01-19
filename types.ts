@@ -10,6 +10,7 @@ export interface Clip {
   color?: string;
   fadeIn: number; // Duration of fade in seconds
   fadeOut: number; // Duration of fade out seconds
+  speed?: number; // Playback speed (1.0 is normal)
 }
 
 export interface Track {
