@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Plus, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, MoreVertical, X, Copy, Play, Pause, Square, Circle, Sliders } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle } from 'lucide-react';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -24,8 +24,8 @@ interface ArrangerProps {
   onOpenInspector: (trackId: string) => void;
 }
 
-const TRACK_HEIGHT = 110; 
-const HEADER_WIDTH = 180; // Fixed width for sticky headers
+const TRACK_HEIGHT = 120; 
+const HEADER_WIDTH = 160; 
 
 const SNAP_OPTIONS = [
     { label: 'Off', value: 0 },
@@ -74,16 +74,15 @@ const Arranger: React.FC<ArrangerProps> = ({
       startX: number;
       startY: number;
       original: Clip;
+      pointerId: number;
   } | null>(null);
 
-  const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number } | null>(null);
-  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [loopDrag, setLoopDrag] = useState<{ type: 'start' | 'end' | 'move', startX: number, originalLoopStart: number, originalLoopEnd: number, pointerId: number } | null>(null);
+  const [isScrubbing, setIsScrubbing] = useState<{ active: boolean, pointerId: number | null }>({ active: false, pointerId: null });
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
-  const longPressTimer = useRef<number | null>(null);
 
   // Pinch Zoom State
-  const touchCache = useRef<Map<number, {clientX: number, clientY: number}>>(new Map());
-  const prevDiff = useRef<number>(-1);
+  const [pinchDist, setPinchDist] = useState<number | null>(null);
 
   // --- Musical Calculations ---
   const secondsPerBeat = 60 / project.bpm;
@@ -104,12 +103,8 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Auto-scroll during playback
   useEffect(() => {
     if (isPlaying && scrollContainerRef.current) {
-        // Calculate playhead position relative to scroll container
-        // Playhead is at (currentTime * zoom) + HEADER_WIDTH
         const playheadX = (currentTime * zoom) + HEADER_WIDTH;
         const container = scrollContainerRef.current;
-        
-        // If playhead is near the right edge of view
         if (playheadX > container.scrollLeft + container.clientWidth * 0.9) {
             container.scrollLeft = playheadX - HEADER_WIDTH - (container.clientWidth * 0.1);
         }
@@ -126,12 +121,9 @@ const Arranger: React.FC<ArrangerProps> = ({
   const calculateSeekTime = (clientX: number, snap: boolean) => {
     const rect = scrollContainerRef.current?.getBoundingClientRect();
     if (!rect) return 0;
-
-    const containerLeft = rect.left;
     const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
-    const contentX = clientX - containerLeft + scrollLeft;
+    const contentX = clientX - rect.left + scrollLeft;
     const timelineX = contentX - HEADER_WIDTH;
-    
     const time = Math.max(0, timelineX / zoom);
     
     if (snap && snapGrid > 0) {
@@ -141,32 +133,43 @@ const Arranger: React.FC<ArrangerProps> = ({
     return time;
   };
 
-  const handleRulerMouseDown = (e: React.MouseEvent) => {
-    setIsScrubbing(true);
+  // --- Pointer Events for Ruler ---
+  const handleRulerPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.target as Element).setPointerCapture(e.pointerId);
+    setIsScrubbing({ active: true, pointerId: e.pointerId });
     onSeek(calculateSeekTime(e.clientX, e.shiftKey));
   };
 
-  const handleLoopMouseDown = (e: React.MouseEvent, type: 'start' | 'end' | 'move') => {
+  // --- Pointer Events for Loop ---
+  const handleLoopPointerDown = (e: React.PointerEvent, type: 'start' | 'end' | 'move') => {
     e.stopPropagation();
+    e.preventDefault();
+    (e.target as Element).setPointerCapture(e.pointerId);
     setLoopDrag({
       type,
       startX: e.clientX,
       originalLoopStart: project.loopStart,
-      originalLoopEnd: project.loopEnd
+      originalLoopEnd: project.loopEnd,
+      pointerId: e.pointerId
     });
   };
 
-  const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
+  // --- Pointer Events for Clips ---
+  const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT') => {
     e.stopPropagation();
+    // Context Menu check
     if (e.button === 2) {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id });
         return;
     }
+
     onSelectTrack(clip.trackId);
     onSelectClip(clip.id);
     setContextMenu(null);
 
+    // Tools
     if (tool === ToolMode.SPLIT && mode === 'MOVE') {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
@@ -180,24 +183,25 @@ const Arranger: React.FC<ArrangerProps> = ({
         return;
     }
 
+    // Start Drag
+    (e.target as Element).setPointerCapture(e.pointerId);
     setDragState({
         clipId: clip.id,
         mode,
         startX: e.clientX,
         startY: e.clientY,
-        original: { ...clip }
+        original: { ...clip },
+        pointerId: e.pointerId
     });
   };
 
-  const handleGlobalMove = (e: React.MouseEvent) => {
-    if (isScrubbing) {
+  const handleGlobalPointerMove = (e: React.PointerEvent) => {
+    if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
         onSeek(calculateSeekTime(e.clientX, e.shiftKey));
         return;
     }
 
-    if (dragState) {
-        if (longPressTimer.current) clearTimeout(longPressTimer.current);
-
+    if (dragState && dragState.pointerId === e.pointerId) {
         const deltaX = (e.clientX - dragState.startX);
         const deltaSeconds = deltaX / zoom;
         const { original } = dragState;
@@ -211,10 +215,14 @@ const Arranger: React.FC<ArrangerProps> = ({
             if (activeSnapSeconds > 0) newStart = Math.round(newStart / activeSnapSeconds) * activeSnapSeconds;
             updatedClip.start = Math.max(0, newStart);
 
-            // Calculate track drop
+            // Vertical Track Moving
             if (scrollContainerRef.current) {
                 const containerRect = scrollContainerRef.current.getBoundingClientRect();
-                const relativeY = e.clientY - containerRect.top + scrollContainerRef.current.scrollTop - 40; // -40 for ruler height roughly
+                // 32 is roughly the ruler height. 
+                // We add scrollTop to account for vertical scrolling
+                const scrollTop = scrollContainerRef.current.scrollTop;
+                const relativeY = (e.clientY - containerRect.top) + scrollTop - 32; 
+                
                 const trackIndex = Math.floor(relativeY / TRACK_HEIGHT);
                 if (trackIndex >= 0 && trackIndex < project.tracks.length) {
                     updatedClip.trackId = project.tracks[trackIndex].id;
@@ -240,19 +248,19 @@ const Arranger: React.FC<ArrangerProps> = ({
             updatedClip.duration = Math.max(0.1, newDuration);
         }
         else if (dragState.mode === 'FADE_IN') {
-             const fadeChange = deltaSeconds;
-             updatedClip.fadeIn = Math.max(0, Math.min(original.duration - original.fadeOut, original.fadeIn + fadeChange));
+             updatedClip.fadeIn = Math.max(0, Math.min(original.duration - original.fadeOut, original.fadeIn + deltaSeconds));
         }
         else if (dragState.mode === 'FADE_OUT') {
-             const fadeChange = -deltaSeconds; 
-             updatedClip.fadeOut = Math.max(0, Math.min(original.duration - original.fadeIn, original.fadeOut + fadeChange));
+             updatedClip.fadeOut = Math.max(0, Math.min(original.duration - original.fadeIn, original.fadeOut - deltaSeconds));
         }
 
         setProject(prev => ({
             ...prev,
             clips: prev.clips.map(c => c.id === dragState.clipId ? updatedClip : c)
         }));
-    } else if (loopDrag) {
+    } 
+    
+    if (loopDrag && loopDrag.pointerId === e.pointerId) {
         const deltaX = (e.clientX - loopDrag.startX);
         const deltaSeconds = deltaX / zoom;
         const snapBeats = snapGrid === 0 ? 4 : snapGrid; 
@@ -283,20 +291,50 @@ const Arranger: React.FC<ArrangerProps> = ({
     }
   };
 
-  const handleGlobalUp = () => {
-    setDragState(null);
-    setLoopDrag(null);
-    setIsScrubbing(false);
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  const handleGlobalPointerUp = (e: React.PointerEvent) => {
+    if (dragState && dragState.pointerId === e.pointerId) {
+        setDragState(null);
+        (e.target as Element).releasePointerCapture(e.pointerId);
+    }
+    if (loopDrag && loopDrag.pointerId === e.pointerId) {
+        setLoopDrag(null);
+        (e.target as Element).releasePointerCapture(e.pointerId);
+    }
+    if (isScrubbing.active && isScrubbing.pointerId === e.pointerId) {
+        setIsScrubbing({ active: false, pointerId: null });
+        (e.target as Element).releasePointerCapture(e.pointerId);
+    }
+  };
+
+  // Pinch Zoom Handlers
+  const onTouchMove = (e: React.TouchEvent) => {
+      if (e.touches.length === 2) {
+          const t1 = e.touches[0];
+          const t2 = e.touches[1];
+          const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+          
+          if (pinchDist !== null) {
+              const delta = dist - pinchDist;
+              const zoomFactor = delta * 0.5;
+              setZoom(Math.max(10, Math.min(400, zoom + zoomFactor)));
+          }
+          setPinchDist(dist);
+      }
+  };
+
+  const onTouchEnd = () => {
+      setPinchDist(null);
   };
 
   return (
     <div 
-        className="flex flex-col h-full bg-studio-bg text-xs select-none touch-none"
-        onMouseMove={handleGlobalMove}
-        onMouseUp={handleGlobalUp}
-        onMouseLeave={handleGlobalUp}
+        className="flex flex-col h-full bg-studio-bg text-xs select-none"
+        onPointerMove={handleGlobalPointerMove}
+        onPointerUp={handleGlobalPointerUp}
+        onPointerCancel={handleGlobalPointerUp}
         onContextMenu={(e) => e.preventDefault()}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
     >
       {/* Toolbar */}
       <div className="h-12 border-b border-zinc-800 bg-studio-panel flex items-center px-4 justify-between shrink-0 z-30 space-x-4 overflow-x-auto no-scrollbar shadow-lg">
@@ -351,18 +389,19 @@ const Arranger: React.FC<ArrangerProps> = ({
          </div>
       </div>
 
-      {/* Main Single Scroll Container */}
+      {/* Main Scroll Container */}
       <div 
         ref={scrollContainerRef}
-        className="flex-1 overflow-auto bg-zinc-900 relative"
+        className="flex-1 overflow-auto bg-zinc-900 relative overscroll-contain"
+        style={{ touchAction: 'pan-x pan-y' }} // Allow native scrolling, clips handle their own touch-action
       >
         <div className="min-w-max relative flex flex-col" style={{ width: totalWidth + HEADER_WIDTH }}>
            
-            {/* 1. Sticky Top Ruler Row */}
+            {/* 1. Sticky Top Ruler */}
             <div className="sticky top-0 z-40 flex h-8 bg-zinc-900 border-b border-zinc-800 shadow-sm">
                 {/* 1a. Sticky Left Corner */}
                 <div 
-                    className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800" 
+                    className="sticky left-0 z-50 bg-studio-panel border-r border-zinc-800 shrink-0 flex items-center justify-center border-b border-zinc-800 shadow-md" 
                     style={{ width: HEADER_WIDTH }}
                 >
                     <span className="text-[10px] font-bold text-zinc-600 tracking-widest">TRACKS</span>
@@ -370,18 +409,18 @@ const Arranger: React.FC<ArrangerProps> = ({
 
                 {/* 1b. Ruler Timeline */}
                 <div 
-                    className="relative flex-1 bg-zinc-900 cursor-pointer"
-                    onMouseDown={handleRulerMouseDown}
+                    className="relative flex-1 bg-zinc-900 cursor-pointer touch-none"
+                    onPointerDown={handleRulerPointerDown}
                 >
-                     {/* Loop Region Indicator */}
+                     {/* Loop Region */}
                      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
                         <div 
                             className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 pointer-events-auto group ${project.isLooping ? 'opacity-100' : 'opacity-0'}`}
                             style={{ left: project.loopStart * zoom, width: Math.max(1, (project.loopEnd - project.loopStart) * zoom) }}
                         >
-                             <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onMouseDown={(e) => handleLoopMouseDown(e, 'move')} />
-                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onMouseDown={(e) => handleLoopMouseDown(e, 'start')} />
-                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onMouseDown={(e) => handleLoopMouseDown(e, 'end')} />
+                             <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => handleLoopPointerDown(e, 'move')} />
+                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onPointerDown={(e) => handleLoopPointerDown(e, 'start')} />
+                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-yellow-400/50" onPointerDown={(e) => handleLoopPointerDown(e, 'end')} />
                         </div>
                      </div>
 
@@ -396,7 +435,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             {/* 2. Tracks Container */}
             <div className="relative">
-                {/* Background Grid (Canvas Pattern via CSS) */}
+                {/* Background Grid */}
                 <div 
                     className="absolute inset-0 z-0 pointer-events-none" 
                     style={{
@@ -450,14 +489,14 @@ const Arranger: React.FC<ArrangerProps> = ({
                              <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />
                         </div>
 
-                        {/* Track Lane / Clips */}
+                        {/* Track Lane */}
                         <div className="relative flex-1 border-b border-zinc-800/30 bg-zinc-900/20">
                             {project.clips.filter(c => c.trackId === track.id).map(clip => {
                                 const isSelected = selectedClipId === clip.id;
                                 return (
                                     <div
                                         key={clip.id}
-                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none transition-all ${
+                                        className={`absolute rounded-lg overflow-hidden cursor-pointer select-none touch-none transition-shadow ${
                                             isSelected ? 'ring-2 ring-white z-20 shadow-xl' : 'hover:brightness-110 z-10 shadow-md'
                                         }`}
                                         style={{
@@ -465,10 +504,10 @@ const Arranger: React.FC<ArrangerProps> = ({
                                             width: clip.duration * zoom,
                                             top: 4,
                                             bottom: 4,
-                                            backgroundColor: '#18181b', // Dark background for clip
+                                            backgroundColor: '#18181b',
                                             borderLeft: `4px solid ${track.color}`
                                         }}
-                                        onMouseDown={(e) => handleClipMouseDown(e, clip, 'MOVE')}
+                                        onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
                                     >
                                         {/* Clip Header */}
                                         <div 
@@ -479,7 +518,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         </div>
 
                                         {/* Waveform Area */}
-                                        <div className="absolute inset-0 top-5 bottom-0 bg-black/40">
+                                        <div className="absolute inset-0 top-5 bottom-0 bg-black/40 pointer-events-none">
                                             <Waveform bufferKey={clip.bufferKey} color={track.color} />
                                         </div>
                                         
@@ -489,13 +528,13 @@ const Arranger: React.FC<ArrangerProps> = ({
                                             {clip.fadeOut > 0 && <path d={`M ${clip.duration * zoom} 100 L ${(clip.duration - clip.fadeOut) * zoom} 0 L ${clip.duration * zoom} 0 Z`} fill="black" />}
                                         </svg>
 
-                                        {/* Resize Handles */}
-                                        <div className={`absolute inset-y-0 left-0 w-3 cursor-w-resize z-30 hover:bg-white/10 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_START')} />
-                                        <div className={`absolute inset-y-0 right-0 w-3 cursor-e-resize z-30 hover:bg-white/10 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onMouseDown={(e) => handleClipMouseDown(e, clip, 'TRIM_END')} />
+                                        {/* Resize Handles (Larger hit area for touch) */}
+                                        <div className={`absolute inset-y-0 left-0 w-6 -ml-3 cursor-w-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')} />
+                                        <div className={`absolute inset-y-0 right-0 w-6 -mr-3 cursor-e-resize z-30 hover:bg-white/5 ${isSelected ? 'block' : 'hidden group-hover:block'}`} onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')} />
                                         
                                         {/* Fade Handles */}
-                                        <div className={`absolute top-0 w-3 h-3 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ left: clip.fadeIn * zoom }} onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_IN')} />
-                                        <div className={`absolute top-0 w-3 h-3 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ right: clip.fadeOut * zoom }} onMouseDown={(e) => handleClipMouseDown(e, clip, 'FADE_OUT')} />
+                                        <div className={`absolute top-0 w-4 h-4 -ml-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ left: clip.fadeIn * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_IN')} />
+                                        <div className={`absolute top-0 w-4 h-4 -mr-2 bg-white border border-black rounded-full cursor-ew-resize z-40 shadow-sm ${isSelected ? 'opacity-100' : 'opacity-0'}`} style={{ right: clip.fadeOut * zoom }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_OUT')} />
 
                                     </div>
                                 )
@@ -504,7 +543,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                     </div>
                 ))}
                 
-                {/* Playhead Overlay */}
+                {/* Playhead */}
                 <div 
                     className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]"
                     style={{ left: HEADER_WIDTH + (currentTime * zoom) }}

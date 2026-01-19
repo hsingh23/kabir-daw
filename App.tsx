@@ -321,7 +321,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-black text-white font-sans overflow-hidden">
+    <div className="flex flex-col h-screen bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
       
       {/* Header */}
       <div className="h-12 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-4 z-50">
