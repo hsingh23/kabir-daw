@@ -413,6 +413,13 @@ const App: React.FC = () => {
       }));
   }, [updateProject]);
 
+  const handleRenameTrack = useCallback((trackId: string, newName: string) => {
+      updateProject(prev => ({
+          ...prev,
+          tracks: prev.tracks.map(t => t.id === trackId ? { ...t, name: newName } : t)
+      }));
+  }, [updateProject]);
+
   return (
     <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
       
@@ -487,6 +494,7 @@ const App: React.FC = () => {
              onOpenInspector={setInspectorTrackId}
              onMoveTrack={handleMoveTrack}
              onRenameClip={handleRenameClip}
+             onRenameTrack={handleRenameTrack}
            />
         ) : (
             <Library />
