@@ -63,7 +63,7 @@ class AudioEngine {
     this.delayNode.connect(this.delayGain);
     this.delayGain.connect(this.masterGain);
 
-    // Connect Metronome directly to destination (bypass fx/master if desired, but let's go through master for volume control)
+    // Connect Metronome directly to destination
     this.metronomeGain.connect(this.masterGain);
   }
 
@@ -91,7 +91,6 @@ class AudioEngine {
     return audioBuffer;
   }
 
-  // Ensure track nodes exist and are connected to master
   getTrackChannel(trackId: string) {
     if (!this.trackChannels.has(trackId)) {
       const gain = this.ctx.createGain();
@@ -105,7 +104,6 @@ class AudioEngine {
     return this.trackChannels.get(trackId)!;
   }
 
-  // Update volume, pan, mute, solo status for all tracks
   syncTracks(tracks: Track[]) {
     const soloActive = tracks.some(t => t.solo);
 
@@ -113,11 +111,9 @@ class AudioEngine {
       const channel = this.getTrackChannel(track.id);
       const currentTime = this.ctx.currentTime;
       
-      // Mute logic: Muted if track.muted OR (solo mode is active AND track is not soloed)
       const isMuted = track.muted || (soloActive && !track.solo);
       const targetVolume = isMuted ? 0 : track.volume;
 
-      // Smooth transitions
       channel.gain.gain.setTargetAtTime(targetVolume, currentTime, 0.02);
       channel.panner.pan.setTargetAtTime(track.pan, currentTime, 0.02);
     });
@@ -128,20 +124,16 @@ class AudioEngine {
       this.ctx.resume();
     }
     
-    this.stop(); // Stop any existing playback
+    this.stop();
     this._isPlaying = true;
     this._startTime = this.ctx.currentTime - startTime;
     this._pauseTime = startTime;
 
-    // Reset Metronome Scheduling
     const secondsPerBeat = 60.0 / this.bpm;
-    // Calculate current beat based on seek time
     this.currentBeat = Math.ceil(startTime / secondsPerBeat);
-    // Calculate when that next beat should happen
     const nextBeatTimeRelative = this.currentBeat * secondsPerBeat;
     this.nextNoteTime = this.ctx.currentTime + (nextBeatTimeRelative - startTime);
 
-    // Ensure all track channels are ready and synced
     this.syncTracks(tracks);
 
     clips.forEach(clip => {
@@ -154,17 +146,17 @@ class AudioEngine {
       const offset = clip.offset;
       const duration = clip.duration;
 
-      // Playback scheduling logic
       if (when < this.ctx.currentTime) {
-         // Clip starts in the past relative to playhead
+         // Clip starts in the past
          const startDiff = startTime - clip.start;
          if (startDiff >= 0 && startDiff < duration) {
             // Start midway
-            this.scheduleSource(buffer, this.ctx.currentTime, offset + startDiff, duration - startDiff, channel, clip.id);
+            // We need to pass the *full* clip details to calculate fade curves correctly relative to the *clip* start/end
+            this.scheduleSource(buffer, this.ctx.currentTime, offset + startDiff, duration - startDiff, channel, clip, startDiff);
          }
       } else {
          // Clip starts in the future
-         this.scheduleSource(buffer, when, offset, duration, channel, clip.id);
+         this.scheduleSource(buffer, when, offset, duration, channel, clip, 0);
       }
     });
   }
@@ -173,30 +165,73 @@ class AudioEngine {
       buffer: AudioBuffer, 
       when: number, 
       offset: number, 
-      duration: number, 
+      playDuration: number, 
       channel: { gain: GainNode },
-      clipId: string
+      clip: Clip,
+      elapsedClipTime: number
     ) {
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
 
-    // Smart Loop Logic
-    // If the requested play duration + offset exceeds the natural buffer length, enable looping.
-    if (offset + duration > buffer.duration) {
+    // Envelope Gain for Fades
+    const envelope = this.ctx.createGain();
+    source.connect(envelope);
+    envelope.connect(channel.gain);
+
+    // Apply Fades
+    // We must calculate the gain value at 'when' (the start of *playback*), which might be mid-fade
+    
+    const clipFadeIn = clip.fadeIn || 0;
+    const clipFadeOut = clip.fadeOut || 0;
+    const clipTotalDuration = clip.duration;
+
+    // 1. Initial Value
+    let startGain = 1;
+    if (elapsedClipTime < clipFadeIn) {
+        // We are starting inside the Fade In
+        startGain = elapsedClipTime / clipFadeIn;
+    } else if (elapsedClipTime > clipTotalDuration - clipFadeOut) {
+        // We are starting inside the Fade Out
+        const timeRemaining = clipTotalDuration - elapsedClipTime;
+        startGain = timeRemaining / clipFadeOut;
+    }
+    
+    envelope.gain.setValueAtTime(startGain, when);
+
+    // 2. Scheduled Ramps
+    
+    // Fade In Ramp (if we haven't passed it yet)
+    if (elapsedClipTime < clipFadeIn) {
+        // Ramp from current gain to 1
+        const timeUntilFull = clipFadeIn - elapsedClipTime;
+        envelope.gain.linearRampToValueAtTime(1, when + timeUntilFull);
+    }
+
+    // Fade Out Ramp
+    // When does the fade out start relative to *playback start*?
+    const timeUntilFadeOut = (clipTotalDuration - clipFadeOut) - elapsedClipTime;
+    
+    if (timeUntilFadeOut > 0) {
+        // Fade out hasn't started yet relative to playback start
+        envelope.gain.setValueAtTime(1, when + timeUntilFadeOut);
+        envelope.gain.linearRampToValueAtTime(0, when + timeUntilFadeOut + clipFadeOut);
+    } else {
+        // We are already inside fade out region (or past it), handle the ramp down from current startGain
+        // However, if we started inside fade out, startGain is already set. We just need to ramp to 0 at the end.
+        const timeRemaining = playDuration;
+        envelope.gain.linearRampToValueAtTime(0, when + timeRemaining);
+    }
+
+
+    // Looping Logic
+    if (offset + playDuration > buffer.duration) {
         source.loop = true;
         source.loopStart = 0;
         source.loopEnd = buffer.duration;
     }
 
-    // Connect Source -> Track Channel (Persistent) -> Master
-    source.connect(channel.gain);
-
-    source.start(when, offset, duration);
-    this.activeSources.set(clipId + Math.random(), source);
-
-    source.onended = () => {
-        // Cleanup handled by garbage collector mostly, simplified for demo
-    };
+    source.start(when, offset, playDuration);
+    this.activeSources.set(clip.id + Math.random(), source);
   }
 
   stop() {
@@ -228,14 +263,10 @@ class AudioEngine {
       return this._isPlaying;
   }
 
-  // --- Metronome ---
-
   scheduleClick(beatNumber: number, time: number) {
     const osc = this.ctx.createOscillator();
     const env = this.ctx.createGain();
 
-    // High pitch for downbeat (beat 0 in a bar of 4)
-    // Assuming 4/4 signature for now
     osc.frequency.value = beatNumber % 4 === 0 ? 1000 : 800;
     
     env.gain.value = 1;
@@ -249,36 +280,27 @@ class AudioEngine {
   }
 
   scheduler() {
-      // Lookahead scheduler
       if (!this.metronomeEnabled || !this._isPlaying) return;
-
-      const lookahead = 0.1; // How far ahead to schedule audio (sec)
-
+      const lookahead = 0.1;
       while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
           this.scheduleClick(this.currentBeat, this.nextNoteTime);
-          
           const secondsPerBeat = 60.0 / this.bpm;
           this.nextNoteTime += secondsPerBeat;
           this.currentBeat++;
       }
   }
 
-  // --- Recording ---
-
   async startRecording(): Promise<void> {
     if (this.ctx.state === 'suspended') {
         await this.ctx.resume();
     }
-
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         this.mediaRecorder = new MediaRecorder(stream);
         this.recordedChunks = [];
-        
         this.mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) this.recordedChunks.push(e.data);
         };
-
         this.mediaRecorder.start();
     } catch (err) {
         console.error("Error accessing microphone:", err);
@@ -292,18 +314,13 @@ class AudioEngine {
             resolve(null);
             return;
         }
-
         this.mediaRecorder.onstop = () => {
             const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
             this.recordedChunks = [];
-            
-            // Release microphone
             this.mediaRecorder?.stream.getTracks().forEach(track => track.stop());
             this.mediaRecorder = null;
-            
             resolve(blob);
         };
-
         this.mediaRecorder.stop();
     });
   }

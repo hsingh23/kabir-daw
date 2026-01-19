@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProjectState, Track, Clip } from './types';
 import Mixer from './components/Mixer';
 import Arranger from './components/Arranger';
 import { audio } from './services/audio';
 import { saveAudioBlob } from './services/db';
-import { Mic, Music, LayoutGrid, Upload, Plus } from 'lucide-react';
+import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2 } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
@@ -26,7 +26,12 @@ const INITIAL_PROJECT: ProjectState = {
 
 const App: React.FC = () => {
   const [view, setView] = useState<'mixer' | 'arranger'>('mixer');
+  
+  // Undo/Redo Stacks
   const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
+  const [past, setPast] = useState<ProjectState[]>([]);
+  const [future, setFuture] = useState<ProjectState[]>([]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingStartTime, setRecordingStartTime] = useState(0);
@@ -37,6 +42,55 @@ const App: React.FC = () => {
 
   const rafRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Wrapper for state updates that records history
+  const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
+      setProject(current => {
+          const next = typeof value === 'function' ? (value as Function)(current) : value;
+          if (next !== current) {
+              setPast(prev => [...prev.slice(-19), current]); // Keep last 20
+              setFuture([]);
+          }
+          return next;
+      });
+  }, []);
+
+  const undo = () => {
+      if (past.length === 0) return;
+      const previous = past[past.length - 1];
+      const newPast = past.slice(0, past.length - 1);
+      
+      setFuture(prev => [project, ...prev]);
+      setProject(previous);
+      setPast(newPast);
+  };
+
+  const redo = () => {
+      if (future.length === 0) return;
+      const next = future[0];
+      const newFuture = future.slice(1);
+
+      setPast(prev => [...prev, project]);
+      setProject(next);
+      setFuture(newFuture);
+  };
+
+  // Keyboard Shortcuts for Undo/Redo
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+              if (e.shiftKey) {
+                  redo();
+              } else {
+                  undo();
+              }
+              e.preventDefault();
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [past, future, project]);
+
 
   // Audio Engine Sync: Tracks
   useEffect(() => {
@@ -55,19 +109,14 @@ const App: React.FC = () => {
   useEffect(() => {
     const loop = () => {
       if (isPlaying) {
-        // Scheduler for Metronome
         audio.scheduler();
-
         const time = audio.getCurrentTime();
-        
-        // Loop Logic
         if (project.isLooping && time >= project.loopEnd && !isRecording) {
             audio.play(project.clips, project.tracks, project.loopStart);
             setCurrentTime(project.loopStart);
         } else {
             setCurrentTime(time);
         }
-        
         rafRef.current = requestAnimationFrame(loop);
       }
     };
@@ -81,7 +130,7 @@ const App: React.FC = () => {
 
   const togglePlay = () => {
     if (isRecording) {
-        handleRecordToggle(); // Stop recording if playing
+        handleRecordToggle();
         return;
     }
 
@@ -96,8 +145,7 @@ const App: React.FC = () => {
 
   const handleRecordToggle = async () => {
     if (isRecording) {
-        // --- STOP RECORDING ---
-        audio.stop(); // Stops playback
+        audio.stop(); 
         const blob = await audio.stopRecording();
         setIsPlaying(false);
         setIsRecording(false);
@@ -115,16 +163,17 @@ const App: React.FC = () => {
                 offset: 0,
                 duration: (await audio.loadAudio(key, blob)).duration,
                 bufferKey: key,
+                fadeIn: 0,
+                fadeOut: 0
             };
             
-            setProject(prev => ({
+            updateProject(prev => ({
                 ...prev,
                 clips: [...prev.clips, newClip]
             }));
             setSelectedClipId(newClip.id);
         }
     } else {
-        // --- START RECORDING ---
         if (!selectedTrackId) {
             alert("Select a track to record on first.");
             return;
@@ -153,10 +202,8 @@ const App: React.FC = () => {
     setCurrentTime(project.isLooping ? project.loopStart : 0);
   };
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.code === 'Space') {
@@ -166,7 +213,7 @@ const App: React.FC = () => {
       
       if ((e.code === 'Delete' || e.code === 'Backspace') && selectedClipId) {
         e.preventDefault();
-        setProject(prev => ({
+        updateProject(prev => ({
           ...prev,
           clips: prev.clips.filter(c => c.id !== selectedClipId)
         }));
@@ -176,10 +223,10 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, isRecording, selectedClipId, project]); // Add dependencies
+  }, [isPlaying, isRecording, selectedClipId, project]);
 
   const handleSeek = (time: number) => {
-    if (isRecording) return; // Disable seek while recording
+    if (isRecording) return;
     setCurrentTime(time);
     if (isPlaying) {
       audio.play(project.clips, project.tracks, time);
@@ -191,26 +238,23 @@ const App: React.FC = () => {
       const file = e.target.files[0];
       const key = crypto.randomUUID();
       
-      // Save to IndexedDB
       await saveAudioBlob(key, file);
-      
-      // Load into Audio Engine
       await audio.loadAudio(key, file);
 
-      // Create a clip on the selected track or first track
       const targetTrackId = selectedTrackId || project.tracks[0].id;
-
       const newClip: Clip = {
         id: crypto.randomUUID(),
         trackId: targetTrackId,
         name: file.name,
         start: currentTime,
         offset: 0,
-        duration: audio.buffers.get(key)?.duration || 5, // fallback duration
+        duration: audio.buffers.get(key)?.duration || 5, 
         bufferKey: key,
+        fadeIn: 0,
+        fadeOut: 0
       };
 
-      setProject(prev => ({
+      updateProject(prev => ({
         ...prev,
         clips: [...prev.clips, newClip]
       }));
@@ -221,15 +265,14 @@ const App: React.FC = () => {
   const handleSplit = (clipId: string, time: number) => {
     const clip = project.clips.find(c => c.id === clipId);
     if (!clip) return;
-    
-    // Check if time is within clip
     if (time <= clip.start || time >= clip.start + clip.duration) return;
 
     const splitOffset = time - clip.start;
     
     const clipA: Clip = {
         ...clip,
-        duration: splitOffset
+        duration: splitOffset,
+        fadeOut: 0.05 // Tiny default fade out to avoid clicks
     };
 
     const clipB: Clip = {
@@ -238,10 +281,11 @@ const App: React.FC = () => {
         start: time,
         offset: clip.offset + splitOffset,
         duration: clip.duration - splitOffset,
-        name: clip.name + ' (cut)'
+        name: clip.name + ' (cut)',
+        fadeIn: 0.05 // Tiny default fade in
     };
 
-    setProject(prev => ({
+    updateProject(prev => ({
         ...prev,
         clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
     }));
@@ -258,7 +302,7 @@ const App: React.FC = () => {
           solo: false,
           color: `hsl(${Math.random() * 360}, 70%, 50%)`
       };
-      setProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
+      updateProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       setSelectedTrackId(newTrack.id);
   };
 
@@ -268,6 +312,25 @@ const App: React.FC = () => {
       {/* Header */}
       <div className="h-12 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-4 z-50">
         <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent">PocketStudio</h1>
+        
+        {/* Undo/Redo Controls */}
+        <div className="flex space-x-2">
+            <button 
+                onClick={undo} 
+                disabled={past.length === 0}
+                className={`p-1 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}
+            >
+                <Undo2 size={18} />
+            </button>
+            <button 
+                onClick={redo} 
+                disabled={future.length === 0}
+                className={`p-1 rounded ${future.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}
+            >
+                <Redo2 size={18} />
+            </button>
+        </div>
+
         <div className="flex space-x-4">
              <button onClick={() => fileInputRef.current?.click()} className="text-zinc-400 hover:text-white active:scale-90 transition-transform">
                 <Upload size={20} />
@@ -284,7 +347,7 @@ const App: React.FC = () => {
         {view === 'mixer' ? (
            <Mixer 
              project={project} 
-             setProject={setProject} 
+             setProject={updateProject} 
              isPlaying={isPlaying}
              onPlayPause={togglePlay}
              onStop={stop}
@@ -293,7 +356,7 @@ const App: React.FC = () => {
         ) : (
            <Arranger 
              project={project}
-             setProject={setProject}
+             setProject={updateProject}
              currentTime={currentTime}
              isPlaying={isPlaying}
              isRecording={isRecording}
