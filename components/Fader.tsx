@@ -6,59 +6,6 @@ interface FaderProps {
   height?: number;
 }
 
-const Fader: React.FC<FaderProps> = ({ value, onChange, height = 200 }) => {
-  return (
-    <div className="relative w-12 flex flex-col items-center group">
-      {/* Track Background */}
-      <div 
-        className="w-2 bg-zinc-800 rounded-full shadow-inset-track border border-zinc-700/50"
-        style={{ height: `${height}px` }}
-      >
-        {/* Ticks */}
-        <div className="absolute top-0 bottom-0 left-0 w-full flex flex-col justify-between py-2 pointer-events-none opacity-30">
-          {[...Array(11)].map((_, i) => (
-             <div key={i} className="w-full h-px bg-zinc-400 mx-auto w-4" />
-          ))}
-        </div>
-      </div>
-
-      {/* Input Slider (Invisible but clickable) */}
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="absolute top-0 opacity-0 cursor-pointer w-full"
-        style={{ 
-            height: `${height}px`,
-            // Rotate to make it vertical if supported, but here we keep it standard and rely on custom Thumb via CSS or absolute positioning
-            // Standard vertical range input is tricky cross-browser.
-            // Let's implement custom drag instead for true verticality.
-            appearance: 'slider-vertical' as any, // Works in some browsers
-            width: '40px'
-        }}
-        // Fallback for better touch control on mobile without slider-vertical support
-        onInput={(e: any) => {
-             // Hack for vertical input if needed, but we'll use a custom thumb for visuals below
-        }}
-      />
-
-      {/* Custom Thumb Visuals - positioned absolutely based on value */}
-      <div 
-        className="absolute w-8 h-12 bg-gradient-to-b from-zinc-300 to-zinc-400 rounded shadow-lg border border-zinc-500 pointer-events-none flex items-center justify-center"
-        style={{ 
-            bottom: `${value * (height - 48)}px`, // 48 is approximate thumb height
-            marginBottom: '0px'
-        }}
-      >
-         <div className="w-6 h-0.5 bg-zinc-500/50" />
-      </div>
-    </div>
-  );
-};
-
 // Re-implementing Fader with Pointer Events for true vertical behavior across all devices
 const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200 }) => {
     const trackRef = React.useRef<HTMLDivElement>(null);

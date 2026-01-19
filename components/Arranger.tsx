@@ -1,7 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { ProjectState, Clip, ToolMode, Track } from '../types';
 import Waveform from './Waveform';
-import { audio } from '../services/audio';
 import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap } from 'lucide-react';
 
 interface ArrangerProps {
@@ -496,7 +495,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                     }} 
                 />
 
-                {project.tracks.map((track, trackIndex) => (
+                {project.tracks.map((track) => (
                     <div key={track.id} className="flex relative z-10 group" style={{ height: TRACK_HEIGHT }}>
                         
                         {/* Sticky Track Header */}
