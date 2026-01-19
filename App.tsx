@@ -25,6 +25,10 @@ const INITIAL_PROJECT: ProjectState = {
   isLooping: false,
   metronomeOn: false,
   masterVolume: 1.0,
+  masterCompressor: {
+      threshold: -24,
+      ratio: 12
+  },
   effects: { reverb: 0.2, delay: 0.1, chorus: 0.0 },
   tanpura: {
       enabled: false,
@@ -64,6 +68,9 @@ const App: React.FC = () => {
   
   // Track Inspector Modal
   const [inspectorTrackId, setInspectorTrackId] = useState<string | null>(null);
+  
+  // Visual Metronome
+  const [visualBeat, setVisualBeat] = useState(false);
 
   const rafRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -78,29 +85,7 @@ const App: React.FC = () => {
 
   // Load Project on Mount
   useEffect(() => {
-      const load = async () => {
-          const saved = await getProject('default-project');
-          if (saved) {
-              // Migration for new state fields
-              const migrated = {
-                  ...INITIAL_PROJECT,
-                  ...saved,
-                  effects: { ...INITIAL_PROJECT.effects, ...saved.effects },
-                  tracks: saved.tracks.map((t: any) => ({
-                      ...t,
-                      eq: t.eq || { low: 0, mid: 0, high: 0 }
-                  }))
-              };
-              setProject(migrated);
-              for (const clip of migrated.clips) {
-                  const blob = await import('./services/db').then(m => m.getAudioBlob(clip.bufferKey));
-                  if (blob) {
-                      await audio.loadAudio(clip.bufferKey, blob);
-                  }
-              }
-          }
-      };
-      load();
+      loadProjectState('default-project');
   }, []);
 
   useEffect(() => {
@@ -109,6 +94,42 @@ const App: React.FC = () => {
           saveProject(project);
       }, 2000) as unknown as number; 
   }, [project]);
+
+  const loadProjectState = async (projectId: string) => {
+    const saved = await getProject(projectId);
+    if (saved) {
+        // Migration for new state fields
+        const migrated = {
+            ...INITIAL_PROJECT,
+            ...saved,
+            effects: { ...INITIAL_PROJECT.effects, ...saved.effects },
+            masterCompressor: saved.masterCompressor || INITIAL_PROJECT.masterCompressor,
+            tracks: saved.tracks.map((t: any) => ({
+                ...t,
+                eq: t.eq || { low: 0, mid: 0, high: 0 }
+            }))
+        };
+        setProject(migrated);
+        
+        // Load Audio Buffers
+        for (const clip of migrated.clips) {
+            const blob = await import('./services/db').then(m => m.getAudioBlob(clip.bufferKey));
+            if (blob) {
+                await audio.loadAudio(clip.bufferKey, blob);
+            }
+        }
+    } else if (projectId !== 'default-project') {
+        // If loading a new ID that doesn't exist, init it
+        setProject({ ...INITIAL_PROJECT, id: projectId });
+    }
+  };
+
+  const createNewProject = useCallback(async () => {
+      const newId = crypto.randomUUID();
+      const newProject = { ...INITIAL_PROJECT, id: newId };
+      await saveProject(newProject);
+      await loadProjectState(newId);
+  }, []);
 
   const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
       setProject(current => {
@@ -261,6 +282,9 @@ const App: React.FC = () => {
     audio.syncTracks(project.tracks);
     audio.syncInstruments(project.tanpura, project.tabla);
     audio.setMasterVolume(project.masterVolume);
+    if (project.masterCompressor) {
+        audio.setMasterCompressor(project.masterCompressor.threshold, project.masterCompressor.ratio);
+    }
     audio.setDelayLevel(project.effects.delay);
     audio.setReverbLevel(project.effects.reverb);
     audio.setChorusLevel(project.effects.chorus);
@@ -273,6 +297,14 @@ const App: React.FC = () => {
       if (isPlaying) {
         audio.scheduler();
         const time = audio.getCurrentTime();
+        
+        // Visual Metronome Logic
+        const secondsPerBeat = 60 / project.bpm;
+        const currentBeat = Math.floor(time / secondsPerBeat);
+        // Blink on the beat (within first 100ms)
+        const timeSinceBeat = time % secondsPerBeat;
+        setVisualBeat(timeSinceBeat < 0.1 && project.metronomeOn);
+
         if (project.isLooping && time >= project.loopEnd && !isRecording) {
             audio.play(project.clips, project.tracks, project.loopStart);
             setCurrentTime(project.loopStart);
@@ -280,6 +312,8 @@ const App: React.FC = () => {
             setCurrentTime(time);
         }
         rafRef.current = requestAnimationFrame(loop);
+      } else {
+          setVisualBeat(false);
       }
     };
     if (isPlaying) {
@@ -288,7 +322,7 @@ const App: React.FC = () => {
       cancelAnimationFrame(rafRef.current!);
     }
     return () => cancelAnimationFrame(rafRef.current!);
-  }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks]);
+  }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks, project.bpm, project.metronomeOn]);
 
   const handlePlayPauseClick = useCallback(() => {
       // Must resume context inside the event handler for iOS
@@ -468,6 +502,9 @@ const App: React.FC = () => {
             <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent hidden sm:block">PocketStudio</h1>
             <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent sm:hidden">PS</h1>
             
+            {/* Project Indicator / Metronome Flash */}
+            {visualBeat && <div className="w-3 h-3 rounded-full bg-studio-accent shadow-[0_0_10px_#ef4444]" />}
+
             <div className="flex space-x-1 border-l border-zinc-700 pl-4">
                 <button onClick={undo} disabled={past.length === 0} className={`p-1.5 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
                     <Undo2 size={16} />
@@ -537,7 +574,11 @@ const App: React.FC = () => {
              onColorClip={handleColorClip}
            />
         ) : (
-            <Library />
+            <Library 
+                onLoadProject={loadProjectState} 
+                onCreateNewProject={createNewProject}
+                currentProjectId={project.id}
+            />
         )}
 
         {inspectorTrackId && (
