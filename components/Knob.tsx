@@ -48,11 +48,23 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1, d
   return (
     <div className="flex flex-col items-center justify-center space-y-2 select-none touch-none">
       <div 
-        className="relative w-16 h-16 rounded-full shadow-knob bg-gradient-to-br from-zinc-200 to-zinc-400 border border-zinc-600 cursor-ns-resize"
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        className="relative w-16 h-16 rounded-full shadow-knob bg-gradient-to-br from-zinc-200 to-zinc-400 border border-zinc-600 cursor-ns-resize outline-none focus:ring-2 focus:ring-blue-500/50"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onDoubleClick={handleDoubleClick}
+        onKeyDown={(e) => {
+             const range = max - min;
+             const step = e.shiftKey ? range * 0.1 : range * 0.01;
+             if (e.key === 'ArrowUp' || e.key === 'ArrowRight') onChange(Math.min(max, value + step));
+             if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') onChange(Math.max(min, value - step));
+        }}
       >
         {/* Inner metal texture effect */}
         <div className="absolute inset-1 rounded-full bg-gradient-to-tl from-zinc-300 to-zinc-100" />

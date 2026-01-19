@@ -1,7 +1,7 @@
 export function audioBufferToWav(buffer: AudioBuffer): Blob {
   const numChannels = buffer.numberOfChannels;
   const sampleRate = buffer.sampleRate;
-  const format = 1; // PCM
+  const _format = 1; // PCM
   const bitDepth = 16;
   
   let result: Float32Array;

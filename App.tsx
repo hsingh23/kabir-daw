@@ -81,7 +81,7 @@ const App: React.FC = () => {
 
   const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
       setProject(current => {
-          const next = typeof value === 'function' ? (value as Function)(current) : value;
+          const next = typeof value === 'function' ? (value as (prev: ProjectState) => ProjectState)(current) : value;
           if (next !== current) {
               setPast(prev => [...prev.slice(-19), current]);
               setFuture([]);
@@ -90,30 +90,30 @@ const App: React.FC = () => {
       });
   }, []);
 
-  const updateTrack = (id: string, updates: Partial<Track>) => {
+  const updateTrack = useCallback((id: string, updates: Partial<Track>) => {
       updateProject(prev => ({
           ...prev,
           tracks: prev.tracks.map(t => t.id === id ? { ...t, ...updates } : t)
       }));
-  };
+  }, [updateProject]);
 
-  const undo = () => {
+  const undo = useCallback(() => {
       if (past.length === 0) return;
       const previous = past[past.length - 1];
       const newPast = past.slice(0, past.length - 1);
       setFuture(prev => [project, ...prev]);
       setProject(previous);
       setPast(newPast);
-  };
+  }, [past, project]);
 
-  const redo = () => {
+  const redo = useCallback(() => {
       if (future.length === 0) return;
       const next = future[0];
       const newFuture = future.slice(1);
       setPast(prev => [...prev, project]);
       setProject(next);
       setFuture(newFuture);
-  };
+  }, [future, project]);
 
   const togglePlay = useCallback(() => {
       setIsPlaying(prevIsPlaying => {
@@ -135,74 +135,9 @@ const App: React.FC = () => {
      } else if (!isPlaying && audio.isPlaying) {
          audio.pause();
      }
-  }, [isPlaying]);
+  }, [isPlaying, currentTime, project.clips, project.tracks]);
 
-  useEffect(() => {
-      const handleKeyDown = (e: KeyboardEvent) => {
-          if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-              if (e.shiftKey) {
-                  redo();
-              } else {
-                  undo();
-              }
-              e.preventDefault();
-              return;
-          }
-          if (e.code === 'Space') {
-              if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
-                  return;
-              }
-              e.preventDefault();
-              if (isRecording) {
-                  handleRecordToggle();
-              } else {
-                  togglePlay();
-              }
-          }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [past, future, project, isRecording, togglePlay]);
-
-  useEffect(() => {
-    audio.syncTracks(project.tracks);
-    audio.setMasterVolume(project.masterVolume);
-    audio.setDelayLevel(project.effects.delay);
-    audio.bpm = project.bpm;
-    audio.metronomeEnabled = project.metronomeOn;
-  }, [project]);
-
-  useEffect(() => {
-    const loop = () => {
-      if (isPlaying) {
-        audio.scheduler();
-        const time = audio.getCurrentTime();
-        if (project.isLooping && time >= project.loopEnd && !isRecording) {
-            audio.play(project.clips, project.tracks, project.loopStart);
-            setCurrentTime(project.loopStart);
-        } else {
-            setCurrentTime(time);
-        }
-        rafRef.current = requestAnimationFrame(loop);
-      }
-    };
-    if (isPlaying) {
-      loop();
-    } else {
-      cancelAnimationFrame(rafRef.current!);
-    }
-    return () => cancelAnimationFrame(rafRef.current!);
-  }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks]);
-
-  const handlePlayPauseClick = () => {
-      if (isRecording) {
-          handleRecordToggle();
-          return;
-      }
-      togglePlay();
-  };
-
-  const handleRecordToggle = async () => {
+  const handleRecordToggle = useCallback(async () => {
     if (isRecording) {
         audio.stop(); 
         const blob = await audio.stopRecording();
@@ -244,13 +179,79 @@ const App: React.FC = () => {
             audio.play(project.clips, project.tracks, startTime);
             setIsPlaying(true);
             setIsRecording(true);
-        } catch (e) {
+        } catch (_e) {
             alert("Could not start recording. Check microphone permissions.");
         }
     }
-  };
+  }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject]);
 
-  const stop = () => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handleRecordToggle causes infinite updates if added
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+              if (e.shiftKey) {
+                  redo();
+              } else {
+                  undo();
+              }
+              e.preventDefault();
+              return;
+          }
+          if (e.code === 'Space') {
+              if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+                  return;
+              }
+              e.preventDefault();
+              if (isRecording) {
+                  handleRecordToggle();
+              } else {
+                  togglePlay();
+              }
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [past, future, project, isRecording, togglePlay, undo, redo]); 
+
+  useEffect(() => {
+    audio.syncTracks(project.tracks);
+    audio.setMasterVolume(project.masterVolume);
+    audio.setDelayLevel(project.effects.delay);
+    audio.bpm = project.bpm;
+    audio.metronomeEnabled = project.metronomeOn;
+  }, [project]);
+
+  useEffect(() => {
+    const loop = () => {
+      if (isPlaying) {
+        audio.scheduler();
+        const time = audio.getCurrentTime();
+        if (project.isLooping && time >= project.loopEnd && !isRecording) {
+            audio.play(project.clips, project.tracks, project.loopStart);
+            setCurrentTime(project.loopStart);
+        } else {
+            setCurrentTime(time);
+        }
+        rafRef.current = requestAnimationFrame(loop);
+      }
+    };
+    if (isPlaying) {
+      loop();
+    } else {
+      cancelAnimationFrame(rafRef.current!);
+    }
+    return () => cancelAnimationFrame(rafRef.current!);
+  }, [isPlaying, isRecording, project.isLooping, project.loopEnd, project.loopStart, project.clips, project.tracks]);
+
+  const handlePlayPauseClick = useCallback(() => {
+      if (isRecording) {
+          handleRecordToggle();
+          return;
+      }
+      togglePlay();
+  }, [isRecording, handleRecordToggle, togglePlay]);
+
+  const stop = useCallback(() => {
     if (isRecording) {
         handleRecordToggle();
         return;
@@ -258,17 +259,17 @@ const App: React.FC = () => {
     audio.stop();
     setIsPlaying(false);
     setCurrentTime(project.isLooping ? project.loopStart : 0);
-  };
+  }, [isRecording, handleRecordToggle, project.isLooping, project.loopStart]);
 
-  const handleSeek = (time: number) => {
+  const handleSeek = useCallback((time: number) => {
     if (isRecording) return;
     setCurrentTime(time);
     if (isPlaying) {
       audio.play(project.clips, project.tracks, time);
     }
-  };
+  }, [isRecording, isPlaying, project.clips, project.tracks]);
 
-  const handleExport = async () => {
+  const handleExport = useCallback(async () => {
       if (project.clips.length === 0) {
           alert("Nothing to export!");
           return;
@@ -292,10 +293,10 @@ const App: React.FC = () => {
       } finally {
           setIsExporting(false);
       }
-  };
+  }, [project, isPlaying, stop]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.[0]) {
       const file = e.target.files[0];
       const key = crypto.randomUUID();
       
@@ -321,9 +322,9 @@ const App: React.FC = () => {
       }));
       setSelectedClipId(newClip.id);
     }
-  };
+  }, [selectedTrackId, project.tracks, currentTime, updateProject]);
 
-  const handleSplit = (clipId: string, time: number) => {
+  const handleSplit = useCallback((clipId: string, time: number) => {
     const clip = project.clips.find(c => c.id === clipId);
     if (!clip) return;
     if (time <= clip.start || time >= clip.start + clip.duration) return;
@@ -342,7 +343,7 @@ const App: React.FC = () => {
         start: time,
         offset: clip.offset + splitOffset,
         duration: clip.duration - splitOffset,
-        name: clip.name + ' (cut)',
+        name: `${clip.name} (cut)`,
         fadeIn: 0.05
     };
 
@@ -351,9 +352,9 @@ const App: React.FC = () => {
         clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
     }));
     setSelectedClipId(clipB.id);
-  };
+  }, [project.clips, updateProject]);
 
-  const addTrack = () => {
+  const addTrack = useCallback(() => {
       const newTrack: Track = {
           id: crypto.randomUUID(),
           name: `Track ${project.tracks.length + 1}`,
@@ -366,21 +367,21 @@ const App: React.FC = () => {
       };
       updateProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       setSelectedTrackId(newTrack.id);
-  };
+  }, [project.tracks.length, updateProject]);
 
-  const handleMoveTrack = (fromIndex: number, toIndex: number) => {
+  const handleMoveTrack = useCallback((fromIndex: number, toIndex: number) => {
       updateProject(prev => ({
           ...prev,
           tracks: moveItem(prev.tracks, fromIndex, toIndex)
       }));
-  };
+  }, [updateProject]);
 
-  const handleRenameClip = (clipId: string, newName: string) => {
+  const handleRenameClip = useCallback((clipId: string, newName: string) => {
       updateProject(prev => ({
           ...prev,
           clips: prev.clips.map(c => c.id === clipId ? { ...c, name: newName } : c)
       }));
-  };
+  }, [updateProject]);
 
   return (
     <div className="flex flex-col h-screen bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>

@@ -263,7 +263,7 @@ class AudioEngine {
 
   stop() {
     this.activeSources.forEach(source => {
-      try { source.stop(); } catch(e) {}
+      try { source.stop(); } catch(_e) {}
     });
     this.activeSources.clear();
     this._isPlaying = false;
@@ -344,7 +344,7 @@ class AudioEngine {
         this.mediaRecorder.onstop = () => {
             const blob = new Blob(this.recordedChunks, { type: 'audio/webm' });
             this.recordedChunks = [];
-            this.mediaRecorder?.stream.getTracks().forEach(track => track.stop());
+            this.mediaRecorder?.stream.getTracks().forEach(track => { track.stop(); });
             this.mediaRecorder = null;
             resolve(blob);
         };
