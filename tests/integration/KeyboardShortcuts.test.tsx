@@ -1,5 +1,6 @@
 
-import { render, fireEvent, act } from '@testing-library/react';
+import { render, act } from '@testing-library/react';
+import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
 import App from '../../App';
 import * as db from '../../services/db';
