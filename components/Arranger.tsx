@@ -517,12 +517,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                 </div>
 
                 <div 
-                    className="relative flex-1 bg-zinc-900 cursor-pointer touch-none"
+                    className="relative flex-1 bg-zinc-900 cursor-pointer touch-none group"
                     onPointerDown={handleRulerPointerDown}
                 >
                      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: 0, right: 0 }}>
                         <div 
-                            className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 group ${project.isLooping ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+                            className={`absolute top-0 h-full bg-yellow-400/10 border-l border-r border-yellow-400/40 ${project.isLooping ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
                             style={{ left: project.loopStart * zoom, width: Math.max(1, (project.loopEnd - project.loopStart) * zoom) }}
                         >
                              <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => handleLoopPointerDown(e, 'move')} />
@@ -536,6 +536,14 @@ const Arranger: React.FC<ArrangerProps> = ({
                             {i + 1}
                         </div>
                      ))}
+                     
+                     {/* Playhead Cap (In Ruler) */}
+                     <div 
+                        className="absolute top-0 h-full z-50 pointer-events-none flex flex-col items-center justify-end pb-1"
+                        style={{ left: currentTime * zoom, transform: 'translateX(-50%)' }}
+                     >
+                        <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-red-500 drop-shadow-md" />
+                     </div>
                 </div>
             </div>
 
@@ -666,12 +674,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                     </div>
                 ))}
                 
+                {/* Playhead Line (No Head, follows scroll) */}
                 <div 
                     className="absolute top-0 bottom-0 z-30 w-px bg-red-500 pointer-events-none shadow-[0_0_10px_rgba(239,68,68,0.8)]"
                     style={{ left: headerWidth + (currentTime * zoom) }}
                 >
-                    <div className="w-3 h-3 bg-red-500 rounded-full -ml-1.5 -mt-1.5 shadow-sm transform -translate-x-px" />
-                    <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-red-500 -ml-[5.5px]" />
+                     {/* Simplified to just line */}
                 </div>
             </div>
         </div>
