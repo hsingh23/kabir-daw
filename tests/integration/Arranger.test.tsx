@@ -1,5 +1,4 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import Arranger from '../../components/Arranger';
 import { ProjectState } from '../../types';
@@ -41,7 +40,7 @@ describe('Arranger Integration', () => {
     const onSelectClip = vi.fn();
     const setZoom = vi.fn();
 
-    render(
+    const { getByText } = render(
       <Arranger
         project={mockProject}
         setProject={setProject}
@@ -64,13 +63,13 @@ describe('Arranger Integration', () => {
     );
 
     // Verify Track Name is rendered
-    expect(screen.getByText('Guitar')).toBeInTheDocument();
+    expect(getByText('Guitar')).toBeInTheDocument();
 
     // Verify Clip is rendered
-    expect(screen.getByText('Riff 1')).toBeInTheDocument();
+    expect(getByText('Riff 1')).toBeInTheDocument();
 
     // Simulate clicking a track header
-    fireEvent.click(screen.getByText('Guitar'));
+    getByText('Guitar').click();
     expect(onSelectTrack).toHaveBeenCalledWith('t1');
   });
 });
