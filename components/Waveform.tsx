@@ -31,8 +31,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
       if (!ctx) return;
 
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      
-      // Only resize canvas if dimensions changed to avoid clearing
       if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
           canvas.width = rect.width * dpr;
           canvas.height = rect.height * dpr;
@@ -41,10 +39,9 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
       ctx.clearRect(0, 0, rect.width, rect.height);
 
-      // --- ERROR STATE: Missing Buffer ---
       if (!buffer) {
-          // Draw "Missing Media" Pattern (Diagonal Stripes)
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'; // Red-500 low opacity
+          // Error State
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'; 
           ctx.lineWidth = 2;
           ctx.beginPath();
           const spacing = 10;
@@ -53,127 +50,174 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
               ctx.lineTo(x + rect.height, rect.height);
           }
           ctx.stroke();
-          
-          // Error Border
           ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
-          ctx.lineWidth = 1;
           ctx.strokeRect(0, 0, rect.width, rect.height);
-          
-          // Optional text label if wide enough
-          if (rect.width > 50) {
-              ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-              ctx.font = 'bold 10px sans-serif';
-              ctx.fillText('FILE ERROR', 4, rect.height - 4);
-          }
           return;
       }
 
       const bufferDuration = buffer.duration;
       const renderDuration = duration || bufferDuration;
       
-      // Calculate resolution to decide whether to use peaks or raw data
       const pixelsPerSecond = rect.width / renderDuration;
-      const usePeaks = pixelsPerSecond < 100; // Use peaks if zoomed out (less than 100px per second)
+      const usePeaks = pixelsPerSecond < 100;
       const peaks = usePeaks ? audio.getPeaks(bufferKey) : null;
 
-      // Clamp offset
-      const startOffset = Math.max(0, Math.min(offset, bufferDuration));
-      
-      // Fill Style
+      // Base Waveform Drawing Function
+      const drawSegment = (segStartX: number, segWidth: number, segTimeOffset: number, segDuration: number) => {
+          if (segWidth <= 0) return;
+
+          let dataLength = buffer.length;
+          let dataRate = buffer.sampleRate;
+          let dataSource: Float32Array | undefined;
+
+          if (peaks) {
+              dataSource = peaks;
+              dataRate = 100; 
+              dataLength = peaks.length;
+          } else {
+              dataSource = buffer.getChannelData(0);
+          }
+
+          if (!dataSource) return;
+
+          const startIndex = Math.floor(segTimeOffset * dataRate);
+          const segmentSamples = Math.floor(segDuration * dataRate);
+          const endIndex = Math.min(dataLength, startIndex + segmentSamples);
+          
+          if (endIndex <= startIndex) return;
+
+          const step = (endIndex - startIndex) / segWidth;
+          const amp = rect.height / 2;
+          const mid = rect.height / 2;
+
+          ctx.beginPath();
+          
+          // Draw Top
+          for (let i = 0; i < segWidth; i++) {
+              const dataIdx = Math.floor(startIndex + (i * step));
+              // Safeguard index
+              if (dataIdx >= dataLength) break;
+              
+              const stride = Math.max(1, Math.floor(step)); 
+              let max = 0;
+              // Sample visual peak
+              for (let j = 0; j < stride && (dataIdx+j) < dataLength; j++) {
+                  const val = Math.abs(dataSource[dataIdx + j]);
+                  if (val > max) max = val;
+              }
+              const drawnHeight = max * amp * 0.95 * gain;
+              if (i === 0) ctx.moveTo(segStartX + i, mid - drawnHeight);
+              else ctx.lineTo(segStartX + i, mid - drawnHeight);
+          }
+
+          // Draw Bottom (Mirrored)
+          for (let i = segWidth - 1; i >= 0; i--) {
+              const dataIdx = Math.floor(startIndex + (i * step));
+              if (dataIdx >= dataLength) break;
+              
+              const stride = Math.max(1, Math.floor(step)); 
+              let max = 0;
+              for (let j = 0; j < stride && (dataIdx+j) < dataLength; j++) {
+                  const val = Math.abs(dataSource[dataIdx + j]);
+                  if (val > max) max = val;
+              }
+              const drawnHeight = max * amp * 0.95 * gain;
+              ctx.lineTo(segStartX + i, mid + drawnHeight);
+          }
+          
+          ctx.closePath();
+          ctx.fill();
+      };
+
       ctx.fillStyle = color;
-      ctx.beginPath();
+
+      // Handle Ghost Repeats (Looping)
+      // Logic: If renderDuration > remaining buffer duration from offset, loop from start of buffer.
+      // 1. First segment: from offset to min(bufferDuration, offset+renderDuration)
+      // 2. Subsequent segments: from 0 to bufferDuration (or remainder)
       
-      const amp = rect.height / 2;
-      const mid = rect.height / 2;
+      let currentDrawX = 0;
+      let timeRemaining = renderDuration;
+      let currentBufferOffset = offset % bufferDuration;
 
-      // Source Data Props
-      let dataLength = buffer.length;
-      let dataRate = buffer.sampleRate;
-      let dataSource: Float32Array | undefined;
+      while (timeRemaining > 0) {
+          const timeAvailableInThisPass = bufferDuration - currentBufferOffset;
+          const timeToDraw = Math.min(timeRemaining, timeAvailableInThisPass);
+          
+          const widthToDraw = (timeToDraw / renderDuration) * rect.width;
+          
+          drawSegment(currentDrawX, widthToDraw, currentBufferOffset, timeToDraw);
+          
+          // Draw loop indicator line if we are looping
+          if (timeRemaining > timeToDraw) {
+              ctx.save();
+              ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+              ctx.setLineDash([2, 2]);
+              ctx.beginPath();
+              ctx.moveTo(currentDrawX + widthToDraw, 0);
+              ctx.lineTo(currentDrawX + widthToDraw, rect.height);
+              ctx.stroke();
+              ctx.restore();
+          }
 
-      if (peaks) {
-          dataSource = peaks;
-          dataRate = 100; // Peaks are always 100Hz
-          dataLength = peaks.length;
-      } else {
-          dataSource = buffer.getChannelData(0);
+          currentDrawX += widthToDraw;
+          timeRemaining -= timeToDraw;
+          currentBufferOffset = 0; // Next loops start from 0
       }
 
-      if (!dataSource) return;
-
-      const startIndex = Math.floor(startOffset * dataRate);
-      const renderLengthSamples = Math.floor(renderDuration * dataRate);
-      const endIndex = Math.min(dataLength, startIndex + renderLengthSamples);
-      const sampleCount = endIndex - startIndex;
-
-      if (sampleCount <= 0) return;
-
-      // Draw Loop
-      const step = sampleCount / rect.width;
-
-      for (let i = 0; i < rect.width; i++) {
-        // Fade Logic
-        const timeInClip = (i / rect.width) * renderDuration;
-        let fadeGain = 1.0;
-        if (timeInClip < fadeIn) {
-            fadeGain = timeInClip / fadeIn;
-        } else if (timeInClip > renderDuration - fadeOut) {
-            fadeGain = (renderDuration - timeInClip) / fadeOut;
-        }
-        const effectiveGain = Math.max(0, Math.min(1, fadeGain)) * gain;
-
-        const dataIdx = Math.floor(startIndex + (i * step));
-        const nextDataIdx = Math.floor(startIndex + ((i + 1) * step));
-        let max = 0;
-        
-        // Find max in the bin
-        const bound = Math.min(endIndex, nextDataIdx);
-        const stride = Math.max(1, Math.floor((bound - dataIdx) / 10));
-
-        for (let j = dataIdx; j < bound; j+=stride) {
-            const val = Math.abs(dataSource[j]);
-            if (val > max) max = val;
-        }
-        
-        if (bound <= dataIdx) {
-             max = Math.abs(dataSource[dataIdx] || 0);
-        }
-
-        const drawnHeight = max * amp * 0.95 * effectiveGain;
-        const yTop = mid - drawnHeight;
-        
-        if (i === 0) ctx.moveTo(i, yTop);
-        else ctx.lineTo(i, yTop);
+      // --- Fade Overlays ---
+      // Fade In
+      if (fadeIn > 0) {
+          const fadeWidth = (fadeIn / renderDuration) * rect.width;
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          // Draw curve
+          for (let x = 0; x <= fadeWidth; x++) {
+              const progress = x / fadeWidth;
+              // Quadratic curve approximation for visual fade
+              const y = (1 - progress) * rect.height; 
+              ctx.lineTo(x, 0); // Cover top area? No, we want to mask content or overlay shadow.
+              // Let's draw an overlay that is opaque at start and transparent at end
+          }
+          // Simpler: Draw a gradient mask or simply fill areas that are faded "out"
+          // Actually, standard DAW visual is often just changing the waveform amplitude locally.
+          // But since we draw the waveform in one pass (or loops), modifying amp there is complex with loops.
+          // Let's draw a semi-transparent overlay to indicate fade.
+          const grad = ctx.createLinearGradient(0, 0, fadeWidth, 0);
+          grad.addColorStop(0, 'rgba(0,0,0,0.6)');
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, fadeWidth, rect.height);
+          
+          // Draw Fade Line
+          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, rect.height);
+          ctx.quadraticCurveTo(fadeWidth * 0.5, rect.height * 0.8, fadeWidth, 0);
+          ctx.stroke();
       }
 
-      // Draw bottom half mirrored
-      for (let i = rect.width - 1; i >= 0; i--) {
-        const timeInClip = (i / rect.width) * renderDuration;
-        let fadeGain = 1.0;
-        if (timeInClip < fadeIn) fadeGain = timeInClip / fadeIn;
-        else if (timeInClip > renderDuration - fadeOut) fadeGain = (renderDuration - timeInClip) / fadeOut;
-        const effectiveGain = Math.max(0, Math.min(1, fadeGain)) * gain;
+      // Fade Out
+      if (fadeOut > 0) {
+          const fadeWidth = (fadeOut / renderDuration) * rect.width;
+          const startX = rect.width - fadeWidth;
+          
+          const grad = ctx.createLinearGradient(startX, 0, rect.width, 0);
+          grad.addColorStop(0, 'rgba(0,0,0,0)');
+          grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(startX, 0, fadeWidth, rect.height);
 
-        const dataIdx = Math.floor(startIndex + (i * step));
-        const nextDataIdx = Math.floor(startIndex + ((i + 1) * step));
-        const bound = Math.min(endIndex, nextDataIdx);
-        let max = 0;
-        const stride = Math.max(1, Math.floor((bound - dataIdx) / 10));
-
-        for (let j = dataIdx; j < bound; j+=stride) {
-            const val = Math.abs(dataSource[j]);
-            if (val > max) max = val;
-        }
-        if (bound <= dataIdx) {
-             max = Math.abs(dataSource[dataIdx] || 0);
-        }
-
-        const drawnHeight = max * amp * 0.95 * effectiveGain;
-        ctx.lineTo(i, mid + drawnHeight);
+          // Draw Fade Line
+          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(startX, 0);
+          ctx.quadraticCurveTo(startX + fadeWidth * 0.5, rect.height * 0.8, rect.width, rect.height);
+          ctx.stroke();
       }
-
-      ctx.closePath();
-      ctx.fill();
     };
 
     draw();

@@ -35,12 +35,11 @@ export const useArrangerInteraction = ({
     snapLineRef, selectionBoxRef, snapLabelRef, commitTransaction
 }: InteractionProps) => {
     
-    // Tracks if a drag operation has occurred to determine if we should commit to history
     const isDraggingRef = useRef<boolean>(false);
 
     const [dragState, setDragState] = useState<{
         initialClips: { id: string, start: number }[]; 
-        mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT' | 'GAIN';
+        mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT' | 'GAIN' | 'STRETCH';
         startX: number;
         startY: number;
         clipId: string;
@@ -54,7 +53,6 @@ export const useArrangerInteraction = ({
     const [isScrubbing, setIsScrubbing] = useState<{ active: boolean, pointerId: number | null }>({ active: false, pointerId: null });
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
 
-    // Multi-touch tracking refs
     const activePointers = useRef<Map<number, {x: number, y: number}>>(new Map());
     const initialPinchDist = useRef<number | null>(null);
     const initialZoom = useRef<number>(50);
@@ -66,12 +64,10 @@ export const useArrangerInteraction = ({
 
     const updateSnapLine = (time: number | null) => {
         if (!snapLineRef.current || !snapLabelRef.current) return;
-        
         if (time === null) {
             snapLineRef.current.style.display = 'none';
             return;
         }
-
         const left = time * zoom;
         snapLineRef.current.style.display = 'block';
         snapLineRef.current.style.left = `${left}px`;
@@ -115,12 +111,8 @@ export const useArrangerInteraction = ({
         return time;
     };
 
-    const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT' | 'GAIN') => {
+    const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT' | 'GAIN' | 'STRETCH') => {
         e.stopPropagation();
-        
-        // Before starting a new drag, we snapshot the state via commitTransaction.
-        // Wait, standard undo logic is: Snapshot BEFORE change.
-        // So we commit the current state to 'past' now.
         commitTransaction(); 
         
         isDraggingRef.current = false;
@@ -165,7 +157,6 @@ export const useArrangerInteraction = ({
             const clickX = e.clientX - rect.left; 
             let splitTime = clip.start + (clickX / zoom);
             if (!e.shiftKey && snapGrid > 0) splitTime = Math.round(splitTime / (snapGrid * secondsPerBeat)) * (snapGrid * secondsPerBeat);
-            // Splitting is instantaneous, so we just let the commit happen via the action
             onSplit(clip.id, splitTime);
             return;
         }
@@ -177,36 +168,21 @@ export const useArrangerInteraction = ({
 
         (e.target as Element).setPointerCapture(e.pointerId);
         
-        // Duplicate Logic (Alt-Drag)
         if (e.altKey && mode === 'MOVE') {
+            // Duplicate Logic
             const clipsToCloneIds = isSelected ? newSelectedIds : [clip.id];
             const newClips: Clip[] = [];
-            
             const clipsToClone = project.clips.filter(c => clipsToCloneIds.includes(c.id));
-            
             clipsToClone.forEach(c => {
-                newClips.push({
-                    ...c,
-                    id: crypto.randomUUID(),
-                    name: `${c.name} (Copy)`
-                });
+                newClips.push({ ...c, id: crypto.randomUUID(), name: `${c.name} (Copy)` });
             });
-
-            // Set new state with duplicates
-            const updatedProject = {
-                ...project,
-                clips: [...project.clips, ...newClips]
-            };
+            const updatedProject = { ...project, clips: [...project.clips, ...newClips] };
             setProject(updatedProject);
-            
             analytics.track('clip_action', { action: 'duplicate', count: newClips.length });
-
             const newIds = newClips.map(c => c.id);
             onSelectClip(newIds);
-            
             const clickedOriginalIndex = clipsToCloneIds.indexOf(clip.id);
             const activeNewClip = newClips[clickedOriginalIndex !== -1 ? clickedOriginalIndex : 0];
-
             const initialClips = newClips.map(c => ({ id: c.id, start: c.start }));
             
             setDragState({
@@ -283,7 +259,6 @@ export const useArrangerInteraction = ({
         if (activePointers.current.size === 2 && initialPinchDist.current) {
             const points = Array.from(activePointers.current.values());
             const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-            
             if (dist > 0 && initialPinchDist.current > 0) {
                 const scale = dist / initialPinchDist.current;
                 const newZoom = Math.max(10, Math.min(400, initialZoom.current * scale));
@@ -299,7 +274,6 @@ export const useArrangerInteraction = ({
                 const rect = scrollContainer.getBoundingClientRect();
                 const edgeThreshold = 50; 
                 const relX = e.clientX - rect.left;
-                
                 let scrollSpeed = 0;
                 if (relX < edgeThreshold) scrollSpeed = -10; 
                 else if (relX > rect.width - edgeThreshold) scrollSpeed = 10;
@@ -400,15 +374,29 @@ export const useArrangerInteraction = ({
                     })
                 }));
             } else if (dragState.mode === 'GAIN') {
-                const deltaY = dragState.startY - e.clientY; // Up is positive
+                const deltaY = dragState.startY - e.clientY; 
                 const sensitivity = 0.01;
-                // Clamp gain between 0 and 2.0 (approx +6dB)
                 const newGain = Math.max(0, Math.min(2.0, (dragState.original.gain || 1.0) + deltaY * sensitivity));
-                
                 setProject(prev => ({
                     ...prev,
                     clips: prev.clips.map(c => c.id === dragState.clipId ? { ...c, gain: newGain } : c)
                 }));
+            } else if (dragState.mode === 'STRETCH') {
+                // Time Stretching Logic
+                const { original } = dragState;
+                const rawNewEnd = original.start + original.duration + deltaSeconds;
+                const snappedEnd = snapSeconds > 0 ? Math.round(rawNewEnd/snapSeconds)*snapSeconds : rawNewEnd;
+                const newDuration = Math.max(0.1, snappedEnd - original.start);
+                
+                const ratio = original.duration / newDuration;
+                const newSpeed = (original.speed || 1) * ratio;
+                
+                updateSnapLine(snappedEnd);
+                setProject(prev => ({
+                    ...prev,
+                    clips: prev.clips.map(c => c.id === dragState.clipId ? { ...c, duration: newDuration, speed: newSpeed } : c)
+                }));
+
             } else {
                const { original } = dragState;
                let newStart = original.start, newDuration = original.duration, newOffset = original.offset;
@@ -455,43 +443,31 @@ export const useArrangerInteraction = ({
         if (activePointers.current.size < 2) {
             initialPinchDist.current = null;
         }
-        
         clearTimeout(longPressTimer.current);
         pointerDownPos.current = null;
-        
         if (scrollInterval.current) {
             clearInterval(scrollInterval.current);
             scrollInterval.current = 0;
         }
-
-        // --- Commit History if drag happened ---
-        // Note: We actually snapshotted state on pointerDown. 
-        // If no drag occurred (just a click), we might want to prevent adding to history?
-        // But the previous implementation simply pushed on release.
-        // The refined flow is: pointerDown -> commitTransaction (saves CURRENT state to history) -> Drag (updates current state) -> Release (nothing, current state is now new)
         
         if (selectionStart.current && scrollContainerRef.current) {
+            // Marquee selection logic... (kept same)
             const rect = scrollContainerRef.current.getBoundingClientRect();
             const scrollLeft = scrollContainerRef.current.scrollLeft;
             const scrollTop = scrollContainerRef.current.scrollTop;
-
             const x1 = Math.min(selectionStart.current.x, e.clientX) - rect.left + scrollLeft;
             const x2 = Math.max(selectionStart.current.x, e.clientX) - rect.left + scrollLeft;
             const y1 = Math.min(selectionStart.current.y, e.clientY) - rect.top + scrollTop;
             const y2 = Math.max(selectionStart.current.y, e.clientY) - rect.top + scrollTop;
-
             const startTime = Math.max(0, x1 / zoom);
             const endTime = Math.max(0, x2 / zoom);
-            
             const rulerHeight = 32;
             const trackStartY = y1 - rulerHeight;
             const trackEndY = y2 - rulerHeight;
-            
             const startTrackIndex = Math.floor(trackStartY / trackHeight);
             const endTrackIndex = Math.floor(trackEndY / trackHeight);
             
             const selectedIds: string[] = [];
-            
             project.tracks.forEach((track, index) => {
                 if (index >= startTrackIndex && index <= endTrackIndex) {
                     const trackClips = project.clips.filter(c => c.trackId === track.id);
@@ -503,12 +479,9 @@ export const useArrangerInteraction = ({
                     });
                 }
             });
-            
             if (selectedIds.length > 0 || !multiSelectMode) {
                  onSelectClip(selectedIds);
-                 if (selectedIds.length > 1) {
-                     analytics.track('arranger_marquee_selection', { count: selectedIds.length });
-                 }
+                 if (selectedIds.length > 1) analytics.track('arranger_marquee_selection', { count: selectedIds.length });
             }
         }
 
@@ -518,12 +491,8 @@ export const useArrangerInteraction = ({
         setLoopDrag(null);
         setTrackDrag(null);
         selectionStart.current = null;
-        
         if (selectionBoxRef.current) selectionBoxRef.current.style.display = 'none';
-
-        if (e.target instanceof Element) {
-            (e.target as Element).releasePointerCapture(e.pointerId);
-        }
+        if (e.target instanceof Element) (e.target as Element).releasePointerCapture(e.pointerId);
     };
 
     const handleWheel = (e: React.WheelEvent) => {

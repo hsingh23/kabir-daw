@@ -1,13 +1,14 @@
 
-import React, { useRef, useMemo, memo } from 'react';
+import React, { useRef, useMemo, useState } from 'react';
 import { ProjectState, ToolMode, Track, AssetMetadata } from '../types';
 import Waveform from './Waveform';
 import Playhead from './Playhead'; 
 import Ruler from './Ruler'; 
 import TrackLane from './TrackLane'; 
-import { audio } from '../services/audio';
+import Tanpura from './Tanpura';
+import Tabla from './Tabla';
 import { useArrangerInteraction } from '../hooks/useArrangerInteraction';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, GripVertical, Split, MoreVertical, Plus, MicOff, Minimize, Edit2, Layers, AlignStartVertical } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, Minimize, Plus, MicOff, Edit2, Layers, AlignStartVertical, X } from 'lucide-react';
 import { formatBars, formatTime } from '../services/utils';
 import { analytics } from '../services/analytics';
 
@@ -43,15 +44,8 @@ interface ArrangerProps {
 
 const SNAP_OPTIONS = [
     { label: 'Off', value: 0 },
-    { label: 'Bar', value: 4 }, // Value represents multiplier of a beat? Or ratio?
-    // Let's standardize: Value is "Notes". 
-    // 1 = Quarter Note. 
-    // 4 = Bar (assuming 4/4). 
-    // This logic breaks with time sig.
-    // Let's refine snap values logic in useArrangerInteraction or here.
-    // Actually simpler: value = multiplier of secondsPerBeat.
-    // 1 Beat = 1 Quarter Note.
-    { label: '1/4', value: 1 }, 
+    { label: 'Bar', value: 4 },
+    { label: '1/4', value: 1 },
     { label: '1/8', value: 0.5 },
     { label: '1/16', value: 0.25 },
 ];
@@ -76,29 +70,21 @@ const Arranger: React.FC<ArrangerProps> = ({
   const [tool, setTool] = React.useState<ToolMode>(ToolMode.POINTER);
   const [multiSelectMode, setMultiSelectMode] = React.useState(false);
   const [snapGrid, setSnapGrid] = React.useState(1); 
-  const [showBacking, setShowBacking] = React.useState(false);
   const [trackHeight, setTrackHeight] = React.useState(100);
   const [isCompactHeader, setIsCompactHeader] = React.useState(false);
   const [headerWidth, setHeaderWidth] = React.useState(220);
   
+  // Instrument Drawer State
+  const [showInstruments, setShowInstruments] = useState(false);
+  
   const secondsPerBeat = 60 / project.bpm;
-  // Time Signature logic
   const [numerator, denominator] = project.timeSignature || [4, 4];
   const beatsPerBar = numerator;
-  
-  // A "beat" in standard DAW logic is usually a quarter note.
-  // If TimeSig is 6/8, we might want 6 beats per bar where each beat is an 8th note.
-  // Standard BPM is quarter notes.
-  // secondsPerBeat (Quarter) * (4/Denominator) = Duration of the Denominator Note.
-  // E.g. 6/8: Beat unit is 8th note. 
-  // Duration of 8th note = secondsPerQuarter * (4/8) = 0.5 * secondsPerQuarter.
-  // Total Bar Duration = 6 * (secondsPerQuarter * 0.5) = 3 * secondsPerQuarter.
-  
   const beatMultiplier = 4 / denominator;
-  const secondsPerTick = secondsPerBeat * beatMultiplier; // Duration of one 'beat' in the time signature
+  const secondsPerTick = secondsPerBeat * beatMultiplier;
   const secondsPerBar = secondsPerTick * beatsPerBar;
   
-  const pixelsPerTick = zoom * secondsPerTick; // Width of one beat/tick
+  const pixelsPerTick = zoom * secondsPerTick; 
   const pixelsPerBar = pixelsPerTick * beatsPerBar;
   
   const totalBars = Math.max(50, Math.ceil((project.loopEnd + 20) / secondsPerBar));
@@ -162,9 +148,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const handleQuantize = () => {
       if (selectedClipIds.length === 0) return;
-      
       const gridSeconds = (snapGrid > 0 ? snapGrid : 0.25) * secondsPerBeat;
-      
       commitTransaction();
       setProject(prev => ({
           ...prev,
@@ -215,27 +199,17 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const { backgroundImage, backgroundSize } = useMemo(() => {
-      // Dynamic Grid based on Time Signature
       const showTicks = pixelsPerTick > 20;
-      
       let bgImage = `linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)`;
       let bgSize = `${pixelsPerBar}px 100%`;
-
       if (showTicks) {
           bgImage += `, linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px)`;
           bgSize += `, ${pixelsPerTick}px 100%`;
       }
-      
-      // Subdivisions (16th notes usually, or based on snap)
-      // If Tick is Quarter, show 16th (divide by 4)
-      // If Tick is Eighth, show 16th (divide by 2)
-      
-      // Simplify: if zoomed in enough, show quarter divisions of the tick
       if (pixelsPerTick > 80) {
           bgImage += `, linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px)`;
           bgSize += `, ${pixelsPerTick / 4}px 100%`;
       }
-      
       return { backgroundImage: bgImage, backgroundSize: bgSize };
   }, [pixelsPerTick, pixelsPerBar]);
 
@@ -309,16 +283,11 @@ const Arranger: React.FC<ArrangerProps> = ({
                      <Minimize size={12} />
                  </button>
              </div>
-             <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800 hidden md:flex" title="Track Height">
-                 <MoreVertical size={12} className="text-zinc-500" />
-                 <input 
-                    type="range" min={60} max={200} value={trackHeight} 
-                    onChange={e => setTrackHeight(parseInt(e.target.value))}
-                    className="w-16 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                 />
-             </div>
-             <button onClick={() => setShowBacking(!showBacking)} className={`p-1.5 rounded transition-all ${showBacking ? 'text-studio-accent' : 'text-zinc-500'}`} title="Backing Track">
+             
+             {/* Instruments Toggle */}
+             <button onClick={() => setShowInstruments(!showInstruments)} className={`p-1.5 rounded transition-all flex items-center gap-1 ${showInstruments ? 'bg-studio-accent text-white' : 'bg-zinc-900 text-zinc-500 border border-zinc-800'}`} title="Backing Instruments">
                 <Music2 size={16} />
+                <span className="text-[10px] font-bold hidden sm:inline">Backing</span>
              </button>
          </div>
       </div>
@@ -328,11 +297,7 @@ const Arranger: React.FC<ArrangerProps> = ({
         <div className="flex-none bg-studio-panel border-r border-zinc-800 z-20 flex flex-col shadow-xl" style={{ width: headerWidth }}>
              <div className="h-8 border-b border-zinc-800 bg-zinc-800/50 flex items-center px-3 justify-between">
                  <span className="text-[10px] text-zinc-500 font-bold tracking-wider">TRACKS</span>
-                 <button 
-                    onClick={handleAddTrack} 
-                    className="text-zinc-500 hover:text-white"
-                    title="Add Track"
-                 >
+                 <button onClick={handleAddTrack} className="text-zinc-500 hover:text-white" title="Add Track">
                     <Plus size={12} />
                  </button>
              </div> 
@@ -377,10 +342,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                         </div>
                         <h3 className="text-lg font-bold text-zinc-300 mb-2">No Tracks Created</h3>
                         <p className="text-sm text-zinc-500 mb-6">Start by adding a track or dragging an audio file from the library.</p>
-                        <button 
-                            onClick={handleAddTrack}
-                            className="bg-studio-accent hover:bg-red-600 text-white font-bold py-2 px-6 rounded-full flex items-center gap-2 transition-transform active:scale-95"
-                        >
+                        <button onClick={handleAddTrack} className="bg-studio-accent hover:bg-red-600 text-white font-bold py-2 px-6 rounded-full flex items-center gap-2 transition-transform active:scale-95">
                             <Plus size={16} /> Add First Track
                         </button>
                     </div>
@@ -389,24 +351,12 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             <div style={{ width: totalWidth, minWidth: '100%', height: Math.max(300, project.tracks.length * trackHeight + 32) }}>
                 {/* Background Grid */}
-                <div 
-                    className="absolute inset-0 pointer-events-none" 
-                    style={{ 
-                        backgroundImage: backgroundImage,
-                        backgroundSize: backgroundSize,
-                        top: 32 
-                    }} 
-                />
+                <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: backgroundImage, backgroundSize: backgroundSize, top: 32 }} />
 
                 {/* Ruler */}
                 <Ruler 
-                    totalBars={totalBars}
-                    pixelsPerBar={pixelsPerBar}
-                    zoom={zoom}
-                    markers={project.markers}
-                    loopStart={project.loopStart}
-                    loopEnd={project.loopEnd}
-                    isLooping={project.isLooping}
+                    totalBars={totalBars} pixelsPerBar={pixelsPerBar} zoom={zoom} markers={project.markers}
+                    loopStart={project.loopStart} loopEnd={project.loopEnd} isLooping={project.isLooping}
                     onSeek={(e) => {
                         (e.target as Element).setPointerCapture(e.pointerId);
                         setIsScrubbing({ active: true, pointerId: e.pointerId });
@@ -418,9 +368,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                         setProject(p => ({...p, markers: [...p.markers, newMarker].sort((a,b) => a.time - b.time)}));
                     }}
                     onDeleteMarker={(id, text) => {
-                        if (confirm(`Delete marker "${text}"?`)) {
-                            setProject(p => ({...p, markers: p.markers.filter(m => m.id !== id)}));
-                        }
+                        if (confirm(`Delete marker "${text}"?`)) setProject(p => ({...p, markers: p.markers.filter(m => m.id !== id)}));
                     }}
                     onLoopDragStart={(e, mode) => {
                         e.stopPropagation();
@@ -430,13 +378,8 @@ const Arranger: React.FC<ArrangerProps> = ({
                 />
 
                 {/* Snap Line */}
-                <div 
-                    ref={snapLineRef}
-                    className="absolute top-0 bottom-0 w-px bg-yellow-400 z-40 pointer-events-none hidden" 
-                >
-                    <div ref={snapLabelRef} className="absolute top-8 left-1 bg-yellow-400 text-black text-[9px] font-bold px-1 rounded shadow-sm whitespace-nowrap">
-                        0:0:0
-                    </div>
+                <div ref={snapLineRef} className="absolute top-0 bottom-0 w-px bg-yellow-400 z-40 pointer-events-none hidden">
+                    <div ref={snapLabelRef} className="absolute top-8 left-1 bg-yellow-400 text-black text-[9px] font-bold px-1 rounded shadow-sm whitespace-nowrap">0:0:0</div>
                 </div>
 
                 {/* Track Lanes */}
@@ -445,32 +388,32 @@ const Arranger: React.FC<ArrangerProps> = ({
                          <div 
                             key={track.id} 
                             className={`absolute w-full border-b border-zinc-800/50 transition-all ${
-                                (track.muted || (project.tracks.some(t => t.solo) && !track.solo)) 
-                                ? 'opacity-50 grayscale' 
-                                : ''
+                                (track.muted || (project.tracks.some(t => t.solo) && !track.solo)) ? 'opacity-50 grayscale' : ''
                             }`} 
                             style={{ top: i * trackHeight, height: trackHeight }}
-                            onDragOver={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                e.dataTransfer.dropEffect = 'copy';
-                            }}
+                            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; }}
                             onDrop={(e) => handleTimelineDrop(e, track.id)}
                          >
                               {clipsByTrack.get(track.id)?.map(clip => {
                                   const isSelected = selectedClipIds.includes(clip.id);
                                   const clipGain = clip.gain ?? 1.0;
+                                  // Check if stretching (clip is active in drag state and mode is stretch)
+                                  const isStretching = dragState?.clipId === clip.id && dragState?.mode === 'STRETCH';
                                   
                                   return (
                                       <div 
                                         key={clip.id}
-                                        className={`absolute top-1 bottom-1 rounded-md overflow-hidden transition-all cursor-move group shadow-sm ${isSelected ? 'ring-2 ring-white z-10' : 'ring-1 ring-black/20 hover:ring-white/30'} ${clip.muted ? 'opacity-50 grayscale' : 'opacity-100'}`}
+                                        className={`absolute top-1 bottom-1 rounded-md overflow-hidden transition-all cursor-move group shadow-sm ${isSelected ? 'ring-2 ring-white z-10' : 'ring-1 ring-black/20 hover:ring-white/30'} ${clip.muted ? 'opacity-50 grayscale' : 'opacity-100'} ${isStretching ? 'bg-orange-600' : ''}`}
                                         style={{ 
                                             left: clip.start * zoom, 
                                             width: clip.duration * zoom,
-                                            backgroundColor: clip.color || track.color || '#555' 
+                                            backgroundColor: isStretching ? undefined : (clip.color || track.color || '#555') 
                                         }}
-                                        onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
+                                        onPointerDown={(e) => {
+                                            // Handle Alt+Click for Stretch
+                                            const mode = e.altKey ? 'STRETCH' : 'MOVE';
+                                            handleClipPointerDown(e, clip, mode);
+                                        }}
                                         onDoubleClick={(e) => {
                                             e.stopPropagation();
                                             if (onOpenClipInspector) onOpenClipInspector(clip.id);
@@ -488,41 +431,32 @@ const Arranger: React.FC<ArrangerProps> = ({
                                                />
                                           </div>
                                           
-                                          {/* Header Info */}
                                           <div className="absolute top-0 left-0 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-br-md pointer-events-none flex items-center gap-1">
                                               {clip.muted && <MicOff size={8} className="text-red-400" />}
                                               <span className="text-[9px] font-bold text-white shadow-black drop-shadow-md truncate max-w-[100px] block">{clip.name}</span>
                                           </div>
 
-                                          {/* Gain Handle Visualization */}
                                           {isSelected && (
                                               <>
-                                                {/* Gain Line overlay */}
-                                                <div 
-                                                    className="absolute left-0 right-0 h-px bg-white/50 pointer-events-none" 
-                                                    style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%` }} 
-                                                />
-                                                {/* Gain Handle Knob */}
-                                                <div 
-                                                    className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white/80 rounded-full shadow-md cursor-ns-resize z-30 hover:scale-125 transition-transform flex items-center justify-center group/gain"
+                                                {/* Gain Overlay & Knob */}
+                                                <div className="absolute left-0 right-0 h-px bg-white/50 pointer-events-none" style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%` }} />
+                                                <div className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white/80 rounded-full shadow-md cursor-ns-resize z-30 hover:scale-125 transition-transform flex items-center justify-center group/gain"
                                                     style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%`, marginTop: '-8px' }}
                                                     onPointerDown={(e) => handleClipPointerDown(e, clip, 'GAIN')}
                                                 >
                                                     <div className="w-1.5 h-1.5 bg-black/50 rounded-full" />
-                                                    {/* Tooltip during drag (or hover) */}
-                                                    <div className="absolute -top-6 bg-black/80 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover/gain:opacity-100 whitespace-nowrap pointer-events-none">
-                                                        {clipGain.toFixed(2)}x
-                                                    </div>
+                                                    <div className="absolute -top-6 bg-black/80 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover/gain:opacity-100 whitespace-nowrap pointer-events-none">{clipGain.toFixed(2)}x</div>
                                                 </div>
-                                              </>
-                                          )}
 
-                                          {isSelected && (
-                                              <>
+                                                {/* Resize Handles */}
                                                 <div className="absolute left-0 top-0 bottom-0 w-3 bg-white/10 hover:bg-white/30 cursor-ew-resize z-20 flex items-center justify-center" onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')}>
                                                     <div className="w-0.5 h-4 bg-white/50 rounded-full" />
                                                 </div>
-                                                <div className="absolute right-0 top-0 bottom-0 w-3 bg-white/10 hover:bg-white/30 cursor-ew-resize z-20 flex items-center justify-center" onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_END')}>
+                                                {/* Right Edge: Normal=Trim/Loop, Alt=Stretch */}
+                                                <div className={`absolute right-0 top-0 bottom-0 w-3 ${dragState?.mode === 'STRETCH' ? 'bg-orange-500/50' : 'bg-white/10 hover:bg-white/30'} cursor-ew-resize z-20 flex items-center justify-center`} 
+                                                     onPointerDown={(e) => handleClipPointerDown(e, clip, e.altKey ? 'STRETCH' : 'TRIM_END')}
+                                                     title="Drag to Loop / Alt+Drag to Stretch"
+                                                >
                                                     <div className="w-0.5 h-4 bg-white/50 rounded-full" />
                                                 </div>
                                                 <div className="absolute top-0 left-0 w-4 h-4 bg-white/20 hover:bg-white/40 rounded-br cursor-ne-resize z-20" style={{ transform: `translateX(${clip.fadeIn * zoom}px)` }} onPointerDown={(e) => handleClipPointerDown(e, clip, 'FADE_IN')} />
@@ -535,19 +469,27 @@ const Arranger: React.FC<ArrangerProps> = ({
                          </div>
                     ))}
                     
-                    <Playhead 
-                        zoom={zoom} 
-                        isPlaying={isPlaying} 
-                        scrollContainerRef={scrollContainerRef}
-                        staticTime={currentTime}
-                        autoScroll={autoScroll}
-                    />
+                    <Playhead zoom={zoom} isPlaying={isPlaying} scrollContainerRef={scrollContainerRef} staticTime={currentTime} autoScroll={autoScroll} />
                 </div>
             </div>
         </div>
 
         {/* Selection Box */}
         <div ref={selectionBoxRef} className="absolute bg-blue-500/10 border border-blue-400 z-50 pointer-events-none hidden" />
+
+        {/* Instruments Overlay */}
+        {showInstruments && (
+            <div className="absolute inset-x-0 bottom-0 bg-zinc-900 border-t border-zinc-700 shadow-2xl z-50 p-4 animate-in slide-in-from-bottom duration-200">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-zinc-400 font-bold uppercase text-xs tracking-wider">Backing Instruments</h3>
+                    <button onClick={() => setShowInstruments(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
+                    <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />
+                    <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />
+                </div>
+            </div>
+        )}
 
         {/* Context Menu */}
         {contextMenu && (
@@ -558,27 +500,10 @@ const Arranger: React.FC<ArrangerProps> = ({
                     style={{ top: Math.min(window.innerHeight - 200, contextMenu.y), left: Math.min(window.innerWidth - 160, contextMenu.x) }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <button 
-                        className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2"
-                        onClick={() => {
-                            const newName = prompt("Rename Clip");
-                            if(newName && onRenameClip) onRenameClip(contextMenu.clipId, newName);
-                            setContextMenu(null);
-                        }}
-                    >
+                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2" onClick={() => { const newName = prompt("Rename Clip"); if(newName && onRenameClip) onRenameClip(contextMenu.clipId, newName); setContextMenu(null); }}>
                         <Edit2 size={12} /> Rename
                     </button>
-                    <button 
-                        className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2"
-                        onClick={() => {
-                            const clip = project.clips.find(c => c.id === contextMenu.clipId);
-                            if (clip) {
-                                onSplit(clip.id, calculateSeekTime(contextMenu.x, false));
-                                analytics.track('clip_action', { action: 'split', source: 'context_menu' });
-                            }
-                            setContextMenu(null);
-                        }}
-                    >
+                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2" onClick={() => { const clip = project.clips.find(c => c.id === contextMenu.clipId); if (clip) { onSplit(clip.id, calculateSeekTime(contextMenu.x, false)); analytics.track('clip_action', { action: 'split', source: 'context_menu' }); } setContextMenu(null); }}>
                         <Split size={12} /> Split at Cursor
                     </button>
                     <div className="h-px bg-zinc-700 my-1" />
@@ -586,27 +511,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                         <p className="text-[9px] text-zinc-500 uppercase font-bold mb-1 ml-1">Color</p>
                         <div className="flex flex-wrap gap-1">
                             {CLIP_COLORS.map(c => (
-                                <button 
-                                    key={c} 
-                                    className="w-4 h-4 rounded-full border border-transparent hover:border-white" 
-                                    style={{ backgroundColor: c }}
-                                    onClick={() => {
-                                        if(onColorClip) onColorClip(contextMenu.clipId, c);
-                                        setContextMenu(null);
-                                    }}
-                                />
+                                <button key={c} className="w-4 h-4 rounded-full border border-transparent hover:border-white" style={{ backgroundColor: c }} onClick={() => { if(onColorClip) onColorClip(contextMenu.clipId, c); setContextMenu(null); }} />
                             ))}
                         </div>
                     </div>
                     <div className="h-px bg-zinc-700 my-1" />
-                    <button 
-                        className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-900/30 rounded flex items-center gap-2"
-                        onClick={() => {
-                            setProject(p => ({...p, clips: p.clips.filter(c => c.id !== contextMenu.clipId)}));
-                            analytics.track('clip_action', { action: 'delete', source: 'context_menu' });
-                            setContextMenu(null);
-                        }}
-                    >
+                    <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-900/30 rounded flex items-center gap-2" onClick={() => { setProject(p => ({...p, clips: p.clips.filter(c => c.id !== contextMenu.clipId)})); analytics.track('clip_action', { action: 'delete', source: 'context_menu' }); setContextMenu(null); }}>
                         <Trash2 size={12} /> Delete
                     </button>
                 </div>
