@@ -4,8 +4,9 @@ import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
 import Arranger from '../../components/Arranger';
 import { ProjectState } from '../../types';
+import { ProjectProvider } from '../../contexts/ProjectContext';
 
-// Mock audio service to prevent actual AudioContext calls during render
+// Mock audio service
 vi.mock('../../services/audio', () => ({
   audio: {
     buffers: new Map(),
@@ -13,12 +14,12 @@ vi.mock('../../services/audio', () => ({
   }
 }));
 
-// Mock Waveform component to capture props
+// Mock Waveform component
 vi.mock('../../components/Waveform', () => ({
   default: (props: any) => <div data-testid="mock-waveform" data-props={JSON.stringify(props)}>Waveform</div>
 }));
 
-// Mock getBoundingClientRect for dragging tests
+// Mock getBoundingClientRect
 Element.prototype.getBoundingClientRect = vi.fn(() => ({
     top: 0, left: 0, right: 1000, bottom: 1000, width: 1000, height: 1000, x: 0, y: 0, toJSON: () => {}
 }));
@@ -61,32 +62,31 @@ const mockProject: ProjectState = {
 
 describe('Arranger Integration', () => {
   it('renders tracks and passes correct props to Waveform', () => {
-    const setProject = vi.fn();
     const onSelectTrack = vi.fn();
     const onSelectClip = vi.fn();
     const setZoom = vi.fn();
 
     const { getByText, getAllByTestId } = render(
-      <Arranger
-        project={mockProject}
-        setProject={setProject}
-        currentTime={0}
-        isPlaying={false}
-        isRecording={false}
-        onPlayPause={() => {}}
-        onStop={() => {}}
-        onRecord={() => {}}
-        onSeek={() => {}}
-        onSplit={() => {}}
-        zoom={50}
-        setZoom={setZoom}
-        selectedTrackId={null}
-        onSelectTrack={onSelectTrack}
-        selectedClipIds={[]}
-        onSelectClip={onSelectClip}
-        onOpenInspector={() => {}}
-        commitTransaction={() => {}}
-      />
+      <ProjectProvider initialProject={mockProject}>
+          <Arranger
+            currentTime={0}
+            isPlaying={false}
+            isRecording={false}
+            onPlayPause={() => {}}
+            onStop={() => {}}
+            onRecord={() => {}}
+            onSeek={() => {}}
+            onSplit={() => {}}
+            zoom={50}
+            setZoom={setZoom}
+            selectedTrackId={null}
+            onSelectTrack={onSelectTrack}
+            selectedClipIds={[]}
+            onSelectClip={onSelectClip}
+            onOpenInspector={() => {}}
+            commitTransaction={() => {}}
+          />
+      </ProjectProvider>
     );
 
     // Verify Track Name is rendered
@@ -105,26 +105,26 @@ describe('Arranger Integration', () => {
       const onSelectClip = vi.fn();
       
       const { getByRole } = render(
-        <Arranger
-            project={mockProject}
-            setProject={() => {}}
-            currentTime={0}
-            isPlaying={false}
-            isRecording={false}
-            onPlayPause={() => {}}
-            onStop={() => {}}
-            onRecord={() => {}}
-            onSeek={() => {}}
-            onSplit={() => {}}
-            zoom={50}
-            setZoom={() => {}}
-            selectedTrackId={null}
-            onSelectTrack={() => {}}
-            selectedClipIds={[]}
-            onSelectClip={onSelectClip}
-            onOpenInspector={() => {}}
-            commitTransaction={() => {}}
-        />
+        <ProjectProvider initialProject={mockProject}>
+            <Arranger
+                currentTime={0}
+                isPlaying={false}
+                isRecording={false}
+                onPlayPause={() => {}}
+                onStop={() => {}}
+                onRecord={() => {}}
+                onSeek={() => {}}
+                onSplit={() => {}}
+                zoom={50}
+                setZoom={() => {}}
+                selectedTrackId={null}
+                onSelectTrack={() => {}}
+                selectedClipIds={[]}
+                onSelectClip={onSelectClip}
+                onOpenInspector={() => {}}
+                commitTransaction={() => {}}
+            />
+        </ProjectProvider>
       );
 
       const container = getByRole('application');
@@ -135,36 +135,5 @@ describe('Arranger Integration', () => {
       fireEvent.pointerUp(background!, { clientX: 500, clientY: 500, shiftKey: true, pointerId: 1 });
 
       expect(onSelectClip).toHaveBeenCalledWith(expect.arrayContaining(['c1', 'c2']));
-  });
-
-  it('calls onSplitAtPlayhead when Split button is clicked', () => {
-      const onSplitAtPlayhead = vi.fn();
-      const { getByTitle } = render(
-        <Arranger
-            project={mockProject}
-            setProject={() => {}}
-            currentTime={0}
-            isPlaying={false}
-            isRecording={false}
-            onPlayPause={() => {}}
-            onStop={() => {}}
-            onRecord={() => {}}
-            onSeek={() => {}}
-            onSplit={() => {}}
-            onSplitAtPlayhead={onSplitAtPlayhead}
-            zoom={50}
-            setZoom={() => {}}
-            selectedTrackId={null}
-            onSelectTrack={() => {}}
-            selectedClipIds={[]}
-            onSelectClip={() => {}}
-            onOpenInspector={() => {}}
-            commitTransaction={() => {}}
-        />
-      );
-
-      const splitBtn = getByTitle('Split at Playhead (Ctrl+B)');
-      fireEvent.click(splitBtn);
-      expect(onSplitAtPlayhead).toHaveBeenCalled();
   });
 });

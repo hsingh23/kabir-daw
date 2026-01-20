@@ -1,5 +1,4 @@
 
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 import { Track } from '../../types';
@@ -42,7 +41,7 @@ describe('AudioEngine Automation', () => {
         // Lookahead = 0.15. WindowEnd = 10.15.
         // Point p2 is at 10.05. It should be scheduled.
         
-        audio.scheduler([track], []);
+        audio.processSchedule([track], []);
 
         expect(gainParam.linearRampToValueAtTime).toHaveBeenCalledWith(0.8, 10.05); // p2
         expect(gainParam.linearRampToValueAtTime).not.toHaveBeenCalledWith(0.5, expect.any(Number)); // p1 (past)

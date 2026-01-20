@@ -4,10 +4,11 @@ import { ProjectState, Clip, ToolMode } from '../types';
 import { analytics } from '../services/analytics';
 import { formatBars, formatTime } from '../services/utils';
 import { audio } from '../services/audio';
+import { useTimelineNavigation } from './useTimelineNavigation';
 
 interface InteractionProps {
     project: ProjectState;
-    setProject: React.Dispatch<React.SetStateAction<ProjectState>>;
+    updateProject: (recipe: any) => void; // Renamed from setProject for consistency
     zoom: number;
     setZoom: (z: number) => void;
     tool: ToolMode;
@@ -30,7 +31,7 @@ interface InteractionProps {
 }
 
 export const useArrangerInteraction = ({
-    project, setProject, zoom, setZoom, tool, snapGrid, scrollContainerRef,
+    project, updateProject, zoom, setZoom, tool, snapGrid, scrollContainerRef,
     headerWidth, trackHeight, onSelectTrack, onSelectClip, selectedClipIds,
     onSplit, onSeek, onMoveTrack, multiSelectMode, secondsPerBeat,
     snapLineRef, selectionBoxRef, snapLabelRef, commitTransaction
@@ -38,6 +39,9 @@ export const useArrangerInteraction = ({
     
     const isDraggingRef = useRef<boolean>(false);
     const cachedContainerRect = useRef<DOMRect | null>(null);
+
+    const { handleWheel, handleTouchZoomStart, handleTouchZoomMove, handleTouchZoomEnd, activePointers } = 
+        useTimelineNavigation(zoom, setZoom, scrollContainerRef);
 
     const [dragState, setDragState] = useState<{
         initialClips: { id: string, start: number }[]; 
@@ -55,9 +59,6 @@ export const useArrangerInteraction = ({
     const [isScrubbing, setIsScrubbing] = useState<{ active: boolean, pointerId: number | null }>({ active: false, pointerId: null });
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, clipId: string } | null>(null);
 
-    const activePointers = useRef<Map<number, {x: number, y: number}>>(new Map());
-    const initialPinchDist = useRef<number | null>(null);
-    const initialZoom = useRef<number>(50);
     const scrollInterval = useRef<number>(0);
     
     const longPressTimer = useRef<number>(0);
@@ -80,7 +81,6 @@ export const useArrangerInteraction = ({
     const updateSelectionBox = (currentX: number, currentY: number) => {
         if (!selectionBoxRef.current || !selectionStart.current || !scrollContainerRef.current) return;
         
-        // Use cached rect if available, fallback to getBoundingClientRect (only once per drag start ideally)
         const rect = cachedContainerRect.current || scrollContainerRef.current.getBoundingClientRect();
         const scrollLeft = scrollContainerRef.current.scrollLeft;
         const scrollTop = scrollContainerRef.current.scrollTop;
@@ -115,10 +115,11 @@ export const useArrangerInteraction = ({
     };
 
     const handleClipPointerDown = (e: React.PointerEvent, clip: Clip, mode: 'MOVE' | 'TRIM_START' | 'TRIM_END' | 'FADE_IN' | 'FADE_OUT' | 'GAIN' | 'STRETCH') => {
+        if (tool === ToolMode.HAND) return;
+
         e.stopPropagation();
         commitTransaction(); 
         
-        // Cache rect on start
         if (scrollContainerRef.current) {
             cachedContainerRect.current = scrollContainerRef.current.getBoundingClientRect();
         }
@@ -169,7 +170,7 @@ export const useArrangerInteraction = ({
             return;
         }
         if (tool === ToolMode.ERASER) {
-            setProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== clip.id) }));
+            updateProject(prev => ({ ...prev, clips: prev.clips.filter(c => c.id !== clip.id) }));
             analytics.track('clip_action', { action: 'delete', source: 'eraser_tool' });
             return;
         }
@@ -177,7 +178,6 @@ export const useArrangerInteraction = ({
         (e.target as Element).setPointerCapture(e.pointerId);
         
         if (e.altKey && mode === 'MOVE') {
-            // Duplicate Logic
             const clipsToCloneIds = isSelected ? newSelectedIds : [clip.id];
             const newClips: Clip[] = [];
             const clipsToClone = project.clips.filter(c => clipsToCloneIds.includes(c.id));
@@ -185,7 +185,7 @@ export const useArrangerInteraction = ({
                 newClips.push({ ...c, id: crypto.randomUUID(), name: `${c.name} (Copy)` });
             });
             const updatedProject = { ...project, clips: [...project.clips, ...newClips] };
-            setProject(updatedProject);
+            updateProject(updatedProject);
             analytics.track('clip_action', { action: 'duplicate', count: newClips.length });
             const newIds = newClips.map(c => c.id);
             onSelectClip(newIds);
@@ -222,6 +222,7 @@ export const useArrangerInteraction = ({
     };
 
     const handleTrackDragStart = (e: React.PointerEvent, trackId: string, index: number) => {
+        if (tool === ToolMode.HAND) return;
         e.stopPropagation();
         e.preventDefault();
         commitTransaction();
@@ -236,30 +237,25 @@ export const useArrangerInteraction = ({
     };
 
     const handleGlobalPointerDown = (e: React.PointerEvent) => {
-        // Cache rect on start
         if (scrollContainerRef.current) {
             cachedContainerRect.current = scrollContainerRef.current.getBoundingClientRect();
         }
 
-        activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        
-        if (activePointers.current.size === 2) {
-            const points = Array.from(activePointers.current.values());
-            const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-            initialPinchDist.current = dist;
-            initialZoom.current = zoom;
-        } else {
-            if (!dragState && !loopDrag && !trackDrag && !isScrubbing.active && activePointers.current.size === 1) {
-                 if (e.shiftKey || multiSelectMode) {
-                     selectionStart.current = { x: e.clientX, y: e.clientY };
-                     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-                 }
-            }
+        const isZooming = handleTouchZoomStart(e);
+        if (isZooming) return;
+
+        if (!dragState && !loopDrag && !trackDrag && !isScrubbing.active && activePointers.current.size === 1) {
+             if (tool === ToolMode.HAND) return;
+             if (e.shiftKey || multiSelectMode || tool === ToolMode.POINTER) {
+                 selectionStart.current = { x: e.clientX, y: e.clientY };
+                 (e.currentTarget as Element).setPointerCapture(e.pointerId);
+             }
         }
     };
 
     const handleGlobalPointerMove = (e: React.PointerEvent) => {
-        activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const isZooming = handleTouchZoomMove(e);
+        if (isZooming) return;
 
         if (pointerDownPos.current) {
             const dist = Math.hypot(e.clientX - pointerDownPos.current.x, e.clientY - pointerDownPos.current.y);
@@ -269,21 +265,9 @@ export const useArrangerInteraction = ({
             }
         }
 
-        if (activePointers.current.size === 2 && initialPinchDist.current) {
-            const points = Array.from(activePointers.current.values());
-            const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-            if (dist > 0 && initialPinchDist.current > 0) {
-                const scale = dist / initialPinchDist.current;
-                const newZoom = Math.max(10, Math.min(400, initialZoom.current * scale));
-                setZoom(newZoom);
-            }
-            return;
-        }
-
         if (dragState || loopDrag || selectionStart.current || trackDrag) {
             isDraggingRef.current = true;
             const scrollContainer = scrollContainerRef.current;
-            // Use cached rect for layout calculation optimization
             const rect = cachedContainerRect.current;
             
             if (scrollContainer && rect) {
@@ -325,15 +309,15 @@ export const useArrangerInteraction = ({
                     start = Math.round(start / snapSeconds) * snapSeconds;
                     end = start + (loopDrag.initialEnd - loopDrag.initialStart);
                 }
-                setProject(p => ({...p, loopStart: Math.max(0, start), loopEnd: Math.max(0.1, end)}));
+                updateProject(p => ({...p, loopStart: Math.max(0, start), loopEnd: Math.max(0.1, end)}));
             } else if (loopDrag.mode === 'START') {
                  let start = loopDrag.initialStart + deltaSeconds;
                  if (snapSeconds > 0) start = Math.round(start / snapSeconds) * snapSeconds;
-                 setProject(p => ({...p, loopStart: Math.min(Math.max(0, start), p.loopEnd - 0.1) }));
+                 updateProject(p => ({...p, loopStart: Math.min(Math.max(0, start), p.loopEnd - 0.1) }));
             } else if (loopDrag.mode === 'END') {
                  let end = loopDrag.initialEnd + deltaSeconds;
                  if (snapSeconds > 0) end = Math.round(end / snapSeconds) * snapSeconds;
-                 setProject(p => ({...p, loopEnd: Math.max(p.loopStart + 0.1, end) }));
+                 updateProject(p => ({...p, loopEnd: Math.max(p.loopStart + 0.1, end) }));
             }
         }
 
@@ -369,7 +353,7 @@ export const useArrangerInteraction = ({
                     snapTrackedRef.current = true;
                 }
 
-                setProject(prev => ({
+                updateProject(prev => ({
                     ...prev,
                     clips: prev.clips.map(c => {
                         const init = dragState.initialClips.find(i => i.id === c.id);
@@ -393,30 +377,23 @@ export const useArrangerInteraction = ({
                 const deltaY = dragState.startY - e.clientY; 
                 const sensitivity = 0.01;
                 const newGain = Math.max(0, Math.min(2.0, (dragState.original.gain || 1.0) + deltaY * sensitivity));
-                
-                // Real-time gain update
                 audio.setClipGain(dragState.clipId, newGain);
-
-                setProject(prev => ({
+                updateProject(prev => ({
                     ...prev,
                     clips: prev.clips.map(c => c.id === dragState.clipId ? { ...c, gain: newGain } : c)
                 }));
             } else if (dragState.mode === 'STRETCH') {
-                // Time Stretching Logic
                 const { original } = dragState;
                 const rawNewEnd = original.start + original.duration + deltaSeconds;
                 const snappedEnd = snapSeconds > 0 ? Math.round(rawNewEnd/snapSeconds)*snapSeconds : rawNewEnd;
                 const newDuration = Math.max(0.1, snappedEnd - original.start);
-                
                 const ratio = original.duration / newDuration;
                 const newSpeed = (original.speed || 1) * ratio;
-                
                 updateSnapLine(snappedEnd);
-                setProject(prev => ({
+                updateProject(prev => ({
                     ...prev,
                     clips: prev.clips.map(c => c.id === dragState.clipId ? { ...c, duration: newDuration, speed: newSpeed } : c)
                 }));
-
             } else {
                const { original } = dragState;
                let newStart = original.start, newDuration = original.duration, newOffset = original.offset;
@@ -424,14 +401,10 @@ export const useArrangerInteraction = ({
                if (dragState.mode === 'TRIM_START') {
                    const rawNewStart = original.start + deltaSeconds;
                    let snappedStart = snapSeconds > 0 ? Math.round(rawNewStart/snapSeconds)*snapSeconds : rawNewStart;
-                   
-                   // Ensure we don't trim past the beginning of the audio source
                    const shift = snappedStart - original.start;
                    const potentialOffset = original.offset + (shift * (original.speed||1));
                    
                    if (potentialOffset < 0) {
-                       // Clamp start time so offset is exactly 0
-                       // 0 = original.offset + (shift * speed) => shift = -original.offset / speed
                        const maxReverseShift = -(original.offset / (original.speed||1));
                        snappedStart = original.start + maxReverseShift;
                    }
@@ -449,15 +422,14 @@ export const useArrangerInteraction = ({
                    updateSnapLine(snappedEnd);
                } else if (dragState.mode === 'FADE_IN') {
                    const rawVal = Math.max(0, deltaSeconds);
-                   setProject(prev => ({...prev, clips: prev.clips.map(c => c.id === dragState.clipId ? {...c, fadeIn: Math.min(c.duration, rawVal)} : c)}));
+                   updateProject(prev => ({...prev, clips: prev.clips.map(c => c.id === dragState.clipId ? {...c, fadeIn: Math.min(c.duration, rawVal)} : c)}));
                    return;
                } else if (dragState.mode === 'FADE_OUT') {
                    const rawVal = Math.max(0, -deltaSeconds);
-                   setProject(prev => ({...prev, clips: prev.clips.map(c => c.id === dragState.clipId ? {...c, fadeOut: Math.min(c.duration, rawVal)} : c)}));
+                   updateProject(prev => ({...prev, clips: prev.clips.map(c => c.id === dragState.clipId ? {...c, fadeOut: Math.min(c.duration, rawVal)} : c)}));
                    return;
                }
-               
-               setProject(prev => ({
+               updateProject(prev => ({
                    ...prev,
                    clips: prev.clips.map(c => c.id === dragState.clipId ? { ...c, start: newStart, duration: newDuration, offset: newOffset } : c)
                }));
@@ -470,12 +442,9 @@ export const useArrangerInteraction = ({
     };
 
     const handleGlobalPointerUp = (e: React.PointerEvent) => {
-        activePointers.current.delete(e.pointerId);
-        cachedContainerRect.current = null; // Clear cache on release
+        handleTouchZoomEnd(e);
+        cachedContainerRect.current = null; 
 
-        if (activePointers.current.size < 2) {
-            initialPinchDist.current = null;
-        }
         clearTimeout(longPressTimer.current);
         pointerDownPos.current = null;
         if (scrollInterval.current) {
@@ -484,7 +453,6 @@ export const useArrangerInteraction = ({
         }
         
         if (selectionStart.current && scrollContainerRef.current) {
-            // Marquee selection logic... (kept same)
             const rect = scrollContainerRef.current.getBoundingClientRect();
             const scrollLeft = scrollContainerRef.current.scrollLeft;
             const scrollTop = scrollContainerRef.current.scrollTop;
@@ -526,17 +494,6 @@ export const useArrangerInteraction = ({
         selectionStart.current = null;
         if (selectionBoxRef.current) selectionBoxRef.current.style.display = 'none';
         if (e.target instanceof Element) (e.target as Element).releasePointerCapture(e.pointerId);
-    };
-
-    const handleWheel = (e: React.WheelEvent) => {
-        if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? 0.9 : 1.1;
-            setZoom(Math.max(10, Math.min(400, zoom * delta)));
-        } else if (e.shiftKey && scrollContainerRef.current) {
-            e.preventDefault();
-            scrollContainerRef.current.scrollLeft += e.deltaY;
-        }
     };
 
     return {

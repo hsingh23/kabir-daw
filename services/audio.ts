@@ -28,22 +28,22 @@ export class TrackChannel {
     public chorusSendPre: GainNode;
     public chorusSendPost: GainNode;
 
-    // State State for Dirty Checking
-    private lastState: {
-        volume: number;
-        pan: number;
-        muted: boolean;
-        solo: boolean;
-        effectiveMute: boolean;
-        distortion: number;
-        eq: { low: number; mid: number; high: number };
-        compressor: Track['compressor'];
-        sends: Track['sends'];
-        sendConfig: Track['sendConfig'];
-    } = {
-        volume: -1, pan: -100, muted: false, solo: false, effectiveMute: false, distortion: -1,
-        eq: { low: -100, mid: -100, high: -100 },
-        compressor: undefined, sends: { reverb: -1, delay: -1, chorus: -1 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
+    // Cognitive Chunking: Grouping state to reduce working memory load during updates
+    private cache = {
+        mix: { 
+            volume: -1, 
+            pan: -100, 
+            effectiveMute: false 
+        },
+        processing: {
+            distortion: -1,
+            eq: { low: -100, mid: -100, high: -100 },
+            compressor: undefined as Track['compressor']
+        },
+        routing: {
+            sends: { reverb: -1, delay: -1, chorus: -1 },
+            sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
+        }
     };
 
     public activeVoices: Map<number, SynthVoice> = new Map();
@@ -110,30 +110,28 @@ export class TrackChannel {
         const now = time;
         const rampTime = 0.02; // 20ms smoothing
 
-        // Volume & Mute
-        if (this.lastState.volume !== track.volume || this.lastState.effectiveMute !== effectiveMute) {
+        // --- Mix Chunk ---
+        if (this.cache.mix.volume !== track.volume || this.cache.mix.effectiveMute !== effectiveMute) {
             const targetVol = effectiveMute ? 0 : track.volume;
             this.gain.gain.setTargetAtTime(targetVol, now, rampTime);
-            this.lastState.volume = track.volume;
-            this.lastState.effectiveMute = effectiveMute;
+            this.cache.mix.volume = track.volume;
+            this.cache.mix.effectiveMute = effectiveMute;
         }
 
-        // Pan
-        if (this.lastState.pan !== track.pan) {
+        if (this.cache.mix.pan !== track.pan) {
             this.panner.pan.setTargetAtTime(track.pan, now, rampTime);
-            this.lastState.pan = track.pan;
+            this.cache.mix.pan = track.pan;
         }
 
-        // EQ
-        if (!shallowEqual(this.lastState.eq, track.eq)) {
+        // --- Processing Chunk ---
+        if (!shallowEqual(this.cache.processing.eq, track.eq)) {
             this.eqLow.gain.setTargetAtTime(track.eq.low, now, 0.1);
             this.eqMid.gain.setTargetAtTime(track.eq.mid, now, 0.1);
             this.eqHigh.gain.setTargetAtTime(track.eq.high, now, 0.1);
-            this.lastState.eq = { ...track.eq };
+            this.cache.processing.eq = { ...track.eq };
         }
 
-        // Compressor
-        if (!shallowEqual(this.lastState.compressor, track.compressor)) {
+        if (!shallowEqual(this.cache.processing.compressor, track.compressor)) {
             if (track.compressor?.enabled) {
                 this.compressor.threshold.value = track.compressor.threshold;
                 this.compressor.ratio.value = track.compressor.ratio;
@@ -143,17 +141,16 @@ export class TrackChannel {
                 this.compressor.threshold.value = 0;
                 this.compressor.ratio.value = 1;
             }
-            this.lastState.compressor = track.compressor ? { ...track.compressor } : undefined;
+            this.cache.processing.compressor = track.compressor ? { ...track.compressor } : undefined;
         }
 
-        // Distortion
-        if (this.lastState.distortion !== track.distortion) {
+        if (this.cache.processing.distortion !== track.distortion) {
             this.distortion.curve = makeDistortionCurve(track.distortion || 0);
-            this.lastState.distortion = track.distortion || 0;
+            this.cache.processing.distortion = track.distortion || 0;
         }
 
-        // Sends
-        if (!shallowEqual(this.lastState.sends, track.sends) || !shallowEqual(this.lastState.sendConfig, track.sendConfig)) {
+        // --- Routing Chunk ---
+        if (!shallowEqual(this.cache.routing.sends, track.sends) || !shallowEqual(this.cache.routing.sendConfig, track.sendConfig)) {
             const updateSendNode = (preNode: GainNode, postNode: GainNode, val: number, isPre: boolean) => {
                 const targetPre = isPre ? val : 0;
                 const targetPost = isPre ? 0 : val;
@@ -165,8 +162,8 @@ export class TrackChannel {
             updateSendNode(this.delaySendPre, this.delaySendPost, track.sends.delay, track.sendConfig.delayPre);
             updateSendNode(this.chorusSendPre, this.chorusSendPost, track.sends.chorus, track.sendConfig.chorusPre);
 
-            this.lastState.sends = { ...track.sends };
-            this.lastState.sendConfig = { ...track.sendConfig };
+            this.cache.routing.sends = { ...track.sends };
+            this.cache.routing.sendConfig = { ...track.sendConfig };
         }
     }
 
@@ -179,6 +176,10 @@ export class TrackChannel {
         this.delaySendPost.disconnect();
         this.chorusSendPre.disconnect();
         this.chorusSendPost.disconnect();
+        
+        // Cleanup active voices
+        this.activeVoices.forEach(v => v.disconnect());
+        this.activeVoices.clear();
     }
 }
 
@@ -345,6 +346,8 @@ export class AudioEngine {
     this.isInitialized = true;
   }
 
+  // --- Lifecycle Methods ---
+
   init() {
       if (this.ctx.state === 'suspended') {
           this.ctx.resume();
@@ -355,6 +358,36 @@ export class AudioEngine {
       if (this.ctx.state === 'suspended') {
           await this.ctx.resume();
       }
+  }
+
+  dispose() {
+      this.stop();
+      this.trackChannels.forEach(c => c.disconnect());
+      this.trackChannels.clear();
+      this.buffers.clear();
+      
+      // Stop LFOs
+      try { this.chorusOsc.stop(); } catch(e) {}
+      
+      // Close Context
+      if (this.ctx.state !== 'closed') {
+          this.ctx.close();
+      }
+      this.isInitialized = false;
+  }
+
+  // Test helper
+  reset() {
+      this.stop();
+      this.trackChannels.forEach(c => c.disconnect());
+      this.trackChannels.clear();
+      this.buffers.clear();
+      this.scheduledSynthVoices.clear();
+      this.activeSources.clear();
+      this.loadPromises.clear();
+      this.isPlaying = false;
+      this._pauseTime = 0;
+      this._startTime = 0;
   }
 
   // --- Audio Loading ---
@@ -504,7 +537,7 @@ export class AudioEngine {
       return contextTime - this._startTime;
   }
 
-  scheduler(tracks: Track[], clips: Clip[]) {
+  processSchedule(tracks: Track[], clips: Clip[]) {
       if (!this.isPlaying) return;
 
       const currentTime = this.ctx.currentTime;
@@ -616,9 +649,7 @@ export class AudioEngine {
       const buffer = this.metronomeBuffers.get(soundKey) || this.metronomeBuffers.get('beep');
       
       if (!buffer) return;
-      if (!isBeat && soundKey !== 'hihat' && soundKey !== 'click') return; // Default behavior: only beats for beep? Or emphasize beats?
-      // Let's make it standard: Beat = High, Offbeat = Low/Normal. 
-      // If sound has pitch (beep), we change pitch. If sample (click/hat), we change gain.
+      if (!isBeat && soundKey !== 'hihat' && soundKey !== 'click') return; 
 
       const source = this.ctx.createBufferSource();
       source.buffer = buffer;

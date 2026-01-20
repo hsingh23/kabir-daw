@@ -3,6 +3,7 @@ import { render } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import Mixer from '../../components/Mixer';
 import { ProjectState, Track } from '../../types';
+import { ProjectProvider } from '../../contexts/ProjectContext';
 
 // Mock dependencies
 vi.mock('../../services/audio', () => ({
@@ -31,15 +32,15 @@ const mockProject: ProjectState = {
 describe('Mixer Logic Integration', () => {
     it('applies implicit mute visual when another track is soloed', () => {
         const { getByText } = render(
-            <Mixer 
-                project={mockProject} 
-                setProject={() => {}} 
-                isPlaying={false} 
-                onPlayPause={() => {}} 
-                onStop={() => {}} 
-                onRecord={() => {}} 
-                onOpenMaster={() => {}} 
-            />
+            <ProjectProvider initialProject={mockProject}>
+                <Mixer 
+                    isPlaying={false} 
+                    onPlayPause={() => {}} 
+                    onStop={() => {}} 
+                    onRecord={() => {}} 
+                    onOpenMaster={() => {}} 
+                />
+            </ProjectProvider>
         );
 
         // Track 1 is Soloed.
@@ -56,15 +57,15 @@ describe('Mixer Logic Integration', () => {
 
     it('does not mute soloed track', () => {
         const { getByText } = render(
-            <Mixer 
-                project={mockProject} 
-                setProject={() => {}} 
-                isPlaying={false} 
-                onPlayPause={() => {}} 
-                onStop={() => {}} 
-                onRecord={() => {}} 
-                onOpenMaster={() => {}} 
-            />
+            <ProjectProvider initialProject={mockProject}>
+                <Mixer 
+                    isPlaying={false} 
+                    onPlayPause={() => {}} 
+                    onStop={() => {}} 
+                    onRecord={() => {}} 
+                    onOpenMaster={() => {}} 
+                />
+            </ProjectProvider>
         );
 
         const track1Label = getByText('Track 1');

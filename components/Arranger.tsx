@@ -10,18 +10,18 @@ import DroneSynth from './DroneSynth';
 import ArrangerContextMenus from './ArrangerContextMenus';
 import ArrangerGrid from './ArrangerGrid';
 import ArrangerToolbar from './ArrangerToolbar';
+import ArrangerMiniMap from './ArrangerMiniMap'; 
 import Library from './Library';
 import { useArrangerInteraction } from '../hooks/useArrangerInteraction';
 import { useTimelineMath } from '../hooks/useTimelineMath';
-import { Plus, Mic, Piano, Layers, X } from 'lucide-react';
+import { Plus, Mic, Piano, Layers, X, FileAudio } from 'lucide-react';
 import { analytics } from '../services/analytics';
 import { getAllAssetsMetadata } from '../services/db';
 import { createTrack } from '../services/templates';
 import { HEADER_WIDTH_DESKTOP, HEADER_WIDTH_TABLET, HEADER_WIDTH_MOBILE, TRACK_HEIGHT_DEFAULT, TRACK_HEIGHT_COMPACT } from '../constants/layout';
+import { useProject } from '../contexts/ProjectContext';
 
 interface ArrangerProps {
-  project: ProjectState;
-  setProject: React.Dispatch<React.SetStateAction<ProjectState>>;
   currentTime: number; 
   isPlaying: boolean;
   isRecording: boolean;
@@ -50,11 +50,12 @@ interface ArrangerProps {
 }
 
 const Arranger: React.FC<ArrangerProps> = ({ 
-    project, setProject, currentTime, isPlaying, isRecording, recordingStartTime = 0,
+    currentTime, isPlaying, isRecording, recordingStartTime = 0,
     onPlayPause, onStop, onRecord, onSeek, onSplit, onSplitAtPlayhead, zoom, setZoom,
     selectedTrackId, onSelectTrack, selectedClipIds, onSelectClip, onOpenInspector, onOpenClipInspector,
     onMoveTrack, onRenameClip, onColorClip, onRenameTrack, autoScroll = true, onDropAsset, commitTransaction
 }) => {
+  const { project, updateProject } = useProject();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const trackHeaderRef = useRef<HTMLDivElement>(null);
   
@@ -73,6 +74,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   
   // Library Sidebar State
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   
   // Instrument Drawer State
   const [showInstruments, setShowInstruments] = useState(false);
@@ -88,8 +90,9 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Local asset cache for drag/drop lookup
   const [cachedAssets, setCachedAssets] = useState<AssetMetadata[]>([]);
   
-  // Automation Context Menu State
+  // Automation & Track Context Menu State
   const [autoContextMenu, setAutoContextMenu] = useState<{ x: number, y: number, trackId: string, pointId: string } | null>(null);
+  const [trackContextMenu, setTrackContextMenu] = useState<{ x: number, y: number, trackId: string } | null>(null);
 
   const refreshAssets = useCallback(() => {
       getAllAssetsMetadata().then(setCachedAssets);
@@ -106,7 +109,7 @@ const Arranger: React.FC<ArrangerProps> = ({
       pixelsPerTick, 
       timeToPixels, 
       pixelsToTime, 
-      snapToGrid,
+      snapToGrid, 
       numerator 
   } = useTimelineMath(zoom, project.bpm, project.timeSignature || [4, 4]);
   
@@ -119,16 +122,24 @@ const Arranger: React.FC<ArrangerProps> = ({
       handleGlobalPointerUp, handleWheel, calculateSeekTime,
       setIsScrubbing, setLoopDrag, handleGlobalPointerMove
   } = useArrangerInteraction({
-      project, setProject, zoom, setZoom, tool, snapGrid, scrollContainerRef, headerWidth, trackHeight,
+      project, updateProject, zoom, setZoom, tool, snapGrid, scrollContainerRef, headerWidth, trackHeight,
       onSelectTrack, onSelectClip, selectedClipIds, onSplit, onSeek, onMoveTrack, multiSelectMode, secondsPerBeat,
       snapLineRef, selectionBoxRef, snapLabelRef, commitTransaction
   });
 
   // Calculate visible range for virtualization
   const visibleStartTime = Math.max(0, pixelsToTime(scrollLeft));
-  const visibleEndTime = pixelsToTime(scrollLeft + containerWidth);
+  const visibleDuration = pixelsToTime(containerWidth);
+  const visibleEndTime = visibleStartTime + visibleDuration;
   const renderStartTime = Math.max(0, visibleStartTime - 5); 
   const renderEndTime = visibleEndTime + 5;
+
+  // Mini Map Calculations
+  const projectDuration = Math.max(
+      project.loopEnd + 4, 
+      ...project.clips.map(c => c.start + c.duration + 4),
+      60 // Minimum 60s
+  );
 
   const clipsByTrack = useMemo(() => {
       const map = new Map<string, any[]>();
@@ -153,16 +164,21 @@ const Arranger: React.FC<ArrangerProps> = ({
             setHeaderWidth(HEADER_WIDTH_MOBILE); 
             setIsCompactHeader(true);
             setIsSidebarCollapsed(true);
-            // Auto close library on small screens
-            if (isLibraryOpen) setIsLibraryOpen(false);
+            if (!isMobile) {
+                // Auto switch to Hand tool on mobile for better scrolling experience
+                setTool(ToolMode.HAND);
+            }
+            setIsMobile(true);
         } else if (w < 1024) {
             setHeaderWidth(HEADER_WIDTH_TABLET);
             setIsCompactHeader(false);
             setIsSidebarCollapsed(false);
+            setIsMobile(false);
         } else {
             setHeaderWidth(HEADER_WIDTH_DESKTOP);
             setIsCompactHeader(false);
             setIsSidebarCollapsed(false);
+            setIsMobile(false);
         }
         
         if (scrollContainerRef.current) {
@@ -172,10 +188,10 @@ const Arranger: React.FC<ArrangerProps> = ({
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [isLibraryOpen]);
+  }, [isMobile]); 
 
-  const updateTrack = (id: string, updates: Partial<Track>) => {
-    setProject(prev => ({
+  const updateTrackInArranger = (id: string, updates: Partial<Track>) => {
+    updateProject((prev: ProjectState) => ({
         ...prev,
         tracks: prev.tracks.map(t => t.id === id ? { ...t, ...updates } : t)
     }));
@@ -195,7 +211,7 @@ const Arranger: React.FC<ArrangerProps> = ({
       const strength = quantizeStrength / 100;
       
       commitTransaction();
-      setProject(prev => ({
+      updateProject((prev: ProjectState) => ({
           ...prev,
           clips: prev.clips.map(c => {
               if (selectedClipIds.includes(c.id)) {
@@ -222,20 +238,23 @@ const Arranger: React.FC<ArrangerProps> = ({
               const gridValue = snapGrid > 0 ? snapGrid : 0;
               const snappedTime = snapToGrid(time, gridValue);
               onDropAsset(trackId, snappedTime, asset);
+              
+              // On mobile, auto-close library after drop to see timeline
+              if (isMobile) setIsLibraryOpen(false);
           }
       }
   };
 
   const handleAddTrack = (type: 'audio' | 'instrument' = 'audio') => {
       const newTrack = createTrack(type, type === 'instrument' ? `Synth ${project.tracks.length + 1}` : `Track ${project.tracks.length + 1}`);
-      setProject(p => ({...p, tracks: [...p.tracks, newTrack]}));
+      updateProject((p: ProjectState) => ({...p, tracks: [...p.tracks, newTrack]}));
       setShowAddMenu(false);
       analytics.track('mixer_action', { action: 'add_track' });
   };
 
   const handleAddAutomationPoint = (trackId: string, time: number, value: number) => {
       commitTransaction();
-      setProject(prev => ({
+      updateProject((prev: ProjectState) => ({
           ...prev,
           tracks: prev.tracks.map(t => {
               if (t.id === trackId) {
@@ -252,7 +271,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleUpdateAutomationPoint = (trackId: string, pointId: string, updates: Partial<AutomationPoint>) => {
-      setProject(prev => ({
+      updateProject((prev: ProjectState) => ({
           ...prev,
           tracks: prev.tracks.map(t => {
               if (t.id === trackId && t.automation?.volume) {
@@ -270,7 +289,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleDeleteAutomationPoint = (trackId: string, pointId: string) => {
-      setProject(prev => ({
+      updateProject((prev: ProjectState) => ({
           ...prev,
           tracks: prev.tracks.map(t => {
               if (t.id === trackId && t.automation?.volume) {
@@ -316,11 +335,11 @@ const Arranger: React.FC<ArrangerProps> = ({
         onClick={() => {
             setContextMenu(null);
             setAutoContextMenu(null);
+            setTrackContextMenu(null);
             setShowAddMenu(false);
         }}
     >
       <ArrangerToolbar 
-          project={project} setProject={setProject}
           tool={tool} setTool={setTool}
           snapGrid={snapGrid} setSnapGrid={setSnapGrid}
           quantizeStrength={quantizeStrength} setQuantizeStrength={setQuantizeStrength}
@@ -337,9 +356,19 @@ const Arranger: React.FC<ArrangerProps> = ({
       />
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Library Sidebar */}
+        {/* Library Sidebar (Responsive Overlay on Mobile) */}
         {isLibraryOpen && (
-            <div className="w-56 border-r border-zinc-800 bg-studio-panel shrink-0 flex flex-col z-30">
+            <div className={`
+                border-r border-zinc-800 bg-studio-panel flex flex-col z-30 transition-all duration-300
+                ${isMobile ? 'fixed inset-y-0 left-0 w-64 shadow-2xl' : 'w-56 shrink-0 relative'}
+            `}>
+                {isMobile && (
+                    <div className="p-2 border-b border-zinc-700 flex justify-end bg-zinc-900">
+                        <button onClick={() => setIsLibraryOpen(false)} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
                 <Library 
                     variant="sidebar" 
                     currentProjectId={project.id}
@@ -347,12 +376,21 @@ const Arranger: React.FC<ArrangerProps> = ({
                 />
             </div>
         )}
+        
+        {/* Mobile Overlay Backdrop */}
+        {isLibraryOpen && isMobile && (
+            <div 
+                className="fixed inset-0 bg-black/50 z-20 backdrop-blur-sm"
+                onClick={() => setIsLibraryOpen(false)}
+            />
+        )}
 
         {/* Track Headers */}
         <div className="flex-none bg-studio-panel border-r border-zinc-800 z-20 flex flex-col shadow-xl transition-all duration-300" style={{ width: currentHeaderWidth }}>
              <div className="h-8 border-b border-zinc-800 bg-zinc-800/50 flex items-center px-2 justify-between relative">
                  {!isSidebarCollapsed && <span className="text-[10px] text-zinc-500 font-bold tracking-wider">TRACKS</span>}
-                 <button onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }} className="text-zinc-500 hover:text-white mx-auto" title="Add Track">
+                 {/* Desktop Add Button */}
+                 <button onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }} className="text-zinc-500 hover:text-white mx-auto hidden sm:block" title="Add Track">
                     <Plus size={12} />
                  </button>
 
@@ -380,7 +418,8 @@ const Arranger: React.FC<ArrangerProps> = ({
                             onSelectTrack={onSelectTrack}
                             onOpenInspector={onOpenInspector}
                             handleTrackDragStart={handleTrackDragStart}
-                            updateTrack={updateTrack}
+                            updateTrack={updateTrackInArranger}
+                            onContextMenu={(e, id) => setTrackContextMenu({ x: e.clientX, y: e.clientY, trackId: id })}
                         />
                     ))}
                  </div>
@@ -388,91 +427,139 @@ const Arranger: React.FC<ArrangerProps> = ({
         </div>
 
         {/* Timeline Area */}
-        <div ref={scrollContainerRef} className="flex-1 overflow-auto relative bg-zinc-950" onScroll={handleScroll} onWheel={handleWheel}>
-            {/* Empty State Overlay */}
-            {project.tracks.length === 0 && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center z-10 text-zinc-600 pointer-events-none">
-                    <div className="bg-zinc-900/80 p-8 rounded-2xl border border-zinc-800 flex flex-col items-center max-w-sm text-center pointer-events-auto shadow-2xl">
-                        <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mb-4 text-zinc-500">
-                            <Layers size={32} />
-                        </div>
-                        <h3 className="text-lg font-bold text-zinc-300 mb-2">No Tracks Created</h3>
-                        <p className="text-sm text-zinc-500 mb-6">Start by adding a track or dragging an audio file from the library.</p>
-                        <div className="flex gap-2">
-                            <button onClick={() => handleAddTrack('audio')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
-                                <Mic size={14} /> Audio Track
-                            </button>
-                            <button onClick={() => handleAddTrack('instrument')} className="bg-studio-accent hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
-                                <Piano size={14} /> Synth Track
-                            </button>
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-zinc-950">
+            {/* Mini Map (Sticky) */}
+            <ArrangerMiniMap 
+                clips={project.clips}
+                totalDuration={projectDuration}
+                visibleStartTime={visibleStartTime}
+                visibleDuration={visibleDuration}
+                onScroll={(time) => {
+                    if (scrollContainerRef.current) {
+                        scrollContainerRef.current.scrollLeft = timeToPixels(time);
+                    }
+                }}
+            />
+
+            <div ref={scrollContainerRef} className="flex-1 overflow-auto relative" onScroll={handleScroll} onWheel={handleWheel}>
+                {/* Empty State Overlay */}
+                {project.tracks.length === 0 && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center z-10 text-zinc-600 pointer-events-none">
+                        <div className="bg-zinc-900/80 p-8 rounded-2xl border border-zinc-800 flex flex-col items-center max-w-sm text-center pointer-events-auto shadow-2xl">
+                            <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mb-4 text-zinc-500">
+                                <Layers size={32} />
+                            </div>
+                            <h3 className="text-lg font-bold text-zinc-300 mb-2">No Tracks Created</h3>
+                            <p className="text-sm text-zinc-500 mb-6">Start by adding a track or dragging an audio file from the library.</p>
+                            <div className="flex flex-wrap gap-2 justify-center">
+                                <button onClick={() => handleAddTrack('audio')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
+                                    <Mic size={14} /> Audio Track
+                                </button>
+                                <button onClick={() => handleAddTrack('instrument')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
+                                    <Piano size={14} /> Synth Track
+                                </button>
+                                <button onClick={() => setIsLibraryOpen(true)} className="bg-studio-accent hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
+                                    <FileAudio size={14} /> Import Audio
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
 
-            <div style={{ width: totalWidth, minWidth: '100%', height: Math.max(300, project.tracks.length * trackHeight + 32) }}>
-                {/* Background Grid */}
-                <div className="absolute inset-0 top-8 pointer-events-none">
-                    <ArrangerGrid pixelsPerBar={pixelsPerBar} pixelsPerTick={pixelsPerTick} height={Math.max(300, project.tracks.length * trackHeight)} width={totalWidth} />
-                </div>
+                <div style={{ width: totalWidth, minWidth: '100%', height: Math.max(300, project.tracks.length * trackHeight + 32) }}>
+                    {/* Background Grid */}
+                    <div className="absolute inset-0 top-8 pointer-events-none">
+                        <ArrangerGrid pixelsPerBar={pixelsPerBar} pixelsPerTick={pixelsPerTick} height={Math.max(300, project.tracks.length * trackHeight)} width={totalWidth} />
+                    </div>
 
-                {/* Ruler */}
-                <Ruler 
-                    totalBars={totalBars} pixelsPerBar={pixelsPerBar} zoom={zoom} markers={project.markers}
-                    loopStart={project.loopStart} loopEnd={project.loopEnd} isLooping={project.isLooping}
-                    onSeek={(e) => {
-                        (e.target as Element).setPointerCapture(e.pointerId);
-                        setIsScrubbing({ active: true, pointerId: e.pointerId });
-                        onSeek(calculateSeekTime(e.clientX, e.shiftKey));
-                    }}
-                    onAddMarker={(e) => {
-                        const time = calculateSeekTime(e.clientX, true);
-                        const newMarker = { id: crypto.randomUUID(), time, text: `Marker ${project.markers.length + 1}`, color: '#eab308' };
-                        setProject(p => ({...p, markers: [...p.markers, newMarker].sort((a,b) => a.time - b.time)}));
-                    }}
-                    onDeleteMarker={(id, text) => {
-                        if (confirm(`Delete marker "${text}"?`)) setProject(p => ({...p, markers: p.markers.filter(m => m.id !== id)}));
-                    }}
-                    onLoopDragStart={(e, mode) => {
-                        e.stopPropagation();
-                        (e.target as Element).setPointerCapture(e.pointerId);
-                        setLoopDrag({ mode, startX: e.clientX, initialStart: project.loopStart, initialEnd: project.loopEnd, pointerId: e.pointerId });
-                    }}
-                />
+                    {/* Ruler */}
+                    <Ruler 
+                        totalBars={totalBars} pixelsPerBar={pixelsPerBar} zoom={zoom} markers={project.markers}
+                        loopStart={project.loopStart} loopEnd={project.loopEnd} isLooping={project.isLooping}
+                        onSeek={(e) => {
+                            (e.target as Element).setPointerCapture(e.pointerId);
+                            setIsScrubbing({ active: true, pointerId: e.pointerId });
+                            onSeek(calculateSeekTime(e.clientX, e.shiftKey));
+                        }}
+                        onAddMarker={(e) => {
+                            const time = calculateSeekTime(e.clientX, true);
+                            const newMarker = { id: crypto.randomUUID(), time, text: `Marker ${project.markers.length + 1}`, color: '#eab308' };
+                            updateProject((p: ProjectState) => ({...p, markers: [...p.markers, newMarker].sort((a,b) => a.time - b.time)}));
+                        }}
+                        onDeleteMarker={(id, text) => {
+                            if (confirm(`Delete marker "${text}"?`)) updateProject((p: ProjectState) => ({...p, markers: p.markers.filter(m => m.id !== id)}));
+                        }}
+                        onLoopDragStart={(e, mode) => {
+                            e.stopPropagation();
+                            (e.target as Element).setPointerCapture(e.pointerId);
+                            setLoopDrag({ mode, startX: e.clientX, initialStart: project.loopStart, initialEnd: project.loopEnd, pointerId: e.pointerId });
+                        }}
+                    />
 
-                {/* Snap Line */}
-                <div ref={snapLineRef} className="absolute top-0 bottom-0 w-px bg-yellow-400 z-40 pointer-events-none hidden">
-                    <div ref={snapLabelRef} className="absolute top-8 left-1 bg-yellow-400 text-black text-[9px] font-bold px-1 rounded shadow-sm whitespace-nowrap">0:0:0</div>
-                </div>
+                    {/* Snap Line */}
+                    <div ref={snapLineRef} className="absolute top-0 bottom-0 w-px bg-yellow-400 z-40 pointer-events-none hidden">
+                        <div ref={snapLabelRef} className="absolute top-8 left-1 bg-yellow-400 text-black text-[9px] font-bold px-1 rounded shadow-sm whitespace-nowrap">0:0:0</div>
+                    </div>
 
-                {/* Track Lanes */}
-                <div className="relative" style={{ height: project.tracks.length * trackHeight }}>
-                    {project.tracks.map((track, i) => (
-                         <div 
-                            key={track.id} 
-                            style={{ top: i * trackHeight, height: trackHeight, position: 'absolute', width: '100%' }}
-                         >
-                             <ArrangerTrack 
-                                track={track}
-                                clips={clipsByTrack.get(track.id) || []}
-                                trackHeight={trackHeight}
-                                zoom={zoom}
-                                selectedClipIds={selectedClipIds}
-                                dragState={dragState}
-                                onDrop={handleTimelineDrop}
-                                onClipPointerDown={handleClipPointerDown}
-                                onOpenClipInspector={onOpenClipInspector}
-                                toolMode={tool}
-                                onAddAutomationPoint={handleAddAutomationPoint}
-                                onOpenAutomationMenu={(pointId, x, y) => setAutoContextMenu({ pointId, trackId: track.id, x, y })}
-                             />
-                         </div>
-                    ))}
-                    
-                    <Playhead zoom={zoom} isPlaying={isPlaying} scrollContainerRef={scrollContainerRef} staticTime={currentTime} autoScroll={autoScroll} />
+                    {/* Track Lanes */}
+                    <div className="relative" style={{ height: project.tracks.length * trackHeight }}>
+                        {project.tracks.map((track, i) => (
+                            <div 
+                                key={track.id} 
+                                style={{ top: i * trackHeight, height: trackHeight, position: 'absolute', width: '100%' }}
+                            >
+                                <ArrangerTrack 
+                                    track={track}
+                                    clips={clipsByTrack.get(track.id) || []}
+                                    trackHeight={trackHeight}
+                                    zoom={zoom}
+                                    selectedClipIds={selectedClipIds}
+                                    dragState={dragState}
+                                    onDrop={handleTimelineDrop}
+                                    onClipPointerDown={handleClipPointerDown}
+                                    onOpenClipInspector={onOpenClipInspector}
+                                    toolMode={tool}
+                                    onAddAutomationPoint={handleAddAutomationPoint}
+                                    onOpenAutomationMenu={(pointId, x, y) => setAutoContextMenu({ pointId, trackId: track.id, x, y })}
+                                />
+                            </div>
+                        ))}
+                        
+                        <Playhead zoom={zoom} isPlaying={isPlaying} scrollContainerRef={scrollContainerRef} staticTime={currentTime} autoScroll={autoScroll} />
+                    </div>
                 </div>
             </div>
         </div>
+
+        {/* Mobile Floating Action Button (FAB) for Adding Tracks */}
+        {isMobile && (
+            <div className="fixed bottom-20 right-4 z-50 flex flex-col gap-3 items-end">
+                {showAddMenu && (
+                    <div className="flex flex-col gap-2 mb-2 animate-in slide-in-from-bottom-2 fade-in duration-200">
+                        <button 
+                            onClick={() => handleAddTrack('instrument')}
+                            className="bg-zinc-800 text-white p-3 rounded-full shadow-lg flex items-center gap-2 border border-zinc-700"
+                        >
+                            <span className="text-xs font-bold mr-1">Synth</span>
+                            <Piano size={20} />
+                        </button>
+                        <button 
+                            onClick={() => handleAddTrack('audio')}
+                            className="bg-zinc-800 text-white p-3 rounded-full shadow-lg flex items-center gap-2 border border-zinc-700"
+                        >
+                            <span className="text-xs font-bold mr-1">Audio</span>
+                            <Mic size={20} />
+                        </button>
+                    </div>
+                )}
+                <button 
+                    onClick={() => setShowAddMenu(!showAddMenu)}
+                    className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-all ${showAddMenu ? 'bg-zinc-700 rotate-45' : 'bg-studio-accent'}`}
+                >
+                    <Plus size={28} className="text-white" />
+                </button>
+            </div>
+        )}
 
         {/* Selection Box */}
         <div ref={selectionBoxRef} className="absolute bg-blue-500/10 border border-blue-400 z-50 pointer-events-none hidden" />
@@ -485,8 +572,8 @@ const Arranger: React.FC<ArrangerProps> = ({
                     <button onClick={() => setShowInstruments(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
-                    {project.drone && <DroneSynth config={project.drone} onChange={(cfg) => setProject(p => ({...p, drone: cfg}))} />}
-                    {project.sequencer && <StepSequencer config={project.sequencer} onChange={(cfg) => setProject(p => ({...p, sequencer: cfg}))} />}
+                    {project.drone && <DroneSynth config={project.drone} onChange={(cfg) => updateProject((p: ProjectState) => ({...p, drone: cfg}))} />}
+                    {project.sequencer && <StepSequencer config={project.sequencer} onChange={(cfg) => updateProject((p: ProjectState) => ({...p, sequencer: cfg}))} />}
                 </div>
             </div>
         )}
@@ -496,9 +583,12 @@ const Arranger: React.FC<ArrangerProps> = ({
             setContextMenu={setContextMenu}
             autoContextMenu={autoContextMenu}
             setAutoContextMenu={setAutoContextMenu}
+            trackContextMenu={trackContextMenu}
+            setTrackContextMenu={setTrackContextMenu}
             project={project}
-            setProject={setProject}
+            updateProject={updateProject}
             onRenameClip={onRenameClip}
+            onRenameTrack={onRenameTrack}
             onColorClip={onColorClip}
             onSplit={onSplit}
             calculateSeekTime={calculateSeekTime}

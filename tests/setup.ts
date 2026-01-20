@@ -1,6 +1,7 @@
 
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { vi, afterEach } from 'vitest';
+import { audio } from '../services/audio';
 
 // Mock Web Audio API
 class AudioNodeMock {
@@ -98,6 +99,7 @@ class AudioContextMock {
   decodeAudioData() { return Promise.resolve(this.createBuffer()); }
   resume() { this.state = 'running'; return Promise.resolve(); }
   suspend() { this.state = 'suspended'; return Promise.resolve(); }
+  close() { this.state = 'closed'; return Promise.resolve(); }
   setSinkId(id: string) { return Promise.resolve(); }
 }
 
@@ -115,3 +117,8 @@ globalThis.ResizeObserver = class ResizeObserver {
   unobserve() {}
   disconnect() {}
 } as any;
+
+// Cleanup hook
+afterEach(() => {
+    if (audio.reset) audio.reset();
+});

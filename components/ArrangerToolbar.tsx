@@ -1,11 +1,10 @@
 
 import React from 'react';
 import { ProjectState, ToolMode } from '../types';
-import { MousePointer, Scissors, Trash2, TrendingUp, Split, AlignStartVertical, Grid, ZoomOut, ZoomIn, Minimize, ChevronsUpDown, Music2, ChevronLeft, ChevronRight, Repeat, FolderOpen } from 'lucide-react';
+import { MousePointer, Hand, Scissors, Trash2, TrendingUp, Split, AlignStartVertical, Grid, ZoomOut, ZoomIn, Minimize, ChevronsUpDown, Music2, ChevronLeft, ChevronRight, Repeat, FolderOpen } from 'lucide-react';
+import { useProject } from '../contexts/ProjectContext';
 
 interface ArrangerToolbarProps {
-    project: ProjectState;
-    setProject: React.Dispatch<React.SetStateAction<ProjectState>>;
     tool: ToolMode;
     setTool: (mode: ToolMode) => void;
     snapGrid: number;
@@ -29,16 +28,18 @@ interface ArrangerToolbarProps {
 }
 
 const ArrangerToolbar: React.FC<ArrangerToolbarProps> = ({
-    project, setProject, tool, setTool, snapGrid, setSnapGrid,
+    tool, setTool, snapGrid, setSnapGrid,
     quantizeStrength, setQuantizeStrength, zoom, setZoom,
     isSidebarCollapsed, setIsSidebarCollapsed, 
     isLibraryOpen, setIsLibraryOpen,
     showInstruments, setShowInstruments,
     selectedClipIds, onSplitAtPlayhead, onZoomToFit, toggleTrackHeight, numerator, handleQuantize
 }) => {
+    const { project, updateProject } = useProject();
+
     return (
-      <div className="h-10 border-b border-zinc-800 bg-studio-panel flex items-center px-3 justify-between shrink-0 z-30">
-         <div className="flex space-x-2 items-center">
+      <div className="h-10 border-b border-zinc-800 bg-studio-panel flex items-center px-3 justify-between shrink-0 z-30 overflow-x-auto no-scrollbar">
+         <div className="flex space-x-2 items-center min-w-max">
             {/* Library Toggle */}
             <button 
                 onClick={() => setIsLibraryOpen(!isLibraryOpen)} 
@@ -53,14 +54,15 @@ const ArrangerToolbar: React.FC<ArrangerToolbarProps> = ({
             </button>
 
             <div className="flex bg-zinc-900 rounded p-0.5 space-x-0.5 shrink-0 border border-zinc-800">
-                <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded transition-all ${tool === ToolMode.POINTER ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Pointer"><MousePointer size={14} /></button>
+                <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded transition-all ${tool === ToolMode.POINTER ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Pointer (Edit/Move)"><MousePointer size={14} /></button>
+                <button onClick={() => setTool(ToolMode.HAND)} className={`p-1.5 rounded transition-all ${tool === ToolMode.HAND ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Hand (Scroll/Safe)"><Hand size={14} /></button>
                 <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded transition-all ${tool === ToolMode.SPLIT ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Split"><Scissors size={14} /></button>
                 <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded transition-all ${tool === ToolMode.ERASER ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Erase"><Trash2 size={14} /></button>
                 <button onClick={() => setTool(ToolMode.AUTOMATION)} className={`p-1.5 rounded transition-all ${tool === ToolMode.AUTOMATION ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Automation"><TrendingUp size={14} /></button>
             </div>
             
             {onSplitAtPlayhead && (
-                <button onClick={onSplitAtPlayhead} className="hidden sm:flex items-center space-x-1 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors" title="Split at Playhead (Ctrl+B)">
+                <button onClick={onSplitAtPlayhead} className="hidden md:flex items-center space-x-1 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors" title="Split at Playhead (Ctrl+B)">
                     <Split size={12} />
                     <span>Split</span>
                 </button>
@@ -91,13 +93,13 @@ const ArrangerToolbar: React.FC<ArrangerToolbarProps> = ({
                     <option value="0.25">1/16</option>
                 </select>
             </div>
-             <button onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded transition-all ${project.isLooping ? 'bg-studio-accent text-white' : 'text-zinc-500'}`} title="Toggle Loop (L)">
+             <button onClick={() => updateProject((p: ProjectState) => ({...p, isLooping: !p.isLooping}))} className={`p-1.5 rounded transition-all ${project.isLooping ? 'bg-studio-accent text-white' : 'text-zinc-500'}`} title="Toggle Loop (L)">
                 <Repeat size={14} />
              </button>
          </div>
 
          <div className="flex items-center space-x-2 shrink-0">
-             <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800 hidden md:flex">
+             <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800 hidden lg:flex">
                  <ZoomOut size={12} className="text-zinc-500 cursor-pointer" onClick={() => setZoom(Math.max(10, zoom * 0.8))} />
                  <span className="text-[9px] text-zinc-400 w-8 text-center">{Math.round(zoom)}%</span>
                  <ZoomIn size={12} className="text-zinc-500 cursor-pointer" onClick={() => setZoom(Math.min(400, zoom * 1.2))} />

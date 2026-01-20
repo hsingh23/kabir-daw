@@ -212,6 +212,7 @@ export interface ProjectState {
 
 export enum ToolMode {
   POINTER = 'POINTER',
+  HAND = 'HAND',
   SPLIT = 'SPLIT',
   ERASER = 'ERASER',
   AUTOMATION = 'AUTOMATION'
