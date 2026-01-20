@@ -129,6 +129,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const trackHeaderRef = useRef<HTMLDivElement>(null);
+  const scrollInterval = useRef<number>(0);
 
   const [tool, setTool] = useState<ToolMode>(ToolMode.POINTER);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -197,13 +198,26 @@ const Arranger: React.FC<ArrangerProps> = ({
   const totalBars = Math.max(50, Math.ceil((project.loopEnd + 20) / secondsPerBar));
   const totalWidth = totalBars * pixelsPerBar;
 
-  const showBeats = pixelsPerBeat > 15;
-  const gridImage = showBeats 
-        ? `linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px)`
-        : `linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px)`;
-  const gridSize = showBeats ? `${pixelsPerBar}px 100%, ${pixelsPerBeat}px 100%` : `${pixelsPerBar}px 100%`;
+  // Optimized Grid Calculation using useMemo
+  const { backgroundImage, backgroundSize } = useMemo(() => {
+      const showBeats = pixelsPerBeat > 20;
+      const showSubdivisions = pixelsPerBeat > 80;
+      
+      let bgImage = `linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)`;
+      let bgSize = `${pixelsPerBar}px 100%`;
 
-  // REMOVED: Auto-scroll useEffect (moved to Playhead)
+      if (showBeats) {
+          bgImage += `, linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px)`;
+          bgSize += `, ${pixelsPerBeat}px 100%`;
+      }
+      
+      if (showSubdivisions) {
+          bgImage += `, linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px)`;
+          bgSize += `, ${pixelsPerBeat / 4}px 100%`;
+      }
+      
+      return { backgroundImage: bgImage, backgroundSize: bgSize };
+  }, [pixelsPerBeat, pixelsPerBar]);
 
   const updateTrack = (id: string, updates: Partial<Track>) => {
     setProject(prev => ({
@@ -325,6 +339,38 @@ const Arranger: React.FC<ArrangerProps> = ({
           return;
       }
 
+      // Auto-scroll logic when dragging near edges
+      if (dragState || loopDrag || selectionBox) {
+          const scrollContainer = scrollContainerRef.current;
+          if (scrollContainer) {
+              const rect = scrollContainer.getBoundingClientRect();
+              const edgeThreshold = 50; // px
+              const relX = e.clientX - rect.left;
+              
+              let scrollSpeed = 0;
+              if (relX < edgeThreshold) {
+                  scrollSpeed = -10; // Scroll left
+              } else if (relX > rect.width - edgeThreshold) {
+                  scrollSpeed = 10; // Scroll right
+              }
+
+              if (scrollSpeed !== 0) {
+                  if (!scrollInterval.current) {
+                      scrollInterval.current = window.setInterval(() => {
+                          if (scrollContainerRef.current) {
+                              scrollContainerRef.current.scrollLeft += scrollSpeed;
+                          }
+                      }, 16);
+                  }
+              } else {
+                  if (scrollInterval.current) {
+                      clearInterval(scrollInterval.current);
+                      scrollInterval.current = 0;
+                  }
+              }
+          }
+      }
+
       if (isScrubbing.active) {
           onSeek(calculateSeekTime(e.clientX, e.shiftKey));
           return;
@@ -442,6 +488,13 @@ const Arranger: React.FC<ArrangerProps> = ({
       if (activePointers.current.size < 2) {
           initialPinchDist.current = null;
       }
+      
+      // Stop auto-scrolling
+      if (scrollInterval.current) {
+          clearInterval(scrollInterval.current);
+          scrollInterval.current = 0;
+      }
+
       setDragState(null);
       setIsScrubbing({ active: false, pointerId: null });
       setLoopDrag(null);
@@ -559,7 +612,14 @@ const Arranger: React.FC<ArrangerProps> = ({
         >
             <div style={{ width: totalWidth, minWidth: '100%', height: project.tracks.length * trackHeight + 32 }}>
                 {/* Background Grid */}
-                <div className="absolute inset-0 pointer-events-none" style={{ backgroundSize: gridSize, backgroundImage: gridImage, top: 32 }} />
+                <div 
+                    className="absolute inset-0 pointer-events-none" 
+                    style={{ 
+                        backgroundImage: backgroundImage,
+                        backgroundSize: backgroundSize,
+                        top: 32 
+                    }} 
+                />
 
                 {/* Ruler */}
                 <div 
@@ -663,7 +723,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         style={{ 
                                             left: clip.start * zoom, 
                                             width: clip.duration * zoom,
-                                            backgroundColor: clip.color || '#555' 
+                                            backgroundColor: clip.color || track.color || '#555' 
                                         }}
                                         onPointerDown={(e) => handleClipPointerDown(e, clip, 'MOVE')}
                                         onDoubleClick={(e) => {
@@ -672,7 +732,14 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         }}
                                       >
                                           <div className="absolute inset-0 opacity-80 pointer-events-none bg-black/20">
-                                               <Waveform bufferKey={clip.bufferKey} color="rgba(255,255,255,0.8)" />
+                                               <Waveform 
+                                                    bufferKey={clip.bufferKey} 
+                                                    color="rgba(255,255,255,0.8)" 
+                                                    offset={clip.offset}
+                                                    duration={clip.duration}
+                                                    fadeIn={clip.fadeIn}
+                                                    fadeOut={clip.fadeOut}
+                                               />
                                           </div>
                                           <div className="absolute top-0 left-0 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-br-md pointer-events-none flex items-center gap-1">
                                               {clip.muted && <MicOff size={8} className="text-red-400" />}
