@@ -631,7 +631,15 @@ class AudioEngine {
     source.stop(when + playDuration);
 
     if (ctx === this.ctx) {
-        this.activeSources.set(clip.id + Math.random(), source as AudioBufferSourceNode);
+        const sourceId = clip.id + Math.random();
+        this.activeSources.set(sourceId, source as AudioBufferSourceNode);
+        
+        // Critical Fix: Memory Leak prevention
+        source.onended = () => {
+            if (this.activeSources.has(sourceId)) {
+                this.activeSources.delete(sourceId);
+            }
+        };
     }
   }
 

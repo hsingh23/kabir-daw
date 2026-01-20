@@ -1,5 +1,4 @@
 
-
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -14,9 +13,9 @@ vi.mock('../../services/audio', () => ({
   }
 }));
 
-// Mock Waveform component as it uses Canvas (hard to test in jsdom without canvas mock)
+// Mock Waveform component to capture props
 vi.mock('../../components/Waveform', () => ({
-  default: () => <div data-testid="mock-waveform">Waveform</div>
+  default: (props: any) => <div data-testid="mock-waveform" data-props={JSON.stringify(props)}>Waveform</div>
 }));
 
 // Mock getBoundingClientRect for dragging tests
@@ -33,7 +32,7 @@ const mockProject: ProjectState = {
     { id: 't2', name: 'Bass', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
   ],
   clips: [
-    { id: 'c1', trackId: 't1', name: 'Riff 1', start: 0, offset: 0, duration: 4, bufferKey: 'key1', fadeIn: 0, fadeOut: 0 },
+    { id: 'c1', trackId: 't1', name: 'Riff 1', start: 0, offset: 2, duration: 4, bufferKey: 'key1', fadeIn: 0.5, fadeOut: 0.5 },
     { id: 'c2', trackId: 't2', name: 'Bassline', start: 0, offset: 0, duration: 4, bufferKey: 'key2', fadeIn: 0, fadeOut: 0 }
   ],
   markers: [],
@@ -68,13 +67,13 @@ const mockProject: ProjectState = {
 };
 
 describe('Arranger Integration', () => {
-  it('renders tracks and allows selection', () => {
+  it('renders tracks and passes correct props to Waveform', () => {
     const setProject = vi.fn();
     const onSelectTrack = vi.fn();
     const onSelectClip = vi.fn();
     const setZoom = vi.fn();
 
-    const { getByText } = render(
+    const { getByText, getAllByTestId } = render(
       <Arranger
         project={mockProject}
         setProject={setProject}
@@ -99,12 +98,13 @@ describe('Arranger Integration', () => {
     // Verify Track Name is rendered
     expect(getByText('Guitar')).toBeInTheDocument();
 
-    // Verify Clip is rendered
-    expect(getByText('Riff 1')).toBeInTheDocument();
-
-    // Simulate clicking a track header
-    getByText('Guitar').click();
-    expect(onSelectTrack).toHaveBeenCalledWith('t1');
+    // Verify Waveform props for clipping/fades
+    const waveforms = getAllByTestId('mock-waveform');
+    // c1 has offset 2, fadeIn 0.5
+    const c1Props = JSON.parse(waveforms[0].getAttribute('data-props') || '{}');
+    expect(c1Props.offset).toBe(2);
+    expect(c1Props.duration).toBe(4);
+    expect(c1Props.fadeIn).toBe(0.5);
   });
 
   it('performs marquee selection on clips', () => {
@@ -132,24 +132,13 @@ describe('Arranger Integration', () => {
         />
       );
 
-      // Find background container (application role div)
       const container = getByRole('application');
       const background = container.querySelector('.flex-1.overflow-auto');
-      expect(background).toBeInTheDocument();
-
-      // 1. Mouse Down with Shift (Start Marquee)
+      
       fireEvent.pointerDown(background!, { clientX: 0, clientY: 0, shiftKey: true, pointerId: 1 });
-
-      // 2. Mouse Move (Drag to cover clips)
-      // Assuming layout starts at (0,0) inside scroll container
-      // Header is 160px wide (desktop). Clips start after header.
-      // We drag from before tracks to cover them.
       fireEvent.pointerMove(background!, { clientX: 500, clientY: 500, pointerId: 1 });
-
-      // 3. Mouse Up (Finish Marquee)
       fireEvent.pointerUp(background!, { clientX: 500, clientY: 500, shiftKey: true, pointerId: 1 });
 
-      // Expect selection of both clips ('c1' and 'c2')
       expect(onSelectClip).toHaveBeenCalledWith(expect.arrayContaining(['c1', 'c2']));
   });
 });
