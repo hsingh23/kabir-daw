@@ -21,6 +21,7 @@ interface UseKeyboardShortcutsProps {
     onSplitAtPlayhead: () => void;
     setShowShortcuts: (show: boolean) => void;
     onSeek: (time: number) => void;
+    onQuantize?: () => void;
 }
 
 export const useKeyboardShortcuts = ({
@@ -41,7 +42,8 @@ export const useKeyboardShortcuts = ({
     handleSplit,
     onSplitAtPlayhead,
     setShowShortcuts,
-    onSeek
+    onSeek,
+    onQuantize
 }: UseKeyboardShortcutsProps) => {
 
     useEffect(() => {
@@ -172,6 +174,14 @@ export const useKeyboardShortcuts = ({
                 e.preventDefault();
                 onSplitAtPlayhead();
             }
+
+            // Quantize (Q)
+            if (e.key === 'q' && onQuantize) {
+                if (selectedClipIds.length > 0) {
+                    e.preventDefault();
+                    onQuantize();
+                }
+            }
   
             // Tab Navigation (Cycle Clips)
             if (e.key === 'Tab') {
@@ -254,5 +264,5 @@ export const useKeyboardShortcuts = ({
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, setProject, clipboard, currentTime, selectedTrackId, handleSplit, onSplitAtPlayhead, setSelectedClipIds, setSelectedTrackId, setClipboard, setShowShortcuts, onSeek]); 
+    }, [project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, setProject, clipboard, currentTime, selectedTrackId, handleSplit, onSplitAtPlayhead, setSelectedClipIds, setSelectedTrackId, setClipboard, setShowShortcuts, onSeek, onQuantize]); 
 }

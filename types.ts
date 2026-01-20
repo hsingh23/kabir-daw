@@ -88,6 +88,7 @@ export interface ProjectState {
   name: string;
   notes?: string; // Project notes/lyrics
   bpm: number;
+  timeSignature: [number, number]; // [Numerator, Denominator] e.g. [4, 4]
   tracks: Track[];
   clips: Clip[];
   markers: Marker[];
@@ -99,6 +100,7 @@ export interface ProjectState {
   countIn: number; // 0, 1, 2, 4 bars
   recordingLatency: number; // in milliseconds
   inputMonitoring: boolean;
+  returnToStartOnStop: boolean; // Behavior preference
   masterVolume: number;
   masterEq: {
       low: number; // -12 to 12 dB
