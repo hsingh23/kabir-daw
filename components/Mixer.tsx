@@ -43,6 +43,13 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
     }));
   };
 
+  const handleRenameTrack = (trackId: string, currentName: string) => {
+      const newName = prompt('Rename Track', currentName);
+      if (newName) {
+          updateTrack(trackId, { name: newName });
+      }
+  };
+
   return (
     <div className="flex flex-col h-full bg-studio-bg overflow-y-auto no-scrollbar pb-24">
       
@@ -112,7 +119,13 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                 {/* Tracks */}
                 {project.tracks.map(track => (
                     <div key={track.id} className="flex flex-col items-center space-y-3 group p-2 bg-zinc-900/50 rounded-lg border border-zinc-800/50">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center" title={track.name}>{track.name}</span>
+                        <button 
+                            className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center hover:text-white transition-colors" 
+                            title={track.name}
+                            onClick={() => handleRenameTrack(track.id, track.name)}
+                        >
+                            {track.name}
+                        </button>
                         
                         {/* Mute/Solo Buttons */}
                         <div className="flex space-x-1">

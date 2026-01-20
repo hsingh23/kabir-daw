@@ -36,6 +36,8 @@ const INITIAL_PROJECT: ProjectState = {
   metronomeOn: false,
   metronomeSound: 'beep',
   countIn: 0,
+  recordingLatency: 0,
+  inputMonitoring: false,
   masterVolume: 1.0,
   masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: {
@@ -156,17 +158,21 @@ const App: React.FC = () => {
             markers: saved.markers || [],
             metronomeSound: saved.metronomeSound || 'beep',
             countIn: saved.countIn || 0,
+            recordingLatency: saved.recordingLatency || 0,
+            inputMonitoring: saved.inputMonitoring || false,
             tanpura: { ...INITIAL_PROJECT.tanpura, ...saved.tanpura },
             tracks: saved.tracks.map((t: any) => ({
                 ...t,
                 eq: t.eq || { low: 0, mid: 0, high: 0 },
                 compressor: t.compressor || { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 },
-                sends: t.sends || { reverb: 0, delay: 0, chorus: 0 }
+                sends: t.sends || { reverb: 0, delay: 0, chorus: 0 },
+                distortion: t.distortion || 0
             })),
             clips: saved.clips.map((c: any) => ({
                 ...c,
                 speed: c.speed || 1,
-                gain: c.gain !== undefined ? c.gain : 1.0
+                gain: c.gain !== undefined ? c.gain : 1.0,
+                detune: c.detune || 0
             }))
         };
         
@@ -246,6 +252,8 @@ const App: React.FC = () => {
           }
           if (prevIsPlaying) {
               audio.pause();
+              // Update currentTime one last time when stopping for seek accuracy
+              setCurrentTime(audio.getCurrentTime());
               return false;
           } else {
               return true;
@@ -263,7 +271,7 @@ const App: React.FC = () => {
 
   const startActualRecording = useCallback(async () => {
         try {
-            await audio.startRecording();
+            await audio.startRecording(project.inputMonitoring);
             const startTime = currentTime;
             setRecordingStartTime(startTime);
             audio.play(project.clips, project.tracks, startTime);
@@ -272,7 +280,7 @@ const App: React.FC = () => {
         } catch (_e) {
             alert("Could not start recording. Check microphone permissions.");
         }
-  }, [currentTime, project.clips, project.tracks]);
+  }, [currentTime, project.clips, project.tracks, project.inputMonitoring]);
 
   const handleRecordToggle = useCallback(async () => {
     if (isRecording) {
@@ -281,19 +289,35 @@ const App: React.FC = () => {
         const blob = await audio.stopRecording();
         setIsPlaying(false);
         setIsRecording(false);
+        setCurrentTime(audio.getCurrentTime()); // Sync time on stop
         
         if (blob && selectedTrackId) {
             const key = crypto.randomUUID();
             await saveAudioBlob(key, blob);
             await audio.loadAudio(key, blob);
+            const buffer = audio.buffers.get(key);
             
+            // Latency Compensation Logic
+            const latencySeconds = (project.recordingLatency || 0) / 1000;
+            const rawStart = recordingStartTime;
+            let finalStart = rawStart - latencySeconds;
+            let finalOffset = 0;
+            let finalDuration = buffer?.duration || 0;
+
+            if (finalStart < 0) {
+                // If latency pushes clip before 0, truncate start
+                finalOffset = Math.abs(finalStart);
+                finalDuration -= finalOffset;
+                finalStart = 0;
+            }
+
             const newClip: Clip = {
                 id: crypto.randomUUID(),
                 trackId: selectedTrackId,
                 name: `Rec ${new Date().toLocaleTimeString()}`,
-                start: recordingStartTime,
-                offset: 0,
-                duration: (await audio.loadAudio(key, blob)).duration,
+                start: finalStart,
+                offset: finalOffset,
+                duration: finalDuration,
                 bufferKey: key,
                 fadeIn: 0,
                 fadeOut: 0,
@@ -323,7 +347,7 @@ const App: React.FC = () => {
             startActualRecording();
         }
     }
-  }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject, project.countIn, project.bpm, startActualRecording]);
+  }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject, project.countIn, project.bpm, project.recordingLatency, startActualRecording]);
 
   const handleSplit = useCallback((clipId: string, time: number) => {
     const clip = project.clips.find(c => c.id === clipId);
@@ -588,10 +612,14 @@ const App: React.FC = () => {
 
         if (project.isLooping && time >= project.loopEnd && !isRecording) {
             audio.play(project.clips, project.tracks, project.loopStart);
+            // We still need to reset currentTime for non-animation purposes (like seeking)
+            // But we don't spam it for animation anymore
             setCurrentTime(project.loopStart);
-        } else {
-            setCurrentTime(time);
-        }
+        } 
+        
+        // Removed: setCurrentTime(time) - This prevents full re-render on every frame
+        // Playhead component handles the playhead position directly via RAF
+        
         rafRef.current = requestAnimationFrame(loop);
       } else {
           setVisualBeat(false);
@@ -667,464 +695,278 @@ const App: React.FC = () => {
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = `${track.name}_${new Date().toISOString().slice(0,10)}.wav`;
+                      a.download = `${project.name || 'Project'}_${track.name}_Stem.wav`;
                       a.click();
                       URL.revokeObjectURL(url);
-                      await new Promise(r => setTimeout(r, 500));
                   }
               }
           }
       } catch (e) {
-          console.error(e);
-          alert("Export failed.");
+          console.error("Export failed", e);
+          alert("Export failed. See console.");
       } finally {
           setIsExporting(false);
           setShowExport(false);
       }
   }, [project, isPlaying, stop]);
 
-  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      const file = e.target.files[0];
-      const key = crypto.randomUUID();
-      
-      await saveAudioBlob(key, file);
-      await audio.loadAudio(key, file);
-
-      const targetTrackId = selectedTrackId || project.tracks[0].id;
-      const newClip: Clip = {
-        id: crypto.randomUUID(),
-        trackId: targetTrackId,
-        name: file.name,
-        start: currentTime,
-        offset: 0,
-        duration: audio.buffers.get(key)?.duration || 5, 
-        bufferKey: key,
-        fadeIn: 0,
-        fadeOut: 0,
-        speed: 1,
-        gain: 1.0
-      };
-
-      updateProject(prev => ({
-        ...prev,
-        clips: [...prev.clips, newClip]
-      }));
-      setSelectedClipIds([newClip.id]);
-    }
-  }, [selectedTrackId, project.tracks, currentTime, updateProject]);
-
-  const addTrack = useCallback(() => {
-      const newTrack: Track = {
-          id: crypto.randomUUID(),
-          name: `Track ${project.tracks.length + 1}`,
-          volume: 0.8,
-          pan: 0,
-          muted: false,
-          solo: false,
-          color: `hsl(${Math.random() * 360}, 70%, 50%)`,
-          eq: { low: 0, mid: 0, high: 0 },
-          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-          sends: { reverb: 0, delay: 0, chorus: 0 }
-      };
-      updateProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
-      setSelectedTrackId(newTrack.id);
-  }, [project.tracks.length, updateProject]);
-
-  const handleMoveTrack = useCallback((fromIndex: number, toIndex: number) => {
-      updateProject(prev => ({
-          ...prev,
-          tracks: moveItem(prev.tracks, fromIndex, toIndex)
-      }));
-  }, [updateProject]);
-
-  const handleRenameClip = useCallback((clipId: string, newName: string) => {
-      updateProject(prev => ({
-          ...prev,
-          clips: prev.clips.map(c => c.id === clipId ? { ...c, name: newName } : c)
-      }));
-  }, [updateProject]);
-
-  const handleColorClip = useCallback((clipId: string, newColor: string) => {
-      updateProject(prev => ({
-          ...prev,
-          clips: prev.clips.map(c => c.id === clipId ? { ...c, color: newColor } : c)
-      }));
-  }, [updateProject]);
-
-  const handleRenameTrack = useCallback((trackId: string, newName: string) => {
-      updateProject(prev => ({
-          ...prev,
-          tracks: prev.tracks.map(t => t.id === trackId ? { ...t, name: newName } : t)
-      }));
-  }, [updateProject]);
-
-  const handleDeleteTrack = useCallback((trackId: string) => {
-    if (confirm('Delete track and all its clips?')) {
-        updateProject(prev => ({
-            ...prev,
-            tracks: prev.tracks.filter(t => t.id !== trackId),
-            clips: prev.clips.filter(c => c.trackId !== trackId)
-        }));
-        setInspectorTrackId(null);
-        if (selectedTrackId === trackId) setSelectedTrackId(null);
-    }
-  }, [updateProject, selectedTrackId]);
-
-  const handleDeleteClip = useCallback((clipId: string) => {
-      updateProject(prev => ({
-          ...prev,
-          clips: prev.clips.filter(c => c.id !== clipId)
-      }));
-      setInspectorClipId(null);
-      setSelectedClipIds(prev => prev.filter(id => id !== clipId));
-  }, [updateProject]);
-
-  const handleDuplicateClip = useCallback((clipId: string) => {
-      const clip = project.clips.find(c => c.id === clipId);
-      if (clip) {
-          const newClip = {
-              ...clip,
-              id: crypto.randomUUID(),
-              start: clip.start + clip.duration,
-              name: `${clip.name} (Dup)`
-          };
-          updateProject(prev => ({ ...prev, clips: [...prev.clips, newClip] }));
-          setSelectedClipIds([newClip.id]);
-          // Keep inspector open on original or switch? Maybe switch to new one.
-          setInspectorClipId(newClip.id);
-      }
-  }, [project.clips, updateProject]);
-
   const handleProcessAudio = useCallback(async (clipId: string, type: 'reverse' | 'normalize') => {
       const clip = project.clips.find(c => c.id === clipId);
-      if(!clip) return;
-
+      if (!clip) return;
+      
       try {
           const newBuffer = audio.processAudioBuffer(clip.bufferKey, type);
           const newKey = crypto.randomUUID();
           
-          // Add to memory
+          // Convert back to blob to save
+          const wav = audioBufferToWav(newBuffer);
+          await saveAudioBlob(newKey, wav);
+          
+          // Cache in memory
           audio.buffers.set(newKey, newBuffer);
           
-          // Persist
-          const blob = audioBufferToWav(newBuffer);
-          await saveAudioBlob(newKey, blob);
-          
+          // Update clip
           updateProject(prev => ({
               ...prev,
-              clips: prev.clips.map(c => c.id === clipId ? { 
-                  ...c, 
-                  bufferKey: newKey, 
-                  name: `${c.name} (${type === 'reverse' ? 'Rev' : 'Norm'})` 
-              } : c)
+              clips: prev.clips.map(c => c.id === clipId ? { ...c, bufferKey: newKey, name: `${c.name} (${type})` } : c)
           }));
       } catch (e) {
-          console.error("Audio processing failed:", e);
-          alert("Failed to process audio.");
+          console.error("Processing failed", e);
+          alert("Audio processing failed.");
       }
   }, [project.clips, updateProject]);
 
-  const handleRenameProject = useCallback(() => {
-      const newName = prompt("Project Name:", project.name);
-      if (newName) {
-          updateProject(prev => ({ ...prev, name: newName }));
-      }
-  }, [project.name, updateProject]);
-
-  // Handle adding asset from library
-  const handleAddAssetToProject = useCallback(async (asset: AssetMetadata) => {
-      try {
-          const blob = await getAudioBlob(asset.id);
-          if (!blob) {
-              alert("Audio data not found.");
-              return;
-          }
-          await audio.loadAudio(asset.id, blob);
-          const buffer = audio.buffers.get(asset.id);
-          const duration = buffer?.duration || 0;
-
-          // Determine target track
-          let targetTrackId = selectedTrackId;
-          // If the asset has a specific instrument type that matches a track name, smart place it?
-          // For now, just use selected or first.
-          if (!targetTrackId && project.tracks.length > 0) {
-              targetTrackId = project.tracks[0].id;
-          }
-          
-          // If no tracks, create one
-          if (!targetTrackId) {
-              const newTrack: Track = {
-                  id: crypto.randomUUID(),
-                  name: asset.instrument || 'Audio',
-                  volume: 0.8, pan: 0, muted: false, solo: false, color: '#4caf50',
-                  eq: {low:0, mid:0, high:0}, sends: {reverb:0, delay:0, chorus:0}
-              };
-              updateProject(p => ({...p, tracks: [...p.tracks, newTrack]}));
-              targetTrackId = newTrack.id;
-          }
-
-          // Auto-speed matching if it's a loop with known BPM
-          let speed = 1;
-          if (asset.type === 'loop' && asset.bpm) {
-              speed = project.bpm / asset.bpm;
-          }
-
-          const newClip: Clip = {
-              id: crypto.randomUUID(),
-              trackId: targetTrackId,
-              name: asset.name,
-              start: currentTime,
-              offset: 0,
-              duration: duration / speed, // Adjust timeline duration based on speed
-              bufferKey: asset.id,
-              fadeIn: 0,
-              fadeOut: 0,
-              speed: speed,
-              gain: 1.0
-          };
-
-          updateProject(prev => ({
-              ...prev,
-              clips: [...prev.clips, newClip]
-          }));
-          
-          setSelectedClipIds([newClip.id]);
-          setSelectedTrackId(targetTrackId);
-          setView('arranger'); // Switch to arranger to see the new clip
-          
-      } catch (e) {
-          console.error("Failed to add asset to project", e);
-      }
-  }, [selectedTrackId, project.tracks, currentTime, updateProject, project.bpm]);
-
   return (
-    <div className="fixed inset-0 flex flex-col bg-black text-white font-sans overflow-hidden select-none" style={{ touchAction: 'none' }}>
+    <div className="flex flex-col h-screen overflow-hidden">
       {/* Header */}
-      <div className="h-14 bg-studio-panel border-b border-zinc-800 flex items-center justify-between px-3 sm:px-4 z-50 shrink-0">
-        
-        {/* Left: Branding & History */}
-        <div className="flex items-center space-x-2 sm:space-x-4 w-auto">
-            <div className="flex items-center gap-2 cursor-pointer group" onClick={handleRenameProject} title="Rename Project">
-                <div className={`w-3 h-3 rounded-full ${visualBeat ? 'bg-studio-accent shadow-[0_0_10px_#ef4444]' : 'bg-zinc-700'}`} />
-                <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-red-500 to-orange-500 bg-clip-text text-transparent hidden md:block">
-                    PocketStudio <span className="text-zinc-500 mx-1 font-light">/</span> <span className="text-white hover:text-zinc-300 transition-colors">{project.name}</span>
-                </h1>
-            </div>
+      <div className="flex items-center justify-between h-14 bg-studio-panel border-b border-zinc-800 px-4 shrink-0 z-50">
+          <div className="flex items-center gap-4">
+              <h1 className="text-xl font-bold tracking-tight text-white hidden sm:block">
+                  <span className="text-studio-accent">Pocket</span>Studio
+              </h1>
+              <div className="flex gap-1">
+                  <button onClick={undo} disabled={past.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30">
+                      <Undo2 size={16} />
+                  </button>
+                  <button onClick={redo} disabled={future.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30">
+                      <Redo2 size={16} />
+                  </button>
+              </div>
+              <StatusIndicator status={saveStatus} />
+          </div>
 
-            <StatusIndicator status={saveStatus} />
-
-            <div className="flex space-x-0.5 border-l border-zinc-700 pl-2 sm:pl-4 hidden sm:flex">
-                <button onClick={undo} disabled={past.length === 0} className={`p-1.5 rounded ${past.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
-                    <Undo2 size={16} />
-                </button>
-                <button onClick={redo} disabled={future.length === 0} className={`p-1.5 rounded ${future.length === 0 ? 'text-zinc-700' : 'text-zinc-400 hover:text-white'}`}>
-                    <Redo2 size={16} />
-                </button>
-            </div>
-        </div>
-
-        {/* Center: Transport Controls */}
-        <div className="flex-1 flex items-center justify-center space-x-2 sm:space-x-4">
-             <TimeDisplay currentTime={currentTime} bpm={project.bpm} />
-             <TempoControl bpm={project.bpm} onChange={(bpm) => updateProject(p => ({ ...p, bpm }))} />
-
-             <button 
-                onClick={() => setAutoScroll(!autoScroll)}
-                className={`hidden sm:flex items-center justify-center w-8 h-8 rounded-full transition-all ${autoScroll ? 'bg-zinc-700 text-white' : 'bg-zinc-800 text-zinc-600 hover:text-zinc-400'}`}
-                title="Auto Scroll"
-             >
-                 <ArrowRightLeft size={14} className={autoScroll ? "" : "opacity-50"} />
-             </button>
-
-             <button 
-                onClick={() => updateProject(p => ({ ...p, metronomeOn: !p.metronomeOn }))}
-                className={`hidden sm:flex items-center justify-center w-8 h-8 rounded-full transition-all ${project.metronomeOn ? 'bg-studio-accent text-white shadow-lg' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
-                title="Metronome (M)"
-             >
-                 <Activity size={14} />
-             </button>
-
-             <button 
-                onClick={stop}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-zinc-800 hover:bg-zinc-700 shadow-knob flex items-center justify-center active:scale-95 transition-transform"
-                title="Stop"
-              >
-                  <Square fill="currentColor" size={12} className="text-zinc-400" />
-              </button>
-
-              <button 
-                onClick={handleRecordToggle}
-                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full shadow-knob border-2 sm:border-4 border-zinc-800 flex items-center justify-center active:scale-95 transition-transform ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-red-900 hover:bg-red-800'}`}
-                title="Record (R)"
-              >
-                  <Circle fill="white" size={14} className="text-white" />
-              </button>
-
-              <button 
-                onClick={handlePlayPauseClick}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-zinc-800 hover:bg-zinc-700 shadow-knob flex items-center justify-center active:scale-95 transition-transform"
-                title="Play/Pause (Space)"
-              >
-                 {isPlaying ? 
-                    <Pause fill="currentColor" size={14} className="text-zinc-200" /> : 
-                    <Play fill="currentColor" size={14} className="text-zinc-200 ml-0.5" />
-                 }
-              </button>
-        </div>
-
-        {/* Right: Actions */}
-        <div className="flex items-center justify-end space-x-1 sm:space-x-3 w-auto">
-             <button 
-                onClick={() => setShowExport(true)} 
-                disabled={isExporting}
-                className={`p-1.5 rounded text-zinc-400 hover:text-white transition-all flex items-center space-x-2 ${isExporting ? 'animate-pulse text-yellow-500' : ''}`}
-                title="Export Mix"
-             >
-                <Download size={18} />
-                <span className="hidden lg:inline text-xs font-bold">{isExporting ? 'Exporting...' : 'Export'}</span>
-             </button>
-
-             <div className="w-px h-6 bg-zinc-700 mx-1" />
-             
-             <button onClick={() => setShowShortcuts(true)} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform hidden sm:block" title="Keyboard Shortcuts (?)">
-                <Keyboard size={18} />
-             </button>
-             <button onClick={() => setShowSettings(true)} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform" title="Settings">
-                <Settings size={18} />
-             </button>
-             <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform">
-                <Upload size={18} />
-             </button>
-             <button onClick={addTrack} className="p-1.5 rounded text-zinc-400 hover:text-white active:scale-90 transition-transform">
-                <Plus size={18} />
-             </button>
-             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" className="hidden" />
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-hidden relative">
-        {view === 'mixer' ? (
-           <Mixer 
-             project={project} 
-             setProject={updateProject} 
-             isPlaying={isPlaying}
-             onPlayPause={handlePlayPauseClick}
-             onStop={stop}
-             onRecord={handleRecordToggle}
-             onOpenMaster={() => setShowMasterInspector(true)}
-           />
-        ) : view === 'arranger' ? (
-           <Arranger 
-             project={project}
-             setProject={updateProject}
-             currentTime={currentTime}
-             isPlaying={isPlaying}
-             isRecording={isRecording}
-             recordingStartTime={recordingStartTime}
-             onPlayPause={handlePlayPauseClick}
-             onStop={stop}
-             onRecord={handleRecordToggle}
-             onSeek={handleSeek}
-             onSplit={handleSplit}
-             zoom={zoom}
-             setZoom={setZoom}
-             selectedTrackId={selectedTrackId}
-             onSelectTrack={setSelectedTrackId}
-             selectedClipIds={selectedClipIds}
-             onSelectClip={setSelectedClipIds}
-             onOpenInspector={setInspectorTrackId}
-             onOpenClipInspector={setInspectorClipId}
-             onMoveTrack={handleMoveTrack}
-             onRenameClip={handleRenameClip}
-             onRenameTrack={handleRenameTrack}
-             onColorClip={handleColorClip}
-             autoScroll={autoScroll}
-           />
-        ) : (
-            <Library 
-                onLoadProject={loadProjectState} 
-                onCreateNewProject={createNewProject}
-                onAddAsset={handleAddAssetToProject}
-                currentProjectId={project.id}
-            />
-        )}
-
-        {inspectorTrackId && (
-            <TrackInspector 
-                track={project.tracks.find(t => t.id === inspectorTrackId)!} 
-                updateTrack={updateTrack}
-                onDeleteTrack={handleDeleteTrack}
-                onDuplicateTrack={handleDuplicateTrack}
-                onClose={() => setInspectorTrackId(null)}
-            />
-        )}
-
-        {inspectorClipId && project.clips.find(c => c.id === inspectorClipId) && (
-            <ClipInspector
-                clip={project.clips.find(c => c.id === inspectorClipId)!}
-                updateClip={updateClip}
-                onDeleteClip={handleDeleteClip}
-                onDuplicateClip={handleDuplicateClip}
-                onProcessAudio={handleProcessAudio}
-                onClose={() => setInspectorClipId(null)}
-            />
-        )}
-
-        {showMasterInspector && (
-            <MasterInspector
-                project={project}
-                setProject={updateProject}
-                onClose={() => setShowMasterInspector(false)}
-            />
-        )}
-
-        {showSettings && (
-            <SettingsDialog onClose={() => setShowSettings(false)} project={project} setProject={updateProject} />
-        )}
-
-        {showShortcuts && (
-            <ShortcutsDialog onClose={() => setShowShortcuts(false)} />
-        )}
-
-        {showExport && (
-            <ExportDialog 
-                project={project} 
-                onClose={() => setShowExport(false)} 
-                isExporting={isExporting} 
-                onExport={handleExport}
-            />
-        )}
-      </div>
-
-      {isCountingIn && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
-              <div className="bg-red-600 w-32 h-32 rounded-full flex items-center justify-center animate-pulse shadow-[0_0_50px_#ef4444]">
-                  <span className="text-4xl font-bold text-white">REC</span>
+          <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2 bg-zinc-900 rounded-full px-4 py-1.5 border border-zinc-800">
+                  <TimeDisplay currentTime={currentTime} bpm={project.bpm} />
+                  <div className="w-px h-6 bg-zinc-800 mx-1" />
+                  <TempoControl bpm={project.bpm} onChange={(bpm) => updateProject(p => ({...p, bpm}))} />
+              </div>
+              
+              <div className="flex items-center gap-4">
+                  <button 
+                    onClick={stop}
+                    className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center hover:bg-zinc-700 text-zinc-400"
+                    title="Stop"
+                  >
+                      <Square size={14} fill="currentColor" />
+                  </button>
+                  <button 
+                    onClick={handlePlayPauseClick}
+                    className={`w-12 h-12 rounded-full flex items-center justify-center transition-transform active:scale-95 ${isPlaying ? 'bg-zinc-200 text-black' : 'bg-studio-accent text-white shadow-lg shadow-red-500/20'}`}
+                    title="Play/Pause (Space)"
+                  >
+                      {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
+                  </button>
+                  <button 
+                    onClick={handleRecordToggle}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-zinc-800 text-red-500 hover:bg-zinc-700'}`}
+                    title="Record (R)"
+                  >
+                      <Circle size={14} fill="currentColor" />
+                  </button>
               </div>
           </div>
-      )}
 
-      {isRecording && !isCountingIn && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-red-600/90 text-white px-4 py-1 rounded-full animate-pulse shadow-lg z-50 pointer-events-none font-bold text-xs tracking-wider backdrop-blur-sm border border-red-400/50">
-              RECORDING {((currentTime - recordingStartTime).toFixed(1))}s
+          <div className="flex items-center gap-2">
+               <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+                    <button 
+                        onClick={() => setView('mixer')} 
+                        className={`p-2 rounded ${view === 'mixer' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                        title="Studio"
+                    >
+                        <Activity size={18} />
+                    </button>
+                    <button 
+                        onClick={() => setView('arranger')} 
+                        className={`p-2 rounded ${view === 'arranger' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                        title="Arranger"
+                    >
+                        <LayoutGrid size={18} />
+                    </button>
+                    <button 
+                        onClick={() => setView('library')} 
+                        className={`p-2 rounded ${view === 'library' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
+                        title="Library"
+                    >
+                        <Music size={18} />
+                    </button>
+               </div>
+               
+               <button onClick={() => setShowSettings(true)} className="p-2 text-zinc-400 hover:text-white" title="Settings">
+                   <Settings size={20} />
+               </button>
+               <button onClick={() => setShowExport(true)} className="p-2 text-studio-accent hover:text-red-400" title="Export Mix">
+                   <Download size={20} />
+               </button>
           </div>
+      </div>
+
+      {/* Main View */}
+      <div className="flex-1 overflow-hidden relative">
+          {view === 'mixer' && (
+              <Mixer 
+                project={project} 
+                setProject={setProject} 
+                isPlaying={isPlaying}
+                onPlayPause={handlePlayPauseClick}
+                onStop={stop}
+                onRecord={handleRecordToggle}
+                onOpenMaster={() => setShowMasterInspector(true)}
+              />
+          )}
+          {view === 'arranger' && (
+              <Arranger 
+                project={project} 
+                setProject={setProject}
+                currentTime={currentTime}
+                isPlaying={isPlaying}
+                isRecording={isRecording}
+                recordingStartTime={recordingStartTime}
+                onPlayPause={handlePlayPauseClick}
+                onStop={stop}
+                onRecord={handleRecordToggle}
+                onSeek={handleSeek}
+                onSplit={handleSplit}
+                zoom={zoom}
+                setZoom={setZoom}
+                selectedTrackId={selectedTrackId}
+                onSelectTrack={setSelectedTrackId}
+                selectedClipIds={selectedClipIds}
+                onSelectClip={setSelectedClipIds}
+                onOpenInspector={setInspectorTrackId}
+                onOpenClipInspector={setInspectorClipId}
+                onMoveTrack={(from, to) => updateProject(p => ({...p, tracks: moveItem(p.tracks, from, to)}))}
+                onRenameClip={(id, name) => updateClip(id, { name })}
+                onColorClip={(id, color) => updateClip(id, { color })}
+                onRenameTrack={(id, name) => updateTrack(id, { name })}
+                autoScroll={autoScroll}
+              />
+          )}
+          {view === 'library' && (
+              <Library 
+                  currentProjectId={project.id}
+                  onLoadProject={loadProjectState}
+                  onCreateNewProject={createNewProject}
+                  onAddAsset={async (asset) => {
+                      const trackId = selectedTrackId || project.tracks[0]?.id;
+                      if (!trackId) return;
+
+                      // Load blob if not in memory (library handles preview but maybe not persistent load)
+                      const blob = await getAudioBlob(asset.id);
+                      if (blob) {
+                         await audio.loadAudio(asset.id, blob);
+                         const buffer = audio.buffers.get(asset.id);
+                         const duration = buffer?.duration || 10;
+                         
+                         const newClip: Clip = {
+                             id: crypto.randomUUID(),
+                             trackId,
+                             name: asset.name,
+                             start: currentTime,
+                             offset: 0,
+                             duration,
+                             bufferKey: asset.id,
+                             fadeIn: 0, fadeOut: 0, speed: 1, gain: 1
+                         };
+                         updateProject(prev => ({...prev, clips: [...prev.clips, newClip]}));
+                         alert(`Added ${asset.name} to track.`);
+                      }
+                  }}
+              />
+          )}
+          
+          {/* Visual Metronome Overlay */}
+          {visualBeat && (
+              <div className="absolute top-4 right-4 w-4 h-4 rounded-full bg-white animate-ping pointer-events-none z-50" />
+          )}
+      </div>
+
+      {/* Inspectors & Dialogs */}
+      {inspectorTrackId && (
+          <TrackInspector 
+              track={project.tracks.find(t => t.id === inspectorTrackId)!} 
+              updateTrack={updateTrack}
+              onClose={() => setInspectorTrackId(null)}
+              onDeleteTrack={(id) => {
+                  if (confirm("Delete track and all its clips?")) {
+                      updateProject(prev => ({
+                          ...prev,
+                          tracks: prev.tracks.filter(t => t.id !== id),
+                          clips: prev.clips.filter(c => c.trackId !== id)
+                      }));
+                      setInspectorTrackId(null);
+                  }
+              }}
+              onDuplicateTrack={handleDuplicateTrack}
+          />
       )}
 
-      <div className="h-16 bg-studio-panel border-t border-zinc-800 flex items-center justify-around z-50 pb-safe shrink-0">
-        <button onClick={() => setView('mixer')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'mixer' ? 'text-studio-accent' : 'text-zinc-500'}`}>
-            <Mic size={24} />
-            <span className="text-[10px] font-medium">Studio</span>
-        </button>
-        <button onClick={() => setView('arranger')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'arranger' ? 'text-studio-accent' : 'text-zinc-500'}`}>
-            <LayoutGrid size={24} />
-            <span className="text-[10px] font-medium">Arranger</span>
-        </button>
-        <button onClick={() => setView('library')} className={`flex flex-col items-center space-y-1 active:scale-95 transition-transform ${view === 'library' ? 'text-studio-accent' : 'text-zinc-500'}`}>
-            <Music size={24} />
-            <span className="text-[10px] font-medium">Library</span>
-        </button>
-      </div>
+      {inspectorClipId && (
+          <ClipInspector 
+              clip={project.clips.find(c => c.id === inspectorClipId)!}
+              updateClip={updateClip}
+              onClose={() => setInspectorClipId(null)}
+              onDeleteClip={(id) => {
+                  updateProject(prev => ({...prev, clips: prev.clips.filter(c => c.id !== id)}));
+                  setInspectorClipId(null);
+              }}
+              onDuplicateClip={(id) => {
+                  const c = project.clips.find(clip => clip.id === id);
+                  if (c) {
+                      const copy = { ...c, id: crypto.randomUUID(), start: c.start + c.duration, name: `${c.name} (Copy)` };
+                      updateProject(prev => ({...prev, clips: [...prev.clips, copy]}));
+                  }
+              }}
+              onProcessAudio={handleProcessAudio}
+          />
+      )}
+      
+      {showMasterInspector && (
+          <MasterInspector 
+              project={project} 
+              setProject={setProject} 
+              onClose={() => setShowMasterInspector(false)} 
+          />
+      )}
+
+      {showSettings && (
+          <SettingsDialog 
+            onClose={() => setShowSettings(false)} 
+            project={project}
+            setProject={setProject}
+          />
+      )}
+      
+      {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
+      
+      {showExport && (
+          <ExportDialog 
+              onClose={() => setShowExport(false)} 
+              onExport={handleExport}
+              isExporting={isExporting}
+              project={project}
+          />
+      )}
     </div>
   );
 };

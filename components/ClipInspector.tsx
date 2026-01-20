@@ -2,7 +2,7 @@
 import React from 'react';
 import { Clip } from '../types';
 import Knob from './Knob';
-import { X, Copy, Trash2, Clock, Music2, TrendingUp, Scissors, FlipHorizontal, BarChart2, Palette, MicOff, Mic } from 'lucide-react';
+import { X, Copy, Trash2, Clock, Music2, TrendingUp, Scissors, FlipHorizontal, BarChart2, Palette, MicOff, Mic, Gauge } from 'lucide-react';
 
 interface ClipInspectorProps {
   clip: Clip;
@@ -18,6 +18,15 @@ const CLIP_COLORS = [
 ];
 
 const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDeleteClip, onDuplicateClip, onProcessAudio, onClose }) => {
+  
+  const currentDetune = clip.detune || 0;
+  const semitones = Math.floor(currentDetune / 100);
+  const fine = currentDetune % 100;
+
+  const updatePitch = (semi: number, cnts: number) => {
+      updateClip(clip.id, { detune: (semi * 100) + cnts });
+  };
+
   return (
     <div className="fixed inset-x-0 bottom-0 top-24 bg-studio-panel z-[100] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300 border-t border-zinc-700">
       
@@ -118,10 +127,34 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
               </div>
           </div>
 
-          {/* Color & Fades Row */}
+          {/* Pitch & Color */}
           <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                      <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
+                          <Gauge size={12} className="mr-2" /> Pitch
+                      </h3>
+                      <div className="flex justify-around items-center">
+                          <Knob 
+                              label="Semi" 
+                              value={(semitones + 12) / 24} // -12 to +12
+                              min={0} max={1}
+                              onChange={(v) => updatePitch(Math.round((v * 24) - 12), fine)} 
+                          />
+                          <Knob 
+                              label="Fine" 
+                              value={(fine + 50) / 100} // -50 to +50
+                              min={0} max={1}
+                              onChange={(v) => updatePitch(semitones, Math.round((v * 100) - 50))} 
+                          />
+                      </div>
+                      <div className="flex justify-around text-[10px] text-zinc-500 font-mono mt-2">
+                          <span>{semitones > 0 ? '+' : ''}{semitones} st</span>
+                          <span>{fine > 0 ? '+' : ''}{fine} ct</span>
+                      </div>
+                  </div>
+
+                  <div>
                         <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
                             <Palette size={12} className="mr-2" /> Appearance
                         </h3>
@@ -135,38 +168,39 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
                                 />
                             ))}
                         </div>
-                    </div>
+                  </div>
+              </div>
+          </div>
 
+          {/* Fades */}
+          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
+                    <Scissors size={12} className="mr-2" /> Fades
+                </h3>
+                <div className="space-y-4">
                     <div>
-                        <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
-                            <Scissors size={12} className="mr-2" /> Fades
-                        </h3>
-                        <div className="space-y-4">
-                            <div>
-                                <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
-                                    <span className="font-bold uppercase">Fade In</span>
-                                    <span>{clip.fadeIn.toFixed(2)}s</span>
-                                </div>
-                                <input 
-                                    type="range" min="0" max={Math.min(clip.duration, 5)} step="0.01"
-                                    value={clip.fadeIn}
-                                    onChange={(e) => updateClip(clip.id, { fadeIn: parseFloat(e.target.value) })}
-                                    className="w-full h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                                />
-                            </div>
-                            <div>
-                                <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
-                                    <span className="font-bold uppercase">Fade Out</span>
-                                    <span>{clip.fadeOut.toFixed(2)}s</span>
-                                </div>
-                                <input 
-                                    type="range" min="0" max={Math.min(clip.duration, 5)} step="0.01"
-                                    value={clip.fadeOut}
-                                    onChange={(e) => updateClip(clip.id, { fadeOut: parseFloat(e.target.value) })}
-                                    className="w-full h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                                />
-                            </div>
+                        <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+                            <span className="font-bold uppercase">Fade In</span>
+                            <span>{clip.fadeIn.toFixed(2)}s</span>
                         </div>
+                        <input 
+                            type="range" min="0" max={Math.min(clip.duration, 5)} step="0.01"
+                            value={clip.fadeIn}
+                            onChange={(e) => updateClip(clip.id, { fadeIn: parseFloat(e.target.value) })}
+                            className="w-full h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
+                        />
+                    </div>
+                    <div>
+                        <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+                            <span className="font-bold uppercase">Fade Out</span>
+                            <span>{clip.fadeOut.toFixed(2)}s</span>
+                        </div>
+                        <input 
+                            type="range" min="0" max={Math.min(clip.duration, 5)} step="0.01"
+                            value={clip.fadeOut}
+                            onChange={(e) => updateClip(clip.id, { fadeOut: parseFloat(e.target.value) })}
+                            className="w-full h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
+                        />
                     </div>
                 </div>
           </div>

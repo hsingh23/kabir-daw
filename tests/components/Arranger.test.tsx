@@ -40,6 +40,8 @@ const mockProject: ProjectState = {
   isLooping: true,
   metronomeOn: false,
   countIn: 0,
+  recordingLatency: 0,
+  inputMonitoring: false,
   masterVolume: 1,
   masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: { threshold: -24, ratio: 12 },
