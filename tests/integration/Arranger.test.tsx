@@ -141,4 +141,34 @@ describe('Arranger Integration', () => {
 
       expect(onSelectClip).toHaveBeenCalledWith(expect.arrayContaining(['c1', 'c2']));
   });
+
+  it('calls onSplitAtPlayhead when Split button is clicked', () => {
+      const onSplitAtPlayhead = vi.fn();
+      const { getByTitle } = render(
+        <Arranger
+            project={mockProject}
+            setProject={() => {}}
+            currentTime={0}
+            isPlaying={false}
+            isRecording={false}
+            onPlayPause={() => {}}
+            onStop={() => {}}
+            onRecord={() => {}}
+            onSeek={() => {}}
+            onSplit={() => {}}
+            onSplitAtPlayhead={onSplitAtPlayhead}
+            zoom={50}
+            setZoom={() => {}}
+            selectedTrackId={null}
+            onSelectTrack={() => {}}
+            selectedClipIds={[]}
+            onSelectClip={() => {}}
+            onOpenInspector={() => {}}
+        />
+      );
+
+      const splitBtn = getByTitle('Split at Playhead');
+      fireEvent.click(splitBtn);
+      expect(onSplitAtPlayhead).toHaveBeenCalled();
+  });
 });

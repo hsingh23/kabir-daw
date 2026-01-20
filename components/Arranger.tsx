@@ -1,12 +1,12 @@
 
 import React, { useRef, useState, useEffect, useMemo, memo } from 'react';
-import { ProjectState, Clip, ToolMode, Track, Marker } from '../types';
+import { ProjectState, Clip, ToolMode, Track, Marker, AssetMetadata } from '../types';
 import Waveform from './Waveform';
 import LevelMeter from './LevelMeter';
 import TrackIcon from './TrackIcon';
 import Playhead from './Playhead'; // Import new component
 import { audio } from '../services/audio';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare, Maximize, AlignStartVertical, Split, Gauge, MoreVertical, Eye, Settings, Disc, Plus, ChevronDown, ChevronUp, MicOff } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Activity, Mic, Music, Drum, Guitar, Keyboard, Sliders, Copy, Play, Pause, Square, Circle, Zap, GripVertical, Edit2, Music2, X, Palette, Volume2, Bookmark, CheckSquare, Maximize, AlignStartVertical, Split, Gauge, MoreVertical, Eye, Settings, Disc, Plus, ChevronDown, ChevronUp, MicOff, Minimize } from 'lucide-react';
 import CustomFader from './Fader';
 import Knob from './Knob';
 
@@ -22,6 +22,7 @@ interface ArrangerProps {
   onRecord: () => void;
   onSeek: (time: number) => void;
   onSplit: (clipId: string, time: number) => void;
+  onSplitAtPlayhead?: () => void;
   zoom: number;
   setZoom: (z: number) => void;
   selectedTrackId: string | null;
@@ -35,6 +36,7 @@ interface ArrangerProps {
   onColorClip?: (clipId: string, color: string) => void;
   onRenameTrack?: (trackId: string, name: string) => void;
   autoScroll?: boolean;
+  onDropAsset?: (trackId: string, time: number, asset: AssetMetadata) => void;
 }
 
 const SNAP_OPTIONS = [
@@ -123,9 +125,9 @@ const TrackLane = memo(({ track, clips, zoom, trackHeight, isCompactHeader, isSe
 
 const Arranger: React.FC<ArrangerProps> = ({ 
     project, setProject, currentTime, isPlaying, isRecording, recordingStartTime = 0,
-    onPlayPause, onStop, onRecord, onSeek, onSplit, zoom, setZoom,
+    onPlayPause, onStop, onRecord, onSeek, onSplit, onSplitAtPlayhead, zoom, setZoom,
     selectedTrackId, onSelectTrack, selectedClipIds, onSelectClip, onOpenInspector, onOpenClipInspector,
-    onMoveTrack, onRenameClip, onColorClip, onRenameTrack, autoScroll = true
+    onMoveTrack, onRenameClip, onColorClip, onRenameTrack, autoScroll = true, onDropAsset
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const trackHeaderRef = useRef<HTMLDivElement>(null);
@@ -224,6 +226,14 @@ const Arranger: React.FC<ArrangerProps> = ({
         ...prev,
         tracks: prev.tracks.map(t => t.id === id ? { ...t, ...updates } : t)
     }));
+  };
+
+  const handleZoomToFit = () => {
+      if (project.clips.length === 0 || !scrollContainerRef.current) return;
+      const maxTime = Math.max(...project.clips.map(c => c.start + c.duration), project.loopEnd);
+      const containerWidth = scrollContainerRef.current.clientWidth - 50; // padding
+      const newZoom = Math.max(10, Math.min(400, containerWidth / maxTime));
+      setZoom(newZoom);
   };
 
   const calculateSeekTime = (clientX: number, snap: boolean) => {
@@ -511,6 +521,31 @@ const Arranger: React.FC<ArrangerProps> = ({
       }
   };
 
+  const handleTimelineDrop = (e: React.DragEvent, trackId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const data = e.dataTransfer.getData('application/json');
+      if (data && onDropAsset && scrollContainerRef.current) {
+          try {
+              const asset = JSON.parse(data);
+              // Calculate Time
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const offsetX = e.clientX - rect.left;
+              const time = Math.max(0, offsetX / zoom);
+              
+              let snappedTime = time;
+              if (snapGrid > 0) {
+                  const snapSeconds = snapGrid * secondsPerBeat;
+                  snappedTime = Math.round(time / snapSeconds) * snapSeconds;
+              }
+              
+              onDropAsset(trackId, snappedTime, asset);
+          } catch (err) {
+              console.error("Failed to parse dropped data", err);
+          }
+      }
+  };
+
   return (
     <div 
         className="flex flex-col h-full bg-studio-bg text-xs select-none touch-none"
@@ -530,6 +565,18 @@ const Arranger: React.FC<ArrangerProps> = ({
                 <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded transition-all ${tool === ToolMode.SPLIT ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Scissors size={14} /></button>
                 <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded transition-all ${tool === ToolMode.ERASER ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Trash2 size={14} /></button>
             </div>
+            
+            {onSplitAtPlayhead && (
+                <button 
+                    onClick={onSplitAtPlayhead}
+                    className="flex items-center space-x-1 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                    title="Split at Playhead"
+                >
+                    <Split size={12} />
+                    <span className="hidden sm:inline">Split</span>
+                </button>
+            )}
+
             <div className="w-px h-5 bg-zinc-800 shrink-0 mx-1" />
             <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800">
                 <Grid size={12} className="text-zinc-500" />
@@ -551,6 +598,9 @@ const Arranger: React.FC<ArrangerProps> = ({
                  <ZoomOut size={12} className="text-zinc-500 cursor-pointer" onClick={() => setZoom(Math.max(10, zoom * 0.8))} />
                  <span className="text-[9px] text-zinc-400 w-8 text-center">{Math.round(zoom)}%</span>
                  <ZoomIn size={12} className="text-zinc-500 cursor-pointer" onClick={() => setZoom(Math.min(400, zoom * 1.2))} />
+                 <button onClick={handleZoomToFit} className="ml-1 text-zinc-500 hover:text-white" title="Zoom to Fit">
+                     <Minimize size={12} />
+                 </button>
              </div>
              <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800 hidden md:flex" title="Track Height">
                  <MoreVertical size={12} className="text-zinc-500" />
@@ -713,6 +763,12 @@ const Arranger: React.FC<ArrangerProps> = ({
                                 : ''
                             }`} 
                             style={{ top: i * trackHeight, height: trackHeight }}
+                            onDragOver={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.dataTransfer.dropEffect = 'copy';
+                            }}
+                            onDrop={(e) => handleTimelineDrop(e, track.id)}
                          >
                               {clipsByTrack.get(track.id)?.map(clip => {
                                   const isSelected = selectedClipIds.includes(clip.id);
@@ -769,6 +825,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                         isPlaying={isPlaying} 
                         scrollContainerRef={scrollContainerRef}
                         staticTime={currentTime}
+                        autoScroll={autoScroll}
                     />
                 </div>
             </div>

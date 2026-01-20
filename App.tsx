@@ -13,15 +13,19 @@ import ExportDialog from './components/ExportDialog';
 import TimeDisplay from './components/TimeDisplay';
 import TempoControl from './components/TempoControl';
 import StatusIndicator from './components/StatusIndicator';
+import HeaderInputMeter from './components/HeaderInputMeter';
+import { ToastProvider, useToast } from './components/Toast'; // Import Toast
 import { audio } from './services/audio';
 import { saveAudioBlob, saveProject, getProject, getAudioBlob } from './services/db';
 import { moveItem, audioBufferToWav } from './services/utils';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download, Play, Pause, Square, Circle, Settings, Activity, ArrowRightLeft, Keyboard } from 'lucide-react';
+import { useProjectState } from './hooks/useProjectState';
+import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download, Play, Pause, Square, Circle, Settings, Activity, ArrowRightLeft, Keyboard, ArrowRight } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
   name: 'New Project',
+  notes: '',
   bpm: 120,
   tracks: [
     { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
@@ -66,16 +70,15 @@ const INITIAL_PROJECT: ProjectState = {
   }
 };
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
+  const { showToast } = useToast();
   // URL State Initialization
   const [view, setView] = useState<'mixer' | 'arranger' | 'library'>(() => {
       const params = new URLSearchParams(window.location.search);
       return (params.get('view') as 'mixer' | 'arranger' | 'library') || 'mixer';
   });
 
-  const [project, setProject] = useState<ProjectState>(INITIAL_PROJECT);
-  const [past, setPast] = useState<ProjectState[]>([]);
-  const [future, setFuture] = useState<ProjectState[]>([]);
+  const { project, updateProject, setProject, undo, redo, past, future, loadProject } = useProjectState(INITIAL_PROJECT);
   const [clipboard, setClipboard] = useState<Clip[]>([]); 
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -110,7 +113,6 @@ const App: React.FC = () => {
   const [visualBeat, setVisualBeat] = useState(false);
 
   const rafRef = useRef<number>(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const saveTimeoutRef = useRef<number | null>(null);
 
   // Sync URL State
@@ -141,11 +143,15 @@ const App: React.FC = () => {
           } catch (e) {
             console.error("Save failed", e);
             setSaveStatus('unsaved');
+            showToast("Failed to auto-save", 'error');
           }
       }, 2000) as unknown as number; 
-  }, [project]);
+  }, [project, showToast]);
 
   const loadProjectState = async (projectId: string) => {
+    // Critical: Clean up old buffers to prevent memory leak
+    audio.clearBuffers();
+    
     const saved = await getProject(projectId);
     if (saved) {
         // Migration for new state fields
@@ -177,22 +183,30 @@ const App: React.FC = () => {
             }))
         };
         
-        // Load Audio Buffers concurrently
+        // Load Audio Buffers concurrently with error handling
         const bufferPromises = migrated.clips.map(async (clip: Clip) => {
-            const blob = await getAudioBlob(clip.bufferKey);
-            if (blob) {
-                await audio.loadAudio(clip.bufferKey, blob);
+            try {
+                const blob = await getAudioBlob(clip.bufferKey);
+                if (blob) {
+                    await audio.loadAudio(clip.bufferKey, blob);
+                } else {
+                    console.warn(`Audio data missing for clip: ${clip.name}`);
+                }
+            } catch (e) {
+                console.error(`Failed to load audio for clip ${clip.name}`, e);
+                // We proceed even if audio fails, so the project structure remains
             }
         });
         
         await Promise.all(bufferPromises);
         
-        // Set project AFTER buffers are ready to ensure Waveform components can find data
-        setProject(migrated);
+        // Set project AFTER buffers are ready
+        loadProject(migrated);
+        showToast("Project loaded successfully", 'success');
         
     } else if (projectId !== 'default-project') {
         // If loading a new ID that doesn't exist, init it
-        setProject({ ...INITIAL_PROJECT, id: projectId, name: 'New Project' });
+        loadProject({ ...INITIAL_PROJECT, id: projectId, name: 'New Project' });
     }
   };
 
@@ -201,18 +215,8 @@ const App: React.FC = () => {
       const newProject = { ...INITIAL_PROJECT, id: newId, name: 'Untitled Project' };
       await saveProject(newProject);
       await loadProjectState(newId);
-  }, []);
-
-  const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
-      setProject(current => {
-          const next = typeof value === 'function' ? (value as (prev: ProjectState) => ProjectState)(current) : value;
-          if (next !== current) {
-              setPast(prev => [...prev.slice(-19), current]);
-              setFuture([]);
-          }
-          return next;
-      });
-  }, []);
+      showToast("Created new project", 'info');
+  }, [loadProject, showToast]);
 
   const updateTrack = useCallback((id: string, updates: Partial<Track>) => {
       updateProject(prev => ({
@@ -227,24 +231,6 @@ const App: React.FC = () => {
           clips: prev.clips.map(c => c.id === id ? { ...c, ...updates } : c)
       }));
   }, [updateProject]);
-
-  const undo = useCallback(() => {
-      if (past.length === 0) return;
-      const previous = past[past.length - 1];
-      const newPast = past.slice(0, past.length - 1);
-      setFuture(prev => [project, ...prev]);
-      setProject(previous);
-      setPast(newPast);
-  }, [past, project]);
-
-  const redo = useCallback(() => {
-      if (future.length === 0) return;
-      const next = future[0];
-      const newFuture = future.slice(1);
-      setPast(prev => [...prev, project]);
-      setProject(next);
-      setFuture(newFuture);
-  }, [future, project]);
 
   const togglePlay = useCallback(() => {
       setIsPlaying(prevIsPlaying => {
@@ -278,10 +264,11 @@ const App: React.FC = () => {
             audio.play(project.clips, project.tracks, startTime);
             setIsPlaying(true);
             setIsRecording(true);
+            showToast("Recording started", 'success');
         } catch (_e) {
-            alert("Could not start recording. Check microphone permissions.");
+            showToast("Could not start recording. Check microphone permissions.", 'error');
         }
-  }, [currentTime, project.clips, project.tracks, project.inputMonitoring]);
+  }, [currentTime, project.clips, project.tracks, project.inputMonitoring, showToast]);
 
   const handleRecordToggle = useCallback(async () => {
     if (isRecording) {
@@ -331,10 +318,11 @@ const App: React.FC = () => {
                 clips: [...prev.clips, newClip]
             }));
             setSelectedClipIds([newClip.id]);
+            showToast("Recording saved", 'success');
         }
     } else {
         if (!selectedTrackId) {
-            alert("Select a track to record on first.");
+            showToast("Select a track to record on first.", 'error');
             return;
         }
         
@@ -348,7 +336,7 @@ const App: React.FC = () => {
             startActualRecording();
         }
     }
-  }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject, project.countIn, project.bpm, project.recordingLatency, startActualRecording]);
+  }, [isRecording, selectedTrackId, recordingStartTime, currentTime, project.clips, project.tracks, updateProject, project.countIn, project.bpm, project.recordingLatency, startActualRecording, showToast]);
 
   const handleSplit = useCallback((clipId: string, time: number) => {
     const clip = project.clips.find(c => c.id === clipId);
@@ -382,6 +370,27 @@ const App: React.FC = () => {
     setSelectedClipIds([clipB.id]);
   }, [project.clips, updateProject]);
 
+  const handleSplitAtPlayhead = useCallback(() => {
+      let splitCount = 0;
+      if (selectedClipIds.length > 0) {
+          selectedClipIds.forEach(id => {
+              handleSplit(id, currentTime);
+              splitCount++;
+          });
+      } else if (selectedTrackId) {
+          const clipsToSplit = project.clips.filter(c => 
+              c.trackId === selectedTrackId && 
+              c.start < currentTime && 
+              (c.start + c.duration) > currentTime
+          );
+          clipsToSplit.forEach(c => {
+              handleSplit(c.id, currentTime);
+              splitCount++;
+          });
+      }
+      if (splitCount > 0) showToast("Split clip(s)", 'info');
+  }, [selectedClipIds, selectedTrackId, currentTime, project.clips, handleSplit, showToast]);
+
   const handleDuplicateTrack = useCallback((trackId: string) => {
       const track = project.tracks.find(t => t.id === trackId);
       if (!track) return;
@@ -414,8 +423,9 @@ const App: React.FC = () => {
       
       setSelectedTrackId(newTrackId);
       if (inspectorTrackId) setInspectorTrackId(newTrackId);
+      showToast("Track duplicated", 'success');
 
-  }, [project.tracks, project.clips, updateProject, inspectorTrackId]);
+  }, [project.tracks, project.clips, updateProject, inspectorTrackId, showToast]);
 
   // Use the extracted keyboard shortcuts hook
   useKeyboardShortcuts({
@@ -434,6 +444,7 @@ const App: React.FC = () => {
       clipboard,
       setClipboard,
       handleSplit,
+      onSplitAtPlayhead: handleSplitAtPlayhead,
       setShowShortcuts
   });
 
@@ -473,13 +484,8 @@ const App: React.FC = () => {
 
         if (project.isLooping && time >= project.loopEnd && !isRecording) {
             audio.play(project.clips, project.tracks, project.loopStart);
-            // We still need to reset currentTime for non-animation purposes (like seeking)
-            // But we don't spam it for animation anymore
             setCurrentTime(project.loopStart);
         } 
-        
-        // Removed: setCurrentTime(time) - This prevents full re-render on every frame
-        // Playhead component handles the playhead position directly via RAF
         
         rafRef.current = requestAnimationFrame(loop);
       } else {
@@ -523,7 +529,7 @@ const App: React.FC = () => {
 
   const handleExport = useCallback(async (options: { type: 'master' | 'stems' }) => {
       if (project.clips.length === 0) {
-          alert("Nothing to export!");
+          showToast("Nothing to export!", 'error');
           return;
       }
       setIsExporting(true);
@@ -539,6 +545,7 @@ const App: React.FC = () => {
                   a.download = `${project.name || 'PocketStudio_Mix'}_${new Date().toISOString().slice(0,10)}.wav`;
                   a.click();
                   URL.revokeObjectURL(url);
+                  showToast("Export complete!", 'success');
               }
           } else {
               // Export Stems
@@ -561,41 +568,65 @@ const App: React.FC = () => {
                       URL.revokeObjectURL(url);
                   }
               }
+              showToast("Stems exported!", 'success');
           }
       } catch (e) {
           console.error("Export failed", e);
-          alert("Export failed. See console.");
+          showToast("Export failed. See console.", 'error');
       } finally {
           setIsExporting(false);
           setShowExport(false);
       }
-  }, [project, isPlaying, stop]);
+  }, [project, isPlaying, stop, showToast]);
 
   const handleProcessAudio = useCallback(async (clipId: string, type: 'reverse' | 'normalize') => {
       const clip = project.clips.find(c => c.id === clipId);
       if (!clip) return;
-      
       try {
           const newBuffer = audio.processAudioBuffer(clip.bufferKey, type);
           const newKey = crypto.randomUUID();
-          
-          // Convert back to blob to save
           const wav = audioBufferToWav(newBuffer);
           await saveAudioBlob(newKey, wav);
-          
-          // Cache in memory
           audio.buffers.set(newKey, newBuffer);
-          
-          // Update clip
           updateProject(prev => ({
               ...prev,
               clips: prev.clips.map(c => c.id === clipId ? { ...c, bufferKey: newKey, name: `${c.name} (${type})` } : c)
           }));
+          showToast(`Audio ${type}d`, 'success');
       } catch (e) {
           console.error("Processing failed", e);
-          alert("Audio processing failed.");
+          showToast("Audio processing failed.", 'error');
       }
-  }, [project.clips, updateProject]);
+  }, [project.clips, updateProject, showToast]);
+
+  const handleDropAsset = async (trackId: string, time: number, asset: AssetMetadata) => {
+      const blob = await getAudioBlob(asset.id);
+      if (blob) {
+          await audio.loadAudio(asset.id, blob);
+          const buffer = audio.buffers.get(asset.id);
+          const duration = buffer?.duration || 10;
+          
+          const newClip: Clip = {
+              id: crypto.randomUUID(),
+              trackId,
+              name: asset.name,
+              start: time,
+              offset: 0,
+              duration,
+              bufferKey: asset.id,
+              fadeIn: 0, fadeOut: 0, speed: 1, gain: 1
+          };
+          updateProject(prev => ({...prev, clips: [...prev.clips, newClip]}));
+      }
+  };
+
+  const addAssetToTrack = async (asset: AssetMetadata) => {
+        const trackId = selectedTrackId || project.tracks[0]?.id;
+        if (!trackId) return;
+        // Default to adding at playhead if using button
+        await handleDropAsset(trackId, currentTime, asset);
+        showToast(`Added ${asset.name} to track`, 'success');
+  };
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -606,10 +637,10 @@ const App: React.FC = () => {
                   <span className="text-studio-accent">Pocket</span>Studio
               </h1>
               <div className="flex gap-1">
-                  <button onClick={undo} disabled={past.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30">
+                  <button onClick={undo} disabled={past.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30" title="Undo">
                       <Undo2 size={16} />
                   </button>
-                  <button onClick={redo} disabled={future.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30">
+                  <button onClick={redo} disabled={future.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30" title="Redo">
                       <Redo2 size={16} />
                   </button>
               </div>
@@ -618,7 +649,7 @@ const App: React.FC = () => {
 
           <div className="flex items-center gap-6">
               <div className="flex items-center gap-2 bg-zinc-900 rounded-full px-4 py-1.5 border border-zinc-800">
-                  <TimeDisplay currentTime={currentTime} bpm={project.bpm} />
+                  <TimeDisplay currentTime={currentTime} bpm={project.bpm} isPlaying={isPlaying} />
                   <div className="w-px h-6 bg-zinc-800 mx-1" />
                   <TempoControl bpm={project.bpm} onChange={(bpm) => updateProject(p => ({...p, bpm}))} />
               </div>
@@ -645,11 +676,17 @@ const App: React.FC = () => {
                   >
                       <Circle size={14} fill="currentColor" />
                   </button>
+                  
+                  {/* Visual Feedback for Input */}
+                  {(isRecording || project.inputMonitoring) && (
+                      <HeaderInputMeter isRecordingOrMonitoring={isRecording || project.inputMonitoring} />
+                  )}
               </div>
           </div>
 
           <div className="flex items-center gap-2">
-               <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+               {/* View Toggles / Tools */}
+               <div className="hidden lg:flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
                     <button 
                         onClick={() => setView('mixer')} 
                         className={`p-2 rounded ${view === 'mixer' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
@@ -664,13 +701,23 @@ const App: React.FC = () => {
                     >
                         <LayoutGrid size={18} />
                     </button>
-                    <button 
-                        onClick={() => setView('library')} 
-                        className={`p-2 rounded ${view === 'library' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-white'}`}
-                        title="Library"
-                    >
-                        <Music size={18} />
-                    </button>
+                    {/* Auto-Scroll Toggle */}
+                    {view === 'arranger' && (
+                        <button 
+                            onClick={() => setAutoScroll(!autoScroll)} 
+                            className={`p-2 rounded ml-1 ${autoScroll ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-white'}`}
+                            title="Auto-Scroll"
+                        >
+                            <ArrowRight size={18} />
+                        </button>
+                    )}
+               </div>
+               
+               {/* Mobile Toggles */}
+               <div className="lg:hidden flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+                    <button onClick={() => setView('mixer')} className={`p-2 rounded ${view === 'mixer' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}><Activity size={18} /></button>
+                    <button onClick={() => setView('arranger')} className={`p-2 rounded ${view === 'arranger' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}><LayoutGrid size={18} /></button>
+                    <button onClick={() => setView('library')} className={`p-2 rounded ${view === 'library' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}><Music size={18} /></button>
                </div>
                
                <button onClick={() => setShowSettings(true)} className="p-2 text-zinc-400 hover:text-white" title="Settings">
@@ -682,84 +729,82 @@ const App: React.FC = () => {
           </div>
       </div>
 
-      {/* Main View */}
-      <div className="flex-1 overflow-hidden relative">
-          {view === 'mixer' && (
-              <Mixer 
-                project={project} 
-                setProject={setProject} 
-                isPlaying={isPlaying}
-                onPlayPause={handlePlayPauseClick}
-                onStop={stop}
-                onRecord={handleRecordToggle}
-                onOpenMaster={() => setShowMasterInspector(true)}
-              />
-          )}
-          {view === 'arranger' && (
-              <Arranger 
-                project={project} 
-                setProject={setProject}
-                currentTime={currentTime}
-                isPlaying={isPlaying}
-                isRecording={isRecording}
-                recordingStartTime={recordingStartTime}
-                onPlayPause={handlePlayPauseClick}
-                onStop={stop}
-                onRecord={handleRecordToggle}
-                onSeek={handleSeek}
-                onSplit={handleSplit}
-                zoom={zoom}
-                setZoom={setZoom}
-                selectedTrackId={selectedTrackId}
-                onSelectTrack={setSelectedTrackId}
-                selectedClipIds={selectedClipIds}
-                onSelectClip={setSelectedClipIds}
-                onOpenInspector={setInspectorTrackId}
-                onOpenClipInspector={setInspectorClipId}
-                onMoveTrack={(from, to) => updateProject(p => ({...p, tracks: moveItem(p.tracks, from, to)}))}
-                onRenameClip={(id, name) => updateClip(id, { name })}
-                onColorClip={(id, color) => updateClip(id, { color })}
-                onRenameTrack={(id, name) => updateTrack(id, { name })}
-                autoScroll={autoScroll}
-              />
-          )}
-          {view === 'library' && (
-              <Library 
+      {/* Main View Area */}
+      <div className="flex flex-1 overflow-hidden relative">
+          
+          {/* Central Workspace */}
+          <div className="flex-1 overflow-hidden relative flex flex-col">
+              {view === 'mixer' && (
+                  <Mixer 
+                    project={project} 
+                    setProject={setProject} 
+                    isPlaying={isPlaying}
+                    onPlayPause={handlePlayPauseClick}
+                    onStop={stop}
+                    onRecord={handleRecordToggle}
+                    onOpenMaster={() => setShowMasterInspector(true)}
+                  />
+              )}
+              {/* Force Arranger view on desktop if Library was selected in state but now sidebar handles it, or just use view state normally */}
+              {(view === 'arranger' || (view === 'library' && window.innerWidth >= 1024)) && (
+                  <Arranger 
+                    project={project} 
+                    setProject={setProject}
+                    currentTime={currentTime}
+                    isPlaying={isPlaying}
+                    isRecording={isRecording}
+                    recordingStartTime={recordingStartTime}
+                    onPlayPause={handlePlayPauseClick}
+                    onStop={stop}
+                    onRecord={handleRecordToggle}
+                    onSeek={handleSeek}
+                    onSplit={handleSplit}
+                    onSplitAtPlayhead={handleSplitAtPlayhead}
+                    zoom={zoom}
+                    setZoom={setZoom}
+                    selectedTrackId={selectedTrackId}
+                    onSelectTrack={setSelectedTrackId}
+                    selectedClipIds={selectedClipIds}
+                    onSelectClip={setSelectedClipIds}
+                    onOpenInspector={setInspectorTrackId}
+                    onOpenClipInspector={setInspectorClipId}
+                    onMoveTrack={(from, to) => updateProject(p => ({...p, tracks: moveItem(p.tracks, from, to)}))}
+                    onRenameClip={(id, name) => updateClip(id, { name })}
+                    onColorClip={(id, color) => updateClip(id, { color })}
+                    onRenameTrack={(id, name) => updateTrack(id, { name })}
+                    autoScroll={autoScroll}
+                    onDropAsset={handleDropAsset}
+                  />
+              )}
+              {/* Mobile Only Library View */}
+              {view === 'library' && (
+                  <div className="lg:hidden h-full">
+                      <Library 
+                          currentProjectId={project.id}
+                          onLoadProject={loadProjectState}
+                          onCreateNewProject={createNewProject}
+                          onAddAsset={addAssetToTrack}
+                      />
+                  </div>
+              )}
+              
+              {/* Visual Metronome Overlay */}
+              {visualBeat && (
+                  <div className="absolute top-4 right-4 w-4 h-4 rounded-full bg-white animate-ping pointer-events-none z-50" />
+              )}
+          </div>
+
+          {/* Desktop Library Sidebar */}
+          <div className="hidden lg:block w-80 border-l border-zinc-800 bg-studio-panel z-10 shrink-0">
+               <Library 
                   currentProjectId={project.id}
                   onLoadProject={loadProjectState}
                   onCreateNewProject={createNewProject}
-                  onAddAsset={async (asset) => {
-                      const trackId = selectedTrackId || project.tracks[0]?.id;
-                      if (!trackId) return;
+                  onAddAsset={addAssetToTrack}
+                  variant="sidebar"
+               />
+          </div>
 
-                      // Load blob if not in memory (library handles preview but maybe not persistent load)
-                      const blob = await getAudioBlob(asset.id);
-                      if (blob) {
-                         await audio.loadAudio(asset.id, blob);
-                         const buffer = audio.buffers.get(asset.id);
-                         const duration = buffer?.duration || 10;
-                         
-                         const newClip: Clip = {
-                             id: crypto.randomUUID(),
-                             trackId,
-                             name: asset.name,
-                             start: currentTime,
-                             offset: 0,
-                             duration,
-                             bufferKey: asset.id,
-                             fadeIn: 0, fadeOut: 0, speed: 1, gain: 1
-                         };
-                         updateProject(prev => ({...prev, clips: [...prev.clips, newClip]}));
-                         alert(`Added ${asset.name} to track.`);
-                      }
-                  }}
-              />
-          )}
-          
-          {/* Visual Metronome Overlay */}
-          {visualBeat && (
-              <div className="absolute top-4 right-4 w-4 h-4 rounded-full bg-white animate-ping pointer-events-none z-50" />
-          )}
       </div>
 
       {/* Inspectors & Dialogs */}
@@ -776,6 +821,7 @@ const App: React.FC = () => {
                           clips: prev.clips.filter(c => c.trackId !== id)
                       }));
                       setInspectorTrackId(null);
+                      showToast("Track deleted", 'info');
                   }
               }}
               onDuplicateTrack={handleDuplicateTrack}
@@ -790,12 +836,14 @@ const App: React.FC = () => {
               onDeleteClip={(id) => {
                   updateProject(prev => ({...prev, clips: prev.clips.filter(c => c.id !== id)}));
                   setInspectorClipId(null);
+                  showToast("Clip deleted", 'info');
               }}
               onDuplicateClip={(id) => {
                   const c = project.clips.find(clip => clip.id === id);
                   if (c) {
                       const copy = { ...c, id: crypto.randomUUID(), start: c.start + c.duration, name: `${c.name} (Copy)` };
                       updateProject(prev => ({...prev, clips: [...prev.clips, copy]}));
+                      showToast("Clip duplicated", 'success');
                   }
               }}
               onProcessAudio={handleProcessAudio}
@@ -830,6 +878,15 @@ const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+// Wrap App content with providers
+const App: React.FC = () => {
+    return (
+        <ToastProvider>
+            <AppContent />
+        </ToastProvider>
+    );
 };
 
 export default App;

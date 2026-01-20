@@ -1,13 +1,31 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { audio } from '../services/audio';
 
 interface TimeDisplayProps {
   currentTime: number;
   bpm: number;
+  isPlaying: boolean;
 }
 
-const TimeDisplay: React.FC<TimeDisplayProps> = ({ currentTime, bpm }) => {
+const TimeDisplay: React.FC<TimeDisplayProps> = ({ currentTime, bpm, isPlaying }) => {
   const [mode, setMode] = useState<'bars' | 'time'>('bars');
+  const [displayTime, setDisplayTime] = useState(currentTime);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      setDisplayTime(currentTime);
+      return;
+    }
+
+    const loop = () => {
+      setDisplayTime(audio.getCurrentTime());
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isPlaying, currentTime]); // Sync with props when paused
 
   const formatBars = (time: number, bpm: number) => {
     const secondsPerBeat = 60 / bpm;
@@ -35,7 +53,7 @@ const TimeDisplay: React.FC<TimeDisplayProps> = ({ currentTime, bpm }) => {
       title="Toggle Time Format"
     >
       <span className="text-sm md:text-lg font-mono font-bold text-studio-accent leading-none tabular-nums tracking-tighter">
-        {mode === 'bars' ? formatBars(currentTime, bpm) : formatTime(currentTime)}
+        {mode === 'bars' ? formatBars(displayTime, bpm) : formatTime(displayTime)}
       </span>
       <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest leading-none mt-0.5">
         {mode === 'bars' ? 'BARS' : 'TIME'}

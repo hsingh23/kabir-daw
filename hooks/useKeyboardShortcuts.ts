@@ -18,6 +18,7 @@ interface UseKeyboardShortcutsProps {
     setClipboard: (clips: Clip[]) => void;
     clipboard: Clip[];
     handleSplit: (clipId: string, time: number) => void;
+    onSplitAtPlayhead: () => void;
     setShowShortcuts: (show: boolean) => void;
 }
 
@@ -37,6 +38,7 @@ export const useKeyboardShortcuts = ({
     setClipboard,
     clipboard,
     handleSplit,
+    onSplitAtPlayhead,
     setShowShortcuts
 }: UseKeyboardShortcutsProps) => {
 
@@ -148,16 +150,7 @@ export const useKeyboardShortcuts = ({
             // Split (Cmd/Ctrl + B)
             if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
                 e.preventDefault();
-                if (selectedClipIds.length > 0) {
-                    selectedClipIds.forEach(id => handleSplit(id, currentTime));
-                } else if (selectedTrackId) {
-                    const clipsToSplit = project.clips.filter(c => 
-                        c.trackId === selectedTrackId && 
-                        c.start < currentTime && 
-                        (c.start + c.duration) > currentTime
-                    );
-                    clipsToSplit.forEach(c => handleSplit(c.id, currentTime));
-                }
+                onSplitAtPlayhead();
             }
   
             // Tab Navigation (Cycle Clips)
@@ -236,5 +229,5 @@ export const useKeyboardShortcuts = ({
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, setProject, clipboard, currentTime, selectedTrackId, handleSplit, setSelectedClipIds, setSelectedTrackId, setClipboard, setShowShortcuts]); 
+    }, [project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, setProject, clipboard, currentTime, selectedTrackId, handleSplit, onSplitAtPlayhead, setSelectedClipIds, setSelectedTrackId, setClipboard, setShowShortcuts]); 
 }

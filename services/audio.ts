@@ -60,6 +60,9 @@ class AudioEngine {
   metronomeGain: GainNode;
   
   buffers: Map<string, AudioBuffer> = new Map();
+  // Cache for pre-computed waveform peaks (100 samples/sec)
+  peaks: Map<string, Float32Array> = new Map(); 
+  
   activeSources: Map<string, AudioBufferSourceNode> = new Map();
   
   // Persistent nodes for each track: ID -> Channel Strip
@@ -96,6 +99,7 @@ class AudioEngine {
   // Monitoring
   private monitorNode: MediaStreamAudioSourceNode | null = null;
   private monitorGain: GainNode;
+  private inputAnalyser: AnalyserNode; // New: Input Level Metering
 
   private noiseBuffer: AudioBuffer | null = null;
 
@@ -157,6 +161,11 @@ class AudioEngine {
     // Monitoring
     this.monitorGain = this.ctx.createGain();
     this.monitorGain.gain.value = 0; // Muted by default
+    
+    // Input Analyser (always active if recording/monitoring)
+    this.inputAnalyser = this.ctx.createAnalyser();
+    this.inputAnalyser.fftSize = 256;
+    this.inputAnalyser.smoothingTimeConstant = 0.3;
 
     this.setupRouting();
     this.loadImpulseResponse();
@@ -169,6 +178,24 @@ class AudioEngine {
     }
   }
 
+  public clearBuffers() {
+    this.stop();
+    this.buffers.clear();
+    this.peaks.clear();
+    // Clean up track specific nodes to prevent leaks/stale state
+    this.trackChannels.forEach(ch => {
+        try {
+            ch.input.disconnect();
+            ch.panner.disconnect();
+        } catch (e) {
+            // Ignore disconnection errors
+        }
+    });
+    this.trackChannels.clear();
+  }
+
+  // ... (setupRouting, createNoiseBuffer, loadImpulseResponse, loadAudio, computePeaks, getPeaks, processAudioBuffer, createTrackGraph, getTrackChannel, applyTrackSettings, syncTracks, syncInstruments, play, scheduleSource methods)
+
   setupRouting() {
     // Master Routing: Gain -> Low -> Mid -> High -> Compressor -> Analyser -> Dest
     this.masterGain.connect(this.masterLow);
@@ -178,7 +205,7 @@ class AudioEngine {
     this.compressor.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
 
-    // Monitor Routing
+    // Monitor Routing: MonitorGain -> MasterGain
     this.monitorGain.connect(this.masterGain);
 
     // -- Reverb Routing --
@@ -253,11 +280,41 @@ class AudioEngine {
         const arrayBuffer = await blob.arrayBuffer();
         const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
         this.buffers.set(key, audioBuffer);
+        // Compute peaks immediately upon load
+        this.computePeaks(key, audioBuffer);
         return audioBuffer;
     } catch (e) {
         console.error("Error decoding audio data:", e);
         throw new Error("Failed to decode audio.");
     }
+  }
+
+  computePeaks(key: string, buffer: AudioBuffer) {
+      // Create a 100Hz summary (100 peaks per second of audio)
+      // For a 3 minute song: 180 * 100 = 18,000 points. Low memory footprint.
+      const samplesPerPeak = Math.floor(buffer.sampleRate / 100);
+      const length = Math.ceil(buffer.length / samplesPerPeak);
+      const peaks = new Float32Array(length);
+      const data = buffer.getChannelData(0); // Use first channel for visualization
+      
+      for (let i = 0; i < length; i++) {
+          const start = i * samplesPerPeak;
+          const end = Math.min(start + samplesPerPeak, buffer.length);
+          let max = 0;
+          // Stride optimization within the peak calculation itself
+          // We don't need every single sample for a visual summary
+          const stride = 10; 
+          for (let j = start; j < end; j += stride) {
+              const val = Math.abs(data[j]);
+              if (val > max) max = val;
+          }
+          peaks[i] = max;
+      }
+      this.peaks.set(key, peaks);
+  }
+
+  getPeaks(key: string): Float32Array | undefined {
+      return this.peaks.get(key);
   }
 
   processAudioBuffer(key: string, type: 'reverse' | 'normalize'): AudioBuffer {
@@ -301,55 +358,36 @@ class AudioEngine {
       return newBuffer;
   }
 
-  /**
-   * FACTORY: Creates a track processing chain.
-   * Used for both Live context and Offline Export context to ensure consistent sound.
-   */
   createTrackGraph(context: BaseAudioContext, destination: AudioNode): AudioGraphChain {
       const input = context.createGain(); 
-      
       const distortionNode = context.createWaveShaper();
       distortionNode.oversample = '4x';
-
       const lowFilter = context.createBiquadFilter();
       lowFilter.type = 'lowshelf';
       lowFilter.frequency.value = 320;
-
       const midFilter = context.createBiquadFilter();
       midFilter.type = 'peaking';
       midFilter.frequency.value = 1000;
       midFilter.Q.value = 1.0;
-
       const highFilter = context.createBiquadFilter();
       highFilter.type = 'highshelf';
       highFilter.frequency.value = 3200;
-
       const compressor = context.createDynamicsCompressor();
       compressor.threshold.value = 0; 
       compressor.ratio.value = 1;
-
       const gain = context.createGain(); // Fader
       const panner = context.createStereoPanner();
-
       const reverbSend = context.createGain();
       const delaySend = context.createGain();
       const chorusSend = context.createGain();
 
-      // Connect Chain: Input -> Distortion -> EQ -> Compressor -> Fader -> Panner
       input.connect(distortionNode);
       distortionNode.connect(lowFilter);
       lowFilter.connect(midFilter);
       midFilter.connect(highFilter);
       highFilter.connect(compressor);
       compressor.connect(gain);
-      
-      // If live context, insert analyser. If offline, skip (usually)
-      // For this abstraction, we'll return the nodes and let caller insert Analyser if needed or just chain directly.
-      // But to keep it simple, we connect gain -> panner here. 
-      // Live setup will inject Analyser between Gain and Panner.
       gain.connect(panner);
-      
-      // Connect to Main destination
       panner.connect(destination);
 
       return {
@@ -360,28 +398,17 @@ class AudioEngine {
 
   getTrackChannel(trackId: string): LiveTrackChannel {
     if (!this.trackChannels.has(trackId)) {
-      
-      // Create the base graph connected to Master Gain
       const chain = this.createTrackGraph(this.ctx, this.masterGain);
-      
-      // For Live View, we need an Analyser.
-      // Break the Gain -> Panner connection created in factory
       chain.gain.disconnect(); 
-      
       const analyser = this.ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.5;
-      
       chain.gain.connect(analyser);
       analyser.connect(chain.panner);
-
-      // Connect Sends (Live)
       chain.panner.connect(chain.reverbSend);
       chain.reverbSend.connect(this.reverbInput);
-
       chain.panner.connect(chain.delaySend);
       chain.delaySend.connect(this.delayInput);
-
       chain.panner.connect(chain.chorusSend);
       chain.chorusSend.connect(this.chorusInput);
       
@@ -390,28 +417,21 @@ class AudioEngine {
           analyser,
           lastDistortionAmount: -1
       };
-
       this.trackChannels.set(trackId, liveChannel);
     }
     return this.trackChannels.get(trackId)!;
   }
 
-  // Helper to apply track parameters to a chain (Live or Offline)
   applyTrackSettings(chain: AudioGraphChain, track: Track, currentTime: number, isOffline: boolean) {
       const { gain, panner, lowFilter, midFilter, highFilter, compressor, distortionNode, reverbSend, delaySend, chorusSend } = chain;
-      
-      const isMuted = track.muted; // Logic for solo handling should be done by caller passing correct vol
-      // Volume/Pan
-      // Offline context doesn't support setTargetAtTime accurately for static parameters usually set value
+      const isMuted = track.muted;
       if (isOffline) {
           gain.gain.value = isMuted ? 0 : track.volume;
           panner.pan.value = track.pan;
           lowFilter.gain.value = track.eq.low;
           midFilter.gain.value = track.eq.mid;
           highFilter.gain.value = track.eq.high;
-          
           if (track.distortion) distortionNode.curve = makeDistortionCurve(track.distortion);
-          
           if (track.compressor && track.compressor.enabled) {
               compressor.threshold.value = track.compressor.threshold;
               compressor.ratio.value = track.compressor.ratio;
@@ -421,26 +441,17 @@ class AudioEngine {
               compressor.threshold.value = 0;
               compressor.ratio.value = 1;
           }
-
           if (track.sends) {
               reverbSend.gain.value = track.sends.reverb;
               delaySend.gain.value = track.sends.delay;
               chorusSend.gain.value = track.sends.chorus;
           }
       } else {
-          // Live - use smoothing
           const timeConstant = 0.02;
-          // Solo logic handled in syncTracks
-          
           panner.pan.setTargetAtTime(track.pan, currentTime, timeConstant);
-          
-          // EQ
           lowFilter.gain.setTargetAtTime(track.eq.low, currentTime, 0.1);
           midFilter.gain.setTargetAtTime(track.eq.mid, currentTime, 0.1);
           highFilter.gain.setTargetAtTime(track.eq.high, currentTime, 0.1);
-
-          // Distortion (Expensive calc, check if changed)
-          // LiveTrackChannel has lastDistortionAmount, generic chain might not
           const liveChain = chain as LiveTrackChannel;
           const dist = track.distortion || 0;
           if (liveChain.lastDistortionAmount !== undefined && dist !== liveChain.lastDistortionAmount) {
@@ -449,8 +460,6 @@ class AudioEngine {
           } else if (!liveChain.lastDistortionAmount && dist > 0) {
                distortionNode.curve = makeDistortionCurve(dist);
           }
-
-          // Compressor
           if (track.compressor) {
               if (track.compressor.enabled) {
                   compressor.threshold.setTargetAtTime(track.compressor.threshold, currentTime, 0.1);
@@ -462,8 +471,6 @@ class AudioEngine {
                   compressor.ratio.setTargetAtTime(1, currentTime, 0.1);
               }
           }
-
-          // Sends
           if (track.sends) {
               reverbSend.gain.setTargetAtTime(track.sends.reverb, currentTime, 0.05);
               delaySend.gain.setTargetAtTime(track.sends.delay, currentTime, 0.05);
@@ -474,30 +481,19 @@ class AudioEngine {
 
   syncTracks(tracks: Track[]) {
     const soloActive = tracks.some(t => t.solo);
-
     tracks.forEach(track => {
       const channel = this.getTrackChannel(track.id);
       const currentTime = this.ctx.currentTime;
-      
       const isMuted = track.muted || (soloActive && !track.solo);
       const targetVolume = isMuted ? 0 : track.volume;
-      
-      // Apply volume separately as it depends on solo logic which is dynamic
       channel.gain.gain.setTargetAtTime(targetVolume, currentTime, 0.02);
-
-      // Apply other parameters
       this.applyTrackSettings(channel, track, currentTime, false);
     });
-    
-    // Cleanup unused tracks
-    // (In a real app, you'd want to garbage collect channels that aren't in the track list anymore)
     if (this.trackChannels.size > tracks.length) {
         for (const [id, channel] of this.trackChannels) {
             if (!tracks.find(t => t.id === id)) {
-                // Disconnect and remove
                 channel.input.disconnect();
                 channel.panner.disconnect();
-                // ... disconnect others ...
                 this.trackChannels.delete(id);
             }
         }
@@ -507,15 +503,11 @@ class AudioEngine {
   syncInstruments(tanpura: TanpuraState, tabla: TablaState) {
       this.tanpuraConfig = tanpura;
       this.tablaConfig = tabla;
-      
       const currentTime = this.ctx.currentTime;
-      
       const tanpuraVol = tanpura.enabled ? tanpura.volume : 0;
       this.tanpuraGain.gain.setTargetAtTime(tanpuraVol, currentTime, 0.1);
-
       const tablaVol = tabla.enabled ? tabla.volume : 0;
       this.tablaGain.gain.setTargetAtTime(tablaVol, currentTime, 0.1);
-
       if ((tanpura.enabled || tabla.enabled) && this.ctx.state === 'suspended') {
           this.ctx.resume();
       }
@@ -525,36 +517,27 @@ class AudioEngine {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    
     this.stop();
     this._isPlaying = true;
     this._startTime = this.ctx.currentTime - startTime;
     this._pauseTime = startTime;
-
     const secondsPerBeat = 60.0 / this.bpm;
     this.currentBeat = Math.ceil(startTime / secondsPerBeat);
     const nextBeatTimeRelative = this.currentBeat * secondsPerBeat;
     this.nextNoteTime = this.ctx.currentTime + (nextBeatTimeRelative - startTime);
-    
     this.nextTanpuraNoteTime = this.ctx.currentTime + 0.1;
     this.currentTanpuraString = 0;
     this.nextTablaBeatTime = this.ctx.currentTime + 0.1;
     this.currentTablaBeat = 0;
-
     this.syncTracks(tracks);
-
     clips.forEach(clip => {
       if (clip.muted) return;
-      
       const buffer = this.buffers.get(clip.bufferKey);
       if (!buffer) return;
-
       const channel = this.getTrackChannel(clip.trackId);
-
       const when = this.ctx.currentTime + (clip.start - startTime);
       const offset = clip.offset;
       const duration = clip.duration;
-
       if (when < this.ctx.currentTime) {
          const startDiff = startTime - clip.start;
          if (startDiff >= 0 && startDiff < duration) {
@@ -566,35 +549,21 @@ class AudioEngine {
     });
   }
 
-  scheduleSource(
-      buffer: AudioBuffer, 
-      when: number, 
-      offset: number, 
-      playDuration: number, 
-      destination: AudioNode,
-      clip: Clip,
-      elapsedClipTime: number,
-      ctx: BaseAudioContext = this.ctx
-    ) {
+  scheduleSource(buffer: AudioBuffer, when: number, offset: number, playDuration: number, destination: AudioNode, clip: Clip, elapsedClipTime: number, ctx: BaseAudioContext = this.ctx) {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    
     const speed = clip.speed || 1;
     source.playbackRate.value = speed;
-
     if (clip.detune) {
         source.detune.value = clip.detune;
     }
-
     const envelope = ctx.createGain();
     source.connect(envelope);
     envelope.connect(destination); 
-
     const clipFadeIn = clip.fadeIn || 0;
     const clipFadeOut = clip.fadeOut || 0;
     const clipGain = clip.gain ?? 1.0;
     const clipTotalDuration = clip.duration;
-
     let startGain = clipGain;
     if (elapsedClipTime < clipFadeIn) {
         startGain = (elapsedClipTime / clipFadeIn) * clipGain;
@@ -602,14 +571,11 @@ class AudioEngine {
         const timeRemaining = clipTotalDuration - elapsedClipTime;
         startGain = (timeRemaining / clipFadeOut) * clipGain;
     }
-    
     envelope.gain.setValueAtTime(startGain, when);
-
     if (elapsedClipTime < clipFadeIn) {
         const timeUntilFull = clipFadeIn - elapsedClipTime;
         envelope.gain.linearRampToValueAtTime(clipGain, when + timeUntilFull);
     }
-
     const timeUntilFadeOut = (clipTotalDuration - clipFadeOut) - elapsedClipTime;
     if (timeUntilFadeOut > 0) {
         envelope.gain.setValueAtTime(clipGain, when + timeUntilFadeOut);
@@ -618,23 +584,17 @@ class AudioEngine {
         const timeRemaining = playDuration;
         envelope.gain.linearRampToValueAtTime(0, when + timeRemaining);
     }
-    
     const bufferOffset = offset % buffer.duration;
-    
     if (bufferOffset + (playDuration * speed) > buffer.duration) {
         source.loop = true;
         source.loopStart = 0;
         source.loopEnd = buffer.duration;
     }
-
     source.start(when, bufferOffset, playDuration);
     source.stop(when + playDuration);
-
     if (ctx === this.ctx) {
         const sourceId = clip.id + Math.random();
         this.activeSources.set(sourceId, source as AudioBufferSourceNode);
-        
-        // Critical Fix: Memory Leak prevention
         source.onended = () => {
             if (this.activeSources.has(sourceId)) {
                 this.activeSources.delete(sourceId);
@@ -655,7 +615,19 @@ class AudioEngine {
       this.stop();
   }
 
-  // ... (setMasterVolume, setMasterEq, etc. remain unchanged) ...
+  panic() {
+    this.stop();
+    // Cancel all scheduled events on master to prevent stuck notes or feedback
+    this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.masterGain.gain.value = 0;
+    // Restore volume gently
+    setTimeout(() => {
+        this.masterGain.gain.linearRampToValueAtTime(1.0, this.ctx.currentTime + 0.5);
+    }, 100);
+  }
+
+  // ... (setMasterVolume, setMasterEq, setMasterCompressor, setMetronomeVolume, setDelayLevel, setReverbLevel, setChorusLevel, getCurrentTime, isPlaying, measureTrackLevel, measureMasterLevel, measureInputLevel, scheduler, scheduleClick, playCountIn, getAudioDevices, setOutputDevice, startRecording, stopRecording, playTanpuraNote, playTablaHit, getTanpuraFreqs, getTablaPattern, renderProject methods)
+
   setMasterVolume(val: number) {
     this.masterGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
   }
@@ -719,10 +691,13 @@ class AudioEngine {
       return this.getRMS(this.masterAnalyser);
   }
 
+  measureInputLevel(): number {
+      return this.getRMS(this.inputAnalyser);
+  }
+
   scheduler() {
     if (!this._isPlaying) return;
     const lookahead = 0.1;
-    
     while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
         if (this.metronomeEnabled) {
             this.scheduleClick(this.currentBeat, this.nextNoteTime);
@@ -731,25 +706,21 @@ class AudioEngine {
         this.nextNoteTime += secondsPerBeat;
         this.currentBeat++;
     }
-
     if (this.tanpuraConfig?.enabled) {
         while (this.nextTanpuraNoteTime < this.ctx.currentTime + lookahead) {
             const freqs = this.getTanpuraFreqs(this.tanpuraConfig);
             const freq = freqs[this.currentTanpuraString];
             this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0, this.tanpuraConfig.fineTune || 0);
-            
             const interval = 60 / this.tanpuraConfig.tempo;
             this.nextTanpuraNoteTime += interval;
             this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
         }
     }
-    
     if (this.tablaConfig?.enabled) {
          while (this.nextTablaBeatTime < this.ctx.currentTime + lookahead) {
             const pattern = this.getTablaPattern(this.tablaConfig.taal);
             const hit = pattern[this.currentTablaBeat % pattern.length];
             this.playTablaHit(this.ctx, this.tablaGain, this.tablaConfig.key, hit as any, this.nextTablaBeatTime);
-            
             const beatTime = 60 / this.tablaConfig.bpm;
             this.nextTablaBeatTime += beatTime;
             this.currentTablaBeat++;
@@ -757,7 +728,6 @@ class AudioEngine {
     }
   }
 
-  // ... (scheduleClick, playCountIn, getAudioDevices, setOutputDevice, startRecording, stopRecording remain largely same) ...
   scheduleClick(beatNumber: number, time: number) {
     if (this.metronomeSound === 'click') {
         const osc = this.ctx.createOscillator();
@@ -848,15 +818,20 @@ class AudioEngine {
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      // Monitoring Setup
+      // Monitoring Setup & Input Metering
+      if (this.monitorNode) {
+          this.monitorNode.disconnect();
+      }
+      this.monitorNode = this.ctx.createMediaStreamSource(stream);
+      // Connect to Input Analyser first for metering even if monitoring is off (visual feedback)
+      this.monitorNode.connect(this.inputAnalyser);
+      
       if (monitor) {
-          if (this.monitorNode) {
-              this.monitorNode.disconnect();
-          }
-          this.monitorNode = this.ctx.createMediaStreamSource(stream);
-          this.monitorNode.connect(this.monitorGain);
+          // Connect Input Analyser to Monitor Gain (to Master)
+          this.inputAnalyser.connect(this.monitorGain);
           this.monitorGain.gain.value = 1;
       } else {
+          this.inputAnalyser.disconnect(this.monitorGain); // Ensure disconnect if monitor off
           this.monitorGain.gain.value = 0;
       }
 
@@ -878,6 +853,8 @@ class AudioEngine {
               this.monitorNode.disconnect();
               this.monitorNode = null;
           }
+          // Reset metering connections
+          this.inputAnalyser.disconnect();
           this.monitorGain.gain.value = 0;
 
           if (!this.mediaRecorder) return resolve(undefined);
@@ -898,7 +875,6 @@ class AudioEngine {
       });
   }
 
-  // ... (playTanpuraNote, playTablaHit, getTanpuraFreqs, getTablaPattern) ...
   playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number, detuneCents: number = 0) {
       const osc1 = ctx.createOscillator();
       osc1.type = 'sawtooth';
@@ -1060,27 +1036,20 @@ class AudioEngine {
       delayFeedback.connect(delayNode);
       delayReturn.connect(masterGain);
 
-      const chorusNode = offlineCtx.createDelay(); // Simplified chorus for export
+      const chorusNode = offlineCtx.createDelay();
       const chorusReturn = offlineCtx.createGain();
       chorusReturn.gain.value = project.effects.chorus;
       chorusNode.connect(chorusReturn);
       chorusReturn.connect(masterGain);
 
-      // --- Track Processing (Using Shared Factory) ---
       const trackMap = new Map<string, GainNode>(); 
       
       project.tracks.forEach(track => {
           const chain = this.createTrackGraph(offlineCtx, masterGain);
-          
-          // Connect Sends
           chain.reverbSend.connect(reverbNode);
           chain.delaySend.connect(delayNode);
           chain.chorusSend.connect(chorusNode);
-
-          // Apply Settings
           this.applyTrackSettings(chain, track, 0, true);
-
-          // Store Input for clip scheduling
           trackMap.set(track.id, chain.input);
       });
 
@@ -1098,10 +1067,8 @@ class AudioEngine {
           tanpuraGain.gain.value = project.tanpura.volume;
           tanpuraGain.connect(masterGain);
           tanpuraGain.connect(reverbNode);
-          
           const freqs = this.getTanpuraFreqs(project.tanpura);
           const interval = 60 / project.tanpura.tempo;
-          
           let time = 0;
           let sIdx = 0;
           while (time < duration) {
@@ -1116,11 +1083,9 @@ class AudioEngine {
           tablaGain.gain.value = project.tabla.volume;
           tablaGain.connect(masterGain);
           tablaGain.connect(reverbNode);
-
           const bpm = project.tabla.bpm;
           const beatTime = 60 / bpm;
           const pattern = this.getTablaPattern(project.tabla.taal);
-
           let time = 0;
           let bIdx = 0;
           while (time < duration) {

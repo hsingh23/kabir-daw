@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { audio } from '../services/audio';
 
 interface LevelMeterProps {
@@ -10,6 +10,7 @@ interface LevelMeterProps {
 const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => {
   const fillRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
+  const [clipped, setClipped] = useState(false);
 
   useEffect(() => {
     const loop = () => {
@@ -18,6 +19,11 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => 
         level = audio.measureTrackLevel(trackId);
       } else {
         level = audio.measureMasterLevel();
+      }
+
+      // Check clipping (level > 1.0 is > 0dBFS)
+      if (level > 1.0) {
+          setClipped(true);
       }
 
       // Smooth decay could be added here, but raw RMS is good for now
@@ -41,7 +47,14 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => 
   }, [trackId, vertical]);
 
   return (
-    <div className={`bg-zinc-900 rounded overflow-hidden border border-zinc-800 shadow-inner ${vertical ? 'w-2 h-full' : 'h-2 w-full'}`}>
+    <div className={`relative bg-zinc-900 rounded overflow-hidden border border-zinc-800 shadow-inner ${vertical ? 'w-2 h-full' : 'h-2 w-full'}`}>
+      {/* Clip Indicator */}
+      <div 
+        onClick={(e) => { e.stopPropagation(); setClipped(false); }}
+        className={`absolute z-10 cursor-pointer transition-colors ${vertical ? 'top-0 left-0 w-full h-1' : 'right-0 top-0 h-full w-1'} ${clipped ? 'bg-red-500' : 'bg-zinc-800'}`} 
+        title="Clip Indicator (Click to Reset)"
+      />
+      
       <div 
         ref={fillRef}
         className={`bg-gradient-to-t from-green-500 via-yellow-400 to-red-500 transition-all duration-75 ease-out origin-bottom-left ${vertical ? 'w-full' : 'h-full bg-gradient-to-r'}`}

@@ -2,21 +2,24 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { getAllAssetsMetadata, saveAudioBlob, saveAssetMetadata, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject, saveProject } from '../services/db';
 import { AssetMetadata } from '../types';
-import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Tag, Globe, Upload, Edit2, Check, X, Filter, Layers, Music, Copy } from 'lucide-react';
+import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Globe, Upload, Edit2, Check, X, Copy, GripHorizontal } from 'lucide-react';
 import { audio } from '../services/audio';
+import { useToast } from './Toast';
 
 interface LibraryProps {
   onLoadProject?: (id: string) => void;
   onCreateNewProject?: () => void;
   onAddAsset?: (asset: AssetMetadata) => void;
   currentProjectId?: string;
+  variant?: 'full' | 'sidebar';
 }
 
 const INSTRUMENTS = ['Drums', 'Bass', 'Guitar', 'Keys', 'Synth', 'Vocals', 'FX', 'Orchestral', 'Percussion', 'Other'];
 const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const TYPES = ['loop', 'oneshot', 'stem', 'song'];
 
-const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, onAddAsset, currentProjectId }) => {
+const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, onAddAsset, currentProjectId, variant = 'full' }) => {
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'projects' | 'assets'>('assets');
   
   // Projects State
@@ -49,6 +52,11 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
   });
 
   useEffect(() => {
+    // If sidebar, force assets tab
+    if (variant === 'sidebar') setActiveTab('assets');
+  }, [variant]);
+
+  useEffect(() => {
     if (activeTab === 'assets') loadAssets();
     if (activeTab === 'projects') loadProjects();
   }, [activeTab]);
@@ -57,10 +65,10 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
     setLoadingAssets(true);
     try {
       const metas = await getAllAssetsMetadata();
-      // Sort by date added desc
       setAssets(metas.sort((a, b) => b.dateAdded - a.dateAdded));
     } catch (e) {
       console.error(e);
+      showToast("Failed to load assets", 'error');
     } finally {
       setLoadingAssets(false);
     }
@@ -73,6 +81,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
           setProjects(p);
       } catch (e) {
           console.error(e);
+          showToast("Failed to load projects", 'error');
       } finally {
           setLoadingProjects(false);
       }
@@ -105,16 +114,18 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                   newIds.push(key);
               } catch (err) {
                   console.error(`Failed to upload ${file.name}`, err);
-                  alert(`Failed to load ${file.name}. Format might not be supported.`);
+                  showToast(`Failed to load ${file.name}.`, 'error');
               }
           }
           await loadAssets();
-          e.target.value = ''; // Reset input
+          e.target.value = ''; 
           
-          // If multiple files, trigger batch edit
+          if (newIds.length > 0) {
+              showToast(`Imported ${newIds.length} file(s)`, 'success');
+          }
+
           if (newIds.length > 1) {
               setBatchEditIds(newIds);
-              // Guess group name from first file (common prefix logic could go here)
               setBatchMetadata(prev => ({...prev, group: 'New Song'}));
           }
       }
@@ -137,6 +148,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
       await Promise.all(updates);
       setBatchEditIds([]);
       loadAssets();
+      showToast("Metadata saved", 'success');
   };
 
   const handleUrlImport = async () => {
@@ -147,9 +159,8 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
           if (!response.ok) throw new Error('Network response was not ok');
           const blob = await response.blob();
           
-          // Verify it's audio
           if (!blob.type.startsWith('audio/')) {
-              alert('The URL did not return an audio file.');
+              showToast('The URL did not return an audio file.', 'error');
               return;
           }
 
@@ -172,8 +183,9 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
           setUrlInput('');
           setShowUrlInput(false);
           await loadAssets();
+          showToast("Import successful", 'success');
       } catch (err) {
-          alert('Failed to import from URL. Please ensure the URL is direct and supports CORS.');
+          showToast('Failed to import from URL.', 'error');
           console.error(err);
       } finally {
           setIsUrlImporting(false);
@@ -185,6 +197,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
           await saveAssetMetadata(editingAsset);
           setAssets(prev => prev.map(a => a.id === editingAsset.id ? editingAsset : a));
           setEditingAsset(null);
+          showToast("Saved asset metadata", 'success');
       }
   };
 
@@ -192,6 +205,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
     if (confirm('Delete this asset permanently?')) {
       await deleteAudioBlob(key);
       setAssets(prev => prev.filter(a => a.id !== key));
+      showToast("Asset deleted", 'info');
     }
   };
 
@@ -199,6 +213,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
       if (confirm('Delete this project? This cannot be undone.')) {
           await deleteProject(id);
           loadProjects();
+          showToast("Project deleted", 'info');
       }
   };
 
@@ -211,6 +226,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
       };
       await saveProject(newProject);
       loadProjects();
+      showToast("Project duplicated", 'success');
   };
 
   const handlePreview = async (asset: AssetMetadata) => {
@@ -237,14 +253,15 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
             if (!source.loop) {
                 source.onended = () => setPreviewing(null);
             }
+        } else {
+            showToast("Audio file missing", 'error');
         }
     } catch (e) {
         console.error("Preview failed", e);
-        alert("Could not play audio. File might be corrupt.");
+        showToast("Could not play audio", 'error');
     }
   };
 
-  // --- Filtering ---
   const filteredAssets = assets.filter(a => {
       const matchSearch = a.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           a.tags.some(t => t.includes(searchQuery.toLowerCase())) ||
@@ -256,28 +273,39 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
 
   return (
     <div className="flex flex-col h-full bg-studio-bg text-white overflow-hidden relative">
-        {/* Header Tabs */}
-        <div className="p-4 bg-studio-panel border-b border-zinc-800 flex items-center justify-between shrink-0">
-            <h2 className="text-xl font-bold tracking-tight text-zinc-100 hidden md:block">LIBRARY</h2>
-            
-            <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800 mx-auto md:mx-0">
-                <button 
-                    onClick={() => setActiveTab('projects')} 
-                    className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-2 ${activeTab === 'projects' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    <FolderOpen size={14} /> <span>Projects</span>
-                </button>
-                <button 
-                    onClick={() => setActiveTab('assets')} 
-                    className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-2 ${activeTab === 'assets' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    <FileAudio size={14} /> <span>Assets</span>
-                </button>
+        {/* Header Tabs - Only show if full variant */}
+        {variant === 'full' && (
+            <div className="p-4 bg-studio-panel border-b border-zinc-800 flex items-center justify-between shrink-0">
+                <h2 className="text-xl font-bold tracking-tight text-zinc-100 hidden md:block">LIBRARY</h2>
+                
+                <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800 mx-auto md:mx-0">
+                    <button 
+                        onClick={() => setActiveTab('projects')} 
+                        className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-2 ${activeTab === 'projects' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                        <FolderOpen size={14} /> <span>Projects</span>
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('assets')} 
+                        className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center space-x-2 ${activeTab === 'assets' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                        <FileAudio size={14} /> <span>Assets</span>
+                    </button>
+                </div>
             </div>
-        </div>
+        )}
+        
+        {/* Sidebar Header override */}
+        {variant === 'sidebar' && (
+             <div className="p-3 bg-studio-panel border-b border-zinc-800 shrink-0">
+                 <h2 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                     <FileAudio size={14} /> Library Assets
+                 </h2>
+             </div>
+        )}
         
         {/* Projects Tab */}
-        {activeTab === 'projects' && (
+        {activeTab === 'projects' && variant !== 'sidebar' && (
             <div className="flex-1 overflow-y-auto p-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
                      <button 
@@ -341,14 +369,13 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
         {/* Assets Tab */}
         {activeTab === 'assets' && (
             <div className="flex flex-col flex-1 overflow-hidden">
-                {/* Search & Upload Bar */}
                 <div className="p-3 bg-zinc-900 border-b border-zinc-800 space-y-3 shrink-0">
                     <div className="flex gap-2">
                         <div className="relative flex-1">
                             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
                             <input 
                                 type="text" 
-                                placeholder="Search loops, stems, one-shots..." 
+                                placeholder="Search..." 
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="w-full bg-zinc-800 border border-zinc-700 rounded-md pl-8 pr-2 py-1.5 text-xs text-white focus:outline-none focus:border-zinc-500"
@@ -358,7 +385,6 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                             <button onClick={() => fileInputRef.current?.click()} className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 p-1.5 rounded-md" title="Upload Files">
                                 <Upload size={16} />
                             </button>
-                            {/* Explicitly list extensions for better mobile support */}
                             <input type="file" ref={fileInputRef} onChange={handleFileUpload} multiple accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" className="hidden" />
                             
                             <button onClick={() => setShowUrlInput(!showUrlInput)} className={`border border-zinc-700 text-zinc-300 p-1.5 rounded-md ${showUrlInput ? 'bg-zinc-700 text-white' : 'bg-zinc-800 hover:bg-zinc-700'}`} title="Import from URL">
@@ -406,7 +432,6 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                     </div>
                 </div>
 
-                {/* Asset List */}
                 <div className="flex-1 overflow-y-auto p-2 pb-24">
                     {loadingAssets ? (
                         <div className="flex justify-center py-10 text-zinc-500 text-xs">Loading library...</div>
@@ -418,7 +443,25 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                     ) : (
                         <div className="space-y-1">
                             {filteredAssets.map(asset => (
-                                <div key={asset.id} className="group bg-zinc-800/40 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md p-2 flex items-center gap-3 transition-colors">
+                                <div 
+                                    key={asset.id} 
+                                    draggable={true}
+                                    onDragStart={(e) => {
+                                        // Resume audio context on interaction for iOS compatibility
+                                        audio.resumeContext();
+                                        e.dataTransfer.setData('application/json', JSON.stringify(asset));
+                                        e.dataTransfer.effectAllowed = 'copy';
+                                        // Visual feedback styling
+                                        e.currentTarget.classList.add('opacity-50');
+                                    }}
+                                    onDragEnd={(e) => {
+                                        e.currentTarget.classList.remove('opacity-50');
+                                    }}
+                                    className="group bg-zinc-800/40 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md p-2 flex items-center gap-3 transition-colors cursor-grab active:cursor-grabbing select-none"
+                                >
+                                    <div className="text-zinc-600 group-hover:text-zinc-400">
+                                        <GripHorizontal size={14} />
+                                    </div>
                                     <button 
                                         onClick={() => handlePreview(asset)}
                                         className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-colors ${previewing === asset.id ? 'bg-studio-accent text-white' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
@@ -526,7 +569,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
             </div>
         )}
 
-        {/* Single Edit Modal (same as before but updated with group) */}
+        {/* Single Edit Modal */}
         {editingAsset && (
             <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
