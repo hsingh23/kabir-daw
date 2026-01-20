@@ -3,6 +3,7 @@ import { useState, useRef } from 'react';
 import { ProjectState, Clip, ToolMode } from '../types';
 import { analytics } from '../services/analytics';
 import { formatBars, formatTime } from '../services/utils';
+import { audio } from '../services/audio';
 
 interface InteractionProps {
     project: ProjectState;
@@ -377,6 +378,10 @@ export const useArrangerInteraction = ({
                 const deltaY = dragState.startY - e.clientY; 
                 const sensitivity = 0.01;
                 const newGain = Math.max(0, Math.min(2.0, (dragState.original.gain || 1.0) + deltaY * sensitivity));
+                
+                // Real-time gain update
+                audio.setClipGain(dragState.clipId, newGain);
+
                 setProject(prev => ({
                     ...prev,
                     clips: prev.clips.map(c => c.id === dragState.clipId ? { ...c, gain: newGain } : c)
@@ -403,12 +408,23 @@ export const useArrangerInteraction = ({
                
                if (dragState.mode === 'TRIM_START') {
                    const rawNewStart = original.start + deltaSeconds;
-                   const snappedStart = snapSeconds > 0 ? Math.round(rawNewStart/snapSeconds)*snapSeconds : rawNewStart;
+                   let snappedStart = snapSeconds > 0 ? Math.round(rawNewStart/snapSeconds)*snapSeconds : rawNewStart;
+                   
+                   // Ensure we don't trim past the beginning of the audio source
                    const shift = snappedStart - original.start;
+                   const potentialOffset = original.offset + (shift * (original.speed||1));
+                   
+                   if (potentialOffset < 0) {
+                       // Clamp start time so offset is exactly 0
+                       // 0 = original.offset + (shift * speed) => shift = -original.offset / speed
+                       const maxReverseShift = -(original.offset / (original.speed||1));
+                       snappedStart = original.start + maxReverseShift;
+                   }
+
                    if (shift < original.duration) {
                        newStart = snappedStart;
-                       newOffset = original.offset + (shift * (original.speed||1));
-                       newDuration = original.duration - shift;
+                       newOffset = Math.max(0, original.offset + ((newStart - original.start) * (original.speed||1)));
+                       newDuration = original.duration - (newStart - original.start);
                    }
                    updateSnapLine(newStart);
                } else if (dragState.mode === 'TRIM_END') {

@@ -1,21 +1,23 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ProjectState, Track, Clip, Marker, AssetMetadata, MidiNote } from './types';
+import { ProjectState, Track, Clip, Marker, AssetMetadata, MidiNote, MidiMapping } from './types';
 import Mixer from './components/Mixer';
 import Arranger from './components/Arranger';
 import Library from './components/Library';
+import ProjectsView from './components/ProjectsView';
+import CommunityView from './components/CommunityView';
 import TrackInspector from './components/TrackInspector';
 import ClipInspector from './components/ClipInspector';
 import MasterInspector from './components/MasterInspector';
 import SettingsDialog from './components/SettingsDialog';
 import ShortcutsDialog from './components/ShortcutsDialog';
 import ExportDialog from './components/ExportDialog';
-import TimeDisplay from './components/TimeDisplay';
-import TempoControl from './components/TempoControl';
-import StatusIndicator from './components/StatusIndicator';
-import HeaderInputMeter from './components/HeaderInputMeter';
 import AudioContextOverlay from './components/AudioContextOverlay'; 
+import WelcomeOverlay from './components/WelcomeOverlay';
 import VirtualKeyboard from './components/VirtualKeyboard';
+import MetronomeIndicator from './components/MetronomeIndicator';
+import TransportHeader from './components/TransportHeader';
+import BottomNavigation, { ViewType } from './components/BottomNavigation';
 import { ToastProvider, useToast } from './components/Toast';
 import { audio } from './services/audio';
 import { midi } from './services/midi';
@@ -26,7 +28,6 @@ import { useProjectState } from './hooks/useProjectState';
 import { useMidiRouting } from './hooks/useMidiRouting';
 import { TEMPLATES, createTrack } from './services/templates';
 import { analytics } from './services/analytics';
-import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download, Play, Pause, Square, Circle, Settings, Activity, ArrowRightLeft, Keyboard, ArrowRight, VolumeX, FolderOpen, Piano } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
@@ -70,15 +71,15 @@ const INITIAL_PROJECT: ProjectState = {
       taal: 'TeenTaal',
       bpm: 100,
       key: 'C'
-  }
+  },
+  midiMappings: []
 };
 
 const AppContent: React.FC = () => {
   const { showToast } = useToast();
-  // Default view is now 'arranger'
-  const [view, setView] = useState<'mixer' | 'arranger' | 'library'>(() => {
+  const [view, setView] = useState<ViewType>(() => {
       const params = new URLSearchParams(window.location.search);
-      return (params.get('view') as 'mixer' | 'arranger' | 'library') || 'arranger';
+      return (params.get('view') as ViewType) || 'arranger';
   });
 
   const { project, updateProject, setProject, undo, redo, past, future, loadProject, commitTransaction } = useProjectState(INITIAL_PROJECT);
@@ -88,7 +89,7 @@ const AppContent: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isCountingIn, setIsCountingIn] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [recordingStartTime, setRecordingStartTime] = useState(0);
+  const [recordingStartTime, setRecordingStartTime] = useState(0); // Stores PROJECT TIME of recording start
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(50); 
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -109,21 +110,71 @@ const AppContent: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showExport, setShowExport] = useState(false);
   
+  // MIDI Learn State
+  const [isMidiLearnActive, setIsMidiLearnActive] = useState(false);
+  const [pendingMidiTarget, setPendingMidiTarget] = useState<{ id: string, param: 'volume' | 'pan' } | null>(null);
+  
   // Virtual Keyboard
   const [showKeyboard, setShowKeyboard] = useState(false);
   
   // Save Status
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   
-  // Visual Metronome
-  const [visualBeat, setVisualBeat] = useState(false);
-
   const rafRef = useRef<number>(0);
   const saveTimeoutRef = useRef<number | null>(null);
   const recordingNotesRef = useRef<MidiNote[]>([]); // Accumulate MIDI notes here
 
   // Sync MIDI
-  useEffect(() => { midi.init(); }, []);
+  useEffect(() => { 
+      midi.init(); 
+      
+      const handleCC = (cc: number, value: number, channel: number) => {
+          // If in learn mode and a UI element is pending
+          if (isMidiLearnActive && pendingMidiTarget) {
+              const newMapping: MidiMapping = {
+                  id: crypto.randomUUID(),
+                  cc,
+                  channel,
+                  targetId: pendingMidiTarget.id,
+                  parameter: pendingMidiTarget.param as any
+              };
+              updateProject(prev => {
+                  // Remove existing mappings for this target/param to avoid conflicts
+                  const filtered = prev.midiMappings?.filter(m => m.targetId !== pendingMidiTarget.id || m.parameter !== pendingMidiTarget.param) || [];
+                  return { ...prev, midiMappings: [...filtered, newMapping] };
+              });
+              setPendingMidiTarget(null);
+              showToast(`Mapped CC${cc} to ${pendingMidiTarget.param}`, 'success');
+              return;
+          }
+
+          // Normal Operation: Check mappings
+          if (project.midiMappings) {
+              const mapping = project.midiMappings.find(m => m.cc === cc && m.channel === channel);
+              if (mapping) {
+                  const normValue = value / 127; // 0-1
+                  if (mapping.targetId === 'master') {
+                      if (mapping.parameter === 'volume') updateProject(prev => ({ ...prev, masterVolume: normValue }));
+                  } else {
+                      const track = project.tracks.find(t => t.id === mapping.targetId);
+                      if (track) {
+                          if (mapping.parameter === 'volume') {
+                              updateProject(prev => ({ ...prev, tracks: prev.tracks.map(t => t.id === mapping.targetId ? { ...t, volume: normValue } : t) }));
+                          } else if (mapping.parameter === 'pan') {
+                              // MIDI 0-127 -> Pan -1 to 1
+                              const panVal = (normValue * 2) - 1;
+                              updateProject(prev => ({ ...prev, tracks: prev.tracks.map(t => t.id === mapping.targetId ? { ...t, pan: panVal } : t) }));
+                          }
+                      }
+                  }
+              }
+          }
+      };
+
+      const unsubCC = midi.onControlChange(handleCC);
+      return () => { unsubCC(); };
+  }, [isMidiLearnActive, pendingMidiTarget, project.midiMappings, project.tracks]);
+
   // Use the hook and get the manual triggers
   const { onVirtualNoteOn, onVirtualNoteOff } = useMidiRouting(project, selectedTrackId, isRecording, recordingNotesRef);
 
@@ -211,6 +262,7 @@ const AppContent: React.FC = () => {
       };
       await saveProject(newProject);
       await loadProjectState(newId);
+      setView('arranger');
       showToast(`Created new project: ${newProject.name}`, 'info');
       analytics.track('project_created', { template: template.name || 'Empty' });
   }, [loadProject, showToast]);
@@ -258,15 +310,15 @@ const AppContent: React.FC = () => {
   const startActualRecording = useCallback(async () => {
         const track = project.tracks.find(t => t.id === selectedTrackId);
         
-        // Only start Audio Recording if it's an audio track
         if (track?.type === 'audio') {
             try {
-                await audio.startRecording(project.inputMonitoring);
+                // Initialize input before playing to avoid sync issues if permission prompt delays
+                await audio.initInput();
             } catch (_e) {
-                console.error("Recording failed:", _e);
+                console.error("Recording init failed:", _e);
                 setIsRecording(false);
                 setIsPlaying(false);
-                showToast("Could not start recording. Check permissions.", 'error');
+                showToast("Could not access microphone.", 'error');
                 return;
             }
         }
@@ -277,10 +329,24 @@ const AppContent: React.FC = () => {
         }
 
         const startTime = currentTime;
-        setRecordingStartTime(startTime);
+        // Start playback first
         audio.play(project.clips, project.tracks, startTime);
         setIsPlaying(true);
         setIsRecording(true);
+        
+        if (track?.type === 'audio') {
+            // Start recording and get the exact AudioContext time it started
+            const contextRecStart = await audio.startRecording(project.inputMonitoring);
+            
+            // Convert to Project Time for accurate clip placement
+            // ProjectTime = ContextTime - _startTime
+            const preciseProjectStart = audio.getProjectTime(contextRecStart);
+            setRecordingStartTime(preciseProjectStart);
+        } else {
+            // For MIDI, we just use current project time
+            setRecordingStartTime(startTime);
+        }
+
         showToast("Recording started", 'success');
         analytics.track('recording_started');
   }, [currentTime, project.clips, project.tracks, project.inputMonitoring, selectedTrackId, showToast]);
@@ -290,8 +356,7 @@ const AppContent: React.FC = () => {
         audio.stop(); 
         let blob: Blob | undefined;
         
-        // Stop audio recording if active
-        if (audio['mediaRecorder']) {
+        if (audio['recorder']) { // Check via property since public getter not exposed, but methods are
              blob = await audio.stopRecording();
         }
         
@@ -304,46 +369,50 @@ const AppContent: React.FC = () => {
         
         if (track?.type === 'audio' && blob) {
             const key = crypto.randomUUID();
-            await saveAudioBlob(key, blob);
-            await audio.loadAudio(key, blob);
-            const buffer = audio.buffers.get(key);
-            
-            const latencySeconds = (project.recordingLatency || 0) / 1000;
-            const rawStart = recordingStartTime;
-            
-            // Fixed Latency Calculation
-            let finalStart = rawStart - latencySeconds;
-            let finalOffset = 0;
-            let finalDuration = buffer?.duration || 0;
+            try {
+                await saveAudioBlob(key, blob);
+                await audio.loadAudio(key, blob);
+                const buffer = audio.buffers.get(key);
+                
+                const latencySeconds = (project.recordingLatency || 0) / 1000;
+                const rawStart = recordingStartTime;
+                
+                // Fixed Latency Calculation
+                let finalStart = rawStart - latencySeconds;
+                let finalOffset = 0;
+                let finalDuration = buffer?.duration || 0;
 
-            if (finalStart < 0) {
-                // If latency pushes it before 0, we must cut the start
-                finalOffset = Math.abs(finalStart);
-                finalDuration -= finalOffset;
-                finalStart = 0;
+                if (finalStart < 0) {
+                    finalOffset = Math.abs(finalStart);
+                    finalDuration -= finalOffset;
+                    finalStart = 0;
+                }
+
+                const newClip: Clip = {
+                    id: crypto.randomUUID(),
+                    trackId: selectedTrackId!,
+                    name: `Audio ${new Date().toLocaleTimeString()}`,
+                    start: finalStart,
+                    offset: finalOffset,
+                    duration: finalDuration,
+                    bufferKey: key,
+                    fadeIn: 0,
+                    fadeOut: 0,
+                    speed: 1,
+                    gain: 1.0
+                };
+                
+                updateProject(prev => ({
+                    ...prev,
+                    clips: [...prev.clips, newClip]
+                }));
+                setSelectedClipIds([newClip.id]);
+                showToast("Recording saved", 'success');
+                analytics.track('clip_action', { action: 'record_complete', duration: finalDuration });
+            } catch (e: any) {
+                console.error("Failed to save recording", e);
+                showToast(e.message || "Failed to save recording", 'error');
             }
-
-            const newClip: Clip = {
-                id: crypto.randomUUID(),
-                trackId: selectedTrackId!,
-                name: `Audio ${new Date().toLocaleTimeString()}`,
-                start: finalStart,
-                offset: finalOffset,
-                duration: finalDuration,
-                bufferKey: key,
-                fadeIn: 0,
-                fadeOut: 0,
-                speed: 1,
-                gain: 1.0
-            };
-            
-            updateProject(prev => ({
-                ...prev,
-                clips: [...prev.clips, newClip]
-            }));
-            setSelectedClipIds([newClip.id]);
-            showToast("Recording saved", 'success');
-            analytics.track('clip_action', { action: 'record_complete', duration: finalDuration });
         } else if (track?.type === 'instrument') {
             // Process captured MIDI notes
             const notes = recordingNotesRef.current;
@@ -502,10 +571,8 @@ const AppContent: React.FC = () => {
           ...prev, 
           clips: prev.clips.map(c => { 
               if (selectedClipIds.includes(c.id)) { 
-                  // Quantize Clip Start
                   const qStart = Math.round(c.start / grid) * grid; 
                   
-                  // Quantize MIDI Notes inside if applicable
                   let notes = c.notes;
                   if (notes) {
                       notes = notes.map(n => ({
@@ -545,16 +612,11 @@ const AppContent: React.FC = () => {
       if (isPlaying) {
         audio.scheduler(project.tracks, project.clips);
         const time = audio.getCurrentTime();
-        const secondsPerBeat = 60 / project.bpm;
-        const timeSinceBeat = time % secondsPerBeat;
-        setVisualBeat(timeSinceBeat < 0.1 && project.metronomeOn);
         if (project.isLooping && time >= project.loopEnd && !isRecording) {
             audio.play(project.clips, project.tracks, project.loopStart);
             setCurrentTime(project.loopStart);
         } 
         rafRef.current = requestAnimationFrame(loop);
-      } else {
-          setVisualBeat(false);
       }
     };
     if (isPlaying) loop();
@@ -623,7 +685,6 @@ const AppContent: React.FC = () => {
       const clip = project.clips.find(c => c.id === clipId);
       if (!clip) return;
       
-      // Only process audio clips
       if (!clip.bufferKey) {
           showToast("Cannot process MIDI clips.", 'error');
           return;
@@ -632,7 +693,7 @@ const AppContent: React.FC = () => {
       try {
           const newBuffer = audio.processAudioBuffer(clip.bufferKey, type);
           const newKey = crypto.randomUUID();
-          const wav = audioBufferToWav(newBuffer);
+          const wav = await audioBufferToWav(newBuffer);
           await saveAudioBlob(newKey, wav);
           audio.buffers.set(newKey, newBuffer);
           updateProject(prev => ({ ...prev, clips: prev.clips.map(c => c.id === clipId ? { ...c, bufferKey: newKey, name: `${c.name} (${type})` } : c) }));
@@ -666,77 +727,49 @@ const AppContent: React.FC = () => {
 
   const hasSolo = project.tracks.some(t => t.solo);
   const selectedTrack = project.tracks.find(t => t.id === selectedTrackId);
+  const inspectorTrack = project.tracks.find(t => t.id === inspectorTrackId);
+  const inspectorClip = project.clips.find(c => c.id === inspectorClipId);
 
   return (
     <div className={`flex flex-col h-screen overflow-hidden transition-all duration-300 ${isRecording ? 'ring-4 ring-red-500/50' : ''}`}>
       <AudioContextOverlay />
+      <WelcomeOverlay />
       
-      {/* Top Header (Transport & Global) */}
-      <div className="flex items-center justify-between h-14 bg-studio-panel border-b border-zinc-800 px-4 shrink-0 z-50">
-          <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold tracking-tight text-white hidden sm:block">
-                  <span className="text-studio-accent">Pocket</span>Studio
-              </h1>
-              <div className="flex gap-1">
-                  <button onClick={undo} disabled={past.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30" title="Undo">
-                      <Undo2 size={16} />
-                  </button>
-                  <button onClick={redo} disabled={future.length === 0} className="p-2 rounded hover:bg-zinc-800 text-zinc-400 disabled:opacity-30" title="Redo">
-                      <Redo2 size={16} />
-                  </button>
-              </div>
-              <StatusIndicator status={saveStatus} />
-          </div>
-
-          <div className="flex items-center gap-2 sm:gap-6">
-              <div className="hidden sm:flex items-center gap-2 bg-zinc-900 rounded-full px-4 py-1.5 border border-zinc-800">
-                  <TimeDisplay currentTime={currentTime} bpm={project.bpm} isPlaying={isPlaying} />
-                  <div className="w-px h-6 bg-zinc-800 mx-1" />
-                  <TempoControl bpm={project.bpm} onChange={(bpm) => updateProject(p => ({...p, bpm}))} />
-              </div>
-              
-              <div className="flex items-center gap-4">
-                  <button onClick={stop} className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center hover:bg-zinc-700 text-zinc-400" title="Stop">
-                      <Square size={14} fill="currentColor" />
-                  </button>
-                  <button onClick={handlePlayPauseClick} className={`w-12 h-12 rounded-full flex items-center justify-center transition-transform active:scale-95 ${isPlaying ? 'bg-zinc-200 text-black' : 'bg-studio-accent text-white shadow-lg shadow-red-500/20'}`} title="Play/Pause">
-                      {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
-                  </button>
-                  <button onClick={handleRecordToggle} className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-zinc-800 text-red-500 hover:bg-zinc-700'}`} title="Record">
-                      <Circle size={14} fill="currentColor" />
-                  </button>
-                  {hasSolo && (
-                      <button onClick={clearSolo} className="w-10 h-10 rounded-full bg-yellow-500/20 text-yellow-500 border border-yellow-500/50 flex items-center justify-center animate-pulse" title="Clear Solo">
-                          <VolumeX size={14} />
-                      </button>
-                  )}
-                  {(isRecording || project.inputMonitoring) && <HeaderInputMeter isRecordingOrMonitoring={isRecording || project.inputMonitoring} />}
-              </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-               {selectedTrack?.type === 'instrument' && (
-                   <button 
-                       onClick={() => setShowKeyboard(!showKeyboard)}
-                       className={`p-2 rounded transition-colors ${showKeyboard ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}`}
-                       title="Virtual Keyboard"
-                   >
-                       <Piano size={20} />
-                   </button>
-               )}
-               <button onClick={() => setShowSettings(true)} className="p-2 text-zinc-400 hover:text-white" title="Settings">
-                   <Settings size={20} />
-               </button>
-               <button onClick={() => setShowExport(true)} className="p-2 text-studio-accent hover:text-red-400" title="Export Mix">
-                   <Download size={20} />
-               </button>
-          </div>
-      </div>
+      <TransportHeader 
+          project={project}
+          isPlaying={isPlaying}
+          isRecording={isRecording}
+          hasSolo={hasSolo}
+          saveStatus={saveStatus}
+          isMidiLearnActive={isMidiLearnActive}
+          showKeyboard={showKeyboard}
+          isInstrumentTrackSelected={selectedTrack?.type === 'instrument'}
+          undo={undo}
+          redo={redo}
+          canUndo={past.length > 0}
+          canRedo={future.length > 0}
+          stop={stop}
+          togglePlay={handlePlayPauseClick}
+          toggleRecord={handleRecordToggle}
+          clearSolo={clearSolo}
+          updateBpm={(bpm) => updateProject(p => ({...p, bpm}))}
+          setShowKeyboard={setShowKeyboard}
+          setShowSettings={setShowSettings}
+          setShowExport={setShowExport}
+          currentTime={currentTime}
+      />
 
       {/* Main View Area */}
       <div className="flex flex-1 overflow-hidden relative pb-16"> 
           {/* Main Content (Swapped via State) */}
           <div className="flex-1 overflow-hidden relative flex flex-col h-full">
+              {view === 'projects' && (
+                  <ProjectsView 
+                      currentProjectId={project.id}
+                      onLoadProject={(id) => { loadProjectState(id); setView('arranger'); }}
+                      onCreateNewProject={createNewProject}
+                  />
+              )}
               {view === 'mixer' && (
                   <Mixer 
                     project={project} 
@@ -790,26 +823,16 @@ const AppContent: React.FC = () => {
                       />
                   </div>
               )}
+              {view === 'community' && (
+                  <CommunityView />
+              )}
               
-              {visualBeat && <div className="absolute top-4 right-4 w-4 h-4 rounded-full bg-white animate-ping pointer-events-none z-50" />}
+              {/* Metronome Indicator - Detached from main render loop */}
+              <MetronomeIndicator isPlaying={isPlaying} metronomeOn={project.metronomeOn} bpm={project.bpm} />
           </div>
       </div>
 
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 h-16 bg-zinc-950 border-t border-zinc-800 flex items-center justify-around px-4 z-[90] pb-safe">
-          <button onClick={() => setView('arranger')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${view === 'arranger' ? 'text-studio-accent' : 'text-zinc-500 hover:text-zinc-300'}`}>
-              <LayoutGrid size={20} />
-              <span className="text-[10px] font-bold">Arranger</span>
-          </button>
-          <button onClick={() => setView('mixer')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${view === 'mixer' ? 'text-studio-accent' : 'text-zinc-500 hover:text-zinc-300'}`}>
-              <Activity size={20} />
-              <span className="text-[10px] font-bold">Mixer</span>
-          </button>
-          <button onClick={() => setView('library')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${view === 'library' ? 'text-studio-accent' : 'text-zinc-500 hover:text-zinc-300'}`}>
-              <FolderOpen size={20} />
-              <span className="text-[10px] font-bold">Library</span>
-          </button>
-      </div>
+      <BottomNavigation view={view} setView={setView} />
 
       {/* Virtual Keyboard Overlay */}
       {showKeyboard && selectedTrack?.type === 'instrument' && selectedTrack.instrument && (
@@ -823,9 +846,9 @@ const AppContent: React.FC = () => {
       )}
 
       {/* Inspectors & Dialogs */}
-      {inspectorTrackId && (
+      {inspectorTrack && (
           <TrackInspector 
-              track={project.tracks.find(t => t.id === inspectorTrackId)!} 
+              track={inspectorTrack} 
               updateTrack={updateTrack}
               onClose={() => setInspectorTrackId(null)}
               onDeleteTrack={(id) => {
@@ -839,9 +862,9 @@ const AppContent: React.FC = () => {
           />
       )}
 
-      {inspectorClipId && (
+      {inspectorClip && (
           <ClipInspector 
-              clip={project.clips.find(c => c.id === inspectorClipId)!}
+              clip={inspectorClip}
               updateClip={updateClip}
               onClose={() => setInspectorClipId(null)}
               onDeleteClip={(id) => {
@@ -862,7 +885,17 @@ const AppContent: React.FC = () => {
       )}
       
       {showMasterInspector && <MasterInspector project={project} setProject={setProject} onClose={() => setShowMasterInspector(false)} />}
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} project={project} setProject={setProject} />}
+      
+      {showSettings && (
+          <SettingsDialog 
+              onClose={() => setShowSettings(false)} 
+              project={project} 
+              setProject={setProject} 
+              isMidiLearnActive={isMidiLearnActive}
+              setMidiLearnActive={setIsMidiLearnActive}
+          />
+      )}
+      
       {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
       {showExport && <ExportDialog onClose={() => setShowExport(false)} onExport={handleExport} isExporting={isExporting} project={project} />}
     </div>

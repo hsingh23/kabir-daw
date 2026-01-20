@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { audio } from '../services/audio';
+import { animation } from '../services/animation';
 
 interface SpectrumAnalyzerProps {
   height?: number;
@@ -9,7 +10,6 @@ interface SpectrumAnalyzerProps {
 
 const SpectrumAnalyzer: React.FC<SpectrumAnalyzerProps> = ({ height = 64, color = '#ef4444' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rafRef = useRef<number>(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -32,39 +32,37 @@ const SpectrumAnalyzer: React.FC<SpectrumAnalyzerProps> = ({ height = 64, color 
           ctx.scale(dpr, dpr);
       }
 
+      const w = rect.width;
+      const h = rect.height;
+
       analyser.getByteFrequencyData(dataArray);
 
-      ctx.clearRect(0, 0, rect.width, rect.height);
+      ctx.clearRect(0, 0, w, h);
 
-      const barWidth = (rect.width / bufferLength) * 2.5;
+      const barWidth = (w / bufferLength) * 2.5;
       let barHeight;
       let x = 0;
 
       // Create gradient
-      const gradient = ctx.createLinearGradient(0, rect.height, 0, 0);
+      const gradient = ctx.createLinearGradient(0, h, 0, 0);
       gradient.addColorStop(0, color); // Base color
       gradient.addColorStop(1, '#fcd34d'); // Peak color (yellow)
 
       ctx.fillStyle = gradient;
 
       for (let i = 0; i < bufferLength; i++) {
-        barHeight = (dataArray[i] / 255) * rect.height;
+        barHeight = (dataArray[i] / 255) * h;
 
         // Draw rounded bars
-        ctx.fillRect(x, rect.height - barHeight, barWidth, barHeight);
+        ctx.fillRect(x, h - barHeight, barWidth, barHeight);
 
         x += barWidth + 1;
-        if (x > rect.width) break;
+        if (x > w) break;
       }
-
-      rafRef.current = requestAnimationFrame(draw);
     };
 
-    draw();
-
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
+    const unsubscribe = animation.subscribe(draw);
+    return unsubscribe;
   }, [color]);
 
   return <canvas ref={canvasRef} className="w-full rounded bg-black/20" style={{ height }} />;

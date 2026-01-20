@@ -1,6 +1,7 @@
 
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { AssetMetadata, ProjectState } from '../types';
+import { analytics } from './analytics';
 
 const DB_NAME = 'PocketStudioDB';
 const DB_VERSION = 2;
@@ -42,8 +43,16 @@ const getDB = () => {
 };
 
 export const saveAudioBlob = async (key: string, blob: Blob): Promise<string> => {
-  const db = await getDB();
-  return db.put('assets', blob, key);
+  try {
+    const db = await getDB();
+    return await db.put('assets', blob, key);
+  } catch (e: any) {
+    if (e.name === 'QuotaExceededError' || e.message?.includes('QuotaExceededError')) {
+       analytics.track('quota_exceeded');
+       throw new Error("Storage quota exceeded. Please delete unused assets to free up space.");
+    }
+    throw e;
+  }
 };
 
 export const saveAssetMetadata = async (metadata: AssetMetadata): Promise<string> => {
@@ -96,4 +105,40 @@ export const getAllProjects = async (): Promise<ProjectState[]> => {
 export const deleteProject = async (id: string): Promise<void> => {
   const db = await getDB();
   return db.delete('projects', id);
+};
+
+export const cleanupOrphanedAssets = async (): Promise<number> => {
+    const db = await getDB();
+    const projects = await db.getAll('projects');
+    const assetKeys = await db.getAllKeys('assets');
+    const metadataKeys = await db.getAllKeys('asset_metadata');
+    
+    // Collect all referenced bufferKeys
+    const referencedKeys = new Set<string>();
+    projects.forEach(p => {
+        p.clips.forEach(c => {
+            if (c.bufferKey) referencedKeys.add(c.bufferKey);
+        });
+    });
+
+    let deletedCount = 0;
+    const tx = db.transaction(['assets', 'asset_metadata'], 'readwrite');
+    const assetsStore = tx.objectStore('assets');
+    const metaStore = tx.objectStore('asset_metadata');
+
+    for (const key of assetKeys) {
+        if (!referencedKeys.has(key)) {
+            // Check if it's explicitly saved as a library asset (e.g., imported files)
+            const hasMetadata = metadataKeys.includes(key);
+            
+            if (!hasMetadata) {
+                // It's a raw recording (no metadata). If not in project, it's orphan.
+                await assetsStore.delete(key);
+                deletedCount++;
+            }
+        }
+    }
+    
+    await tx.done;
+    return deletedCount;
 };

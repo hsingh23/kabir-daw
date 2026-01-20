@@ -1,4 +1,5 @@
 
+
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -30,7 +31,7 @@ const mockProject: ProjectState = {
   timeSignature: [4, 4],
   returnToStartOnStop: true,
   tracks: [
-    { id: 't1', type: 'audio', name: 'Guitar', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
+    { id: 't1', type: 'audio', name: 'Guitar', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }
   ],
   clips: [
     { id: 'c1', trackId: 't1', name: 'Riff 1', start: 0, offset: 0, duration: 4, bufferKey: 'key1', fadeIn: 0, fadeOut: 0 }
@@ -146,7 +147,7 @@ describe('Arranger Component Interaction', () => {
         expect(getByText('No Tracks Created')).toBeInTheDocument();
         
         // Check CTA action
-        const addBtn = getByText('Add First Track');
+        const addBtn = getByText('Audio Track'); // Updated text from 'Add First Track'
         fireEvent.click(addBtn);
         
         expect(setProject).toHaveBeenCalled();

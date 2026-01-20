@@ -1,4 +1,5 @@
 
+
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -20,8 +21,8 @@ const mockProject: ProjectState = {
   timeSignature: [4, 4],
   returnToStartOnStop: true,
   tracks: [
-    { id: 't1', type: 'audio', name: 'Track 1', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
-    { id: 't2', type: 'audio', name: 'Track 2', volume: 0.5, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
+    { id: 't1', type: 'audio', name: 'Track 1', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } },
+    { id: 't2', type: 'audio', name: 'Track 2', volume: 0.5, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }
   ],
   clips: [],
   markers: [],

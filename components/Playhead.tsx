@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { audio } from '../services/audio';
+import { animation } from '../services/animation';
 
 interface PlayheadProps {
   zoom: number;
@@ -13,7 +14,6 @@ interface PlayheadProps {
 const Playhead: React.FC<PlayheadProps> = ({ zoom, isPlaying, scrollContainerRef, staticTime, autoScroll = true }) => {
   const lineRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number>(0);
 
   useEffect(() => {
     const updatePosition = () => {
@@ -40,19 +40,19 @@ const Playhead: React.FC<PlayheadProps> = ({ zoom, isPlaying, scrollContainerRef
              container.scrollLeft = x - (visibleWidth * 0.1);
          }
       }
-
-      if (isPlaying) {
-        rafRef.current = requestAnimationFrame(updatePosition);
-      }
     };
 
+    let unsubscribe: (() => void) | undefined;
+
     if (isPlaying) {
-        rafRef.current = requestAnimationFrame(updatePosition);
+        unsubscribe = animation.subscribe(updatePosition);
     } else {
-        updatePosition();
+        updatePosition(); // Immediate update when not playing
     }
 
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => {
+        if (unsubscribe) unsubscribe();
+    };
   }, [isPlaying, zoom, staticTime, scrollContainerRef, autoScroll]);
 
   return (

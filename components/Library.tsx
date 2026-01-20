@@ -537,7 +537,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                     onDragStart={(e) => {
                                         // Resume audio context on interaction for iOS compatibility
                                         audio.resumeContext();
-                                        e.dataTransfer.setData('application/json', JSON.stringify(asset));
+                                        e.dataTransfer.setData('application/x-pocketstudio-asset-id', asset.id);
                                         e.dataTransfer.effectAllowed = 'copy';
                                         // Visual feedback styling
                                         e.currentTarget.classList.add('opacity-50');

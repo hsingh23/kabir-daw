@@ -1,6 +1,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { MidiNote } from '../types';
+import { getPitchAtY, getTimeAtX, getNoteAtPosition } from '../services/utils';
 
 interface PianoRollProps {
   notes: MidiNote[];
@@ -18,6 +19,7 @@ const PianoRoll: React.FC<PianoRollProps> = ({ notes, duration, onNotesChange })
   const noteHeight = 16; // pixels per semitone
   const minPitch = 36; // C2
   const maxPitch = 84; // C6
+  const keysWidth = 40;
   
   // Interaction State
   const [dragState, setDragState] = useState<{
@@ -38,7 +40,6 @@ const PianoRoll: React.FC<PianoRollProps> = ({ notes, duration, onNotesChange })
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const keysWidth = 40; // Width of the piano keys sidebar
       const width = Math.max(container.clientWidth, (duration * zoomX) + keysWidth);
       const height = (maxPitch - minPitch + 1) * noteHeight;
       
@@ -117,17 +118,6 @@ const PianoRoll: React.FC<PianoRollProps> = ({ notes, duration, onNotesChange })
       draw();
   }, [notes, duration, zoomX, selectedNoteIndex]);
 
-  const keysWidth = 40;
-
-  const getPitchAtY = (y: number) => {
-      const row = Math.floor(y / noteHeight);
-      return maxPitch - row;
-  };
-
-  const getTimeAtX = (x: number) => {
-      return Math.max(0, (x - keysWidth) / zoomX);
-  };
-
   const handlePointerDown = (e: React.PointerEvent) => {
       const rect = canvasRef.current!.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -136,12 +126,7 @@ const PianoRoll: React.FC<PianoRollProps> = ({ notes, duration, onNotesChange })
       if (x < keysWidth) return; // Ignore sidebar clicks for now
 
       // Check hit
-      const clickedNoteIndex = notes.findIndex(n => {
-          const nx = keysWidth + (n.start * zoomX);
-          const ny = (maxPitch - n.note) * noteHeight;
-          const nw = n.duration * zoomX;
-          return x >= nx && x <= nx + nw && y >= ny && y <= ny + noteHeight;
-      });
+      const clickedNoteIndex = getNoteAtPosition(x, y, notes, zoomX, noteHeight, maxPitch, keysWidth);
 
       if (clickedNoteIndex !== -1) {
           setSelectedNoteIndex(clickedNoteIndex);
@@ -174,8 +159,8 @@ const PianoRoll: React.FC<PianoRollProps> = ({ notes, duration, onNotesChange })
           }
       } else {
           // Create new note
-          const pitch = getPitchAtY(y);
-          const time = getTimeAtX(x);
+          const pitch = getPitchAtY(y, noteHeight, maxPitch);
+          const time = getTimeAtX(x, keysWidth, zoomX);
           const snappedTime = Math.floor(time * 4) / 4; 
           
           if (pitch >= minPitch && pitch <= maxPitch) {

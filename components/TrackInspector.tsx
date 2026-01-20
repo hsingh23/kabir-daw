@@ -64,6 +64,16 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
       });
   };
 
+  const togglePreFader = (type: 'reverbPre' | 'delayPre' | 'chorusPre') => {
+      updateTrack(track.id, {
+          sendConfig: {
+              reverbPre: false, delayPre: false, chorusPre: false,
+              ...track.sendConfig,
+              [type]: !track.sendConfig?.[type]
+          }
+      });
+  };
+
   const updateInstrument = (updates: Partial<InstrumentConfig>) => {
       if (!track.instrument) return;
       updateTrack(track.id, {
@@ -190,7 +200,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
           </div>
 
           <div className="grid grid-cols-1 gap-4">
-              {/* EQ Section (Now Full Width) */}
+              {/* EQ Section */}
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
                   <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
                       <span className="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
@@ -276,25 +286,43 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                       <span className="w-2 h-2 rounded-full bg-purple-500 mr-2"></span>
                       FX Sends
                   </h3>
-                  <div className="flex justify-around items-center">
-                      <Knob 
-                        label="Reverb" 
-                        value={track.sends?.reverb ?? 0}
-                        min={0} max={1}
-                        onChange={(v) => updateSend('reverb', v)} 
-                      />
-                      <Knob 
-                        label="Delay" 
-                        value={track.sends?.delay ?? 0}
-                        min={0} max={1}
-                        onChange={(v) => updateSend('delay', v)} 
-                      />
-                      <Knob 
-                        label="Chorus" 
-                        value={track.sends?.chorus ?? 0}
-                        min={0} max={1}
-                        onChange={(v) => updateSend('chorus', v)} 
-                      />
+                  <div className="flex justify-around items-end">
+                      <div className="flex flex-col items-center gap-1">
+                          <button 
+                            onClick={() => togglePreFader('reverbPre')}
+                            className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${track.sendConfig?.reverbPre ? 'bg-purple-900 text-purple-300 border-purple-700' : 'bg-zinc-800 text-zinc-500 border-zinc-700'}`}
+                          >PRE</button>
+                          <Knob 
+                            label="Reverb" 
+                            value={track.sends?.reverb ?? 0}
+                            min={0} max={1}
+                            onChange={(v) => updateSend('reverb', v)} 
+                          />
+                      </div>
+                      <div className="flex flex-col items-center gap-1">
+                          <button 
+                            onClick={() => togglePreFader('delayPre')}
+                            className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${track.sendConfig?.delayPre ? 'bg-purple-900 text-purple-300 border-purple-700' : 'bg-zinc-800 text-zinc-500 border-zinc-700'}`}
+                          >PRE</button>
+                          <Knob 
+                            label="Delay" 
+                            value={track.sends?.delay ?? 0}
+                            min={0} max={1}
+                            onChange={(v) => updateSend('delay', v)} 
+                          />
+                      </div>
+                      <div className="flex flex-col items-center gap-1">
+                          <button 
+                            onClick={() => togglePreFader('chorusPre')}
+                            className={`text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${track.sendConfig?.chorusPre ? 'bg-purple-900 text-purple-300 border-purple-700' : 'bg-zinc-800 text-zinc-500 border-zinc-700'}`}
+                          >PRE</button>
+                          <Knob 
+                            label="Chorus" 
+                            value={track.sends?.chorus ?? 0}
+                            min={0} max={1}
+                            onChange={(v) => updateSend('chorus', v)} 
+                          />
+                      </div>
                   </div>
               </div>
           </div>

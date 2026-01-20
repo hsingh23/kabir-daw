@@ -3,6 +3,7 @@ import React from 'react';
 import { Clip } from '../types';
 import Knob from './Knob';
 import PianoRoll from './PianoRoll';
+import { audio } from '../services/audio';
 import { X, Copy, Trash2, Clock, Music2, TrendingUp, Scissors, FlipHorizontal, BarChart2, Palette, MicOff, Mic, Gauge, Piano, AlignStartVertical } from 'lucide-react';
 
 interface ClipInspectorProps {
@@ -50,6 +51,12 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
           duration: Math.max(grid, Math.round(n.duration / grid) * grid)
       }));
       updateClip(clip.id, { notes: newNotes });
+  };
+
+  const handleGainChange = (v: number) => {
+      const gain = v * 2;
+      updateClip(clip.id, { gain });
+      audio.setClipGain(clip.id, gain);
   };
 
   return (
@@ -168,7 +175,7 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
                         label="Gain" 
                         value={(clip.gain ?? 1.0) / 2} // 0 to 2.0 mapped to 0-1
                         min={0} max={1}
-                        onChange={(v) => updateClip(clip.id, { gain: v * 2 })}
+                        onChange={handleGainChange}
                       />
                       <Knob 
                         label="Speed" 

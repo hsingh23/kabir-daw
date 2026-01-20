@@ -1,13 +1,12 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ProjectState, Track } from '../types';
 import CustomFader from './Fader';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
 import SpectrumAnalyzer from './SpectrumAnalyzer';
-import TrackIcon from './TrackIcon';
-import { Sliders, Music2, Activity, Plus, Settings2, Piano, Mic, Headphones } from 'lucide-react';
+import MixerStrip from './MixerStrip';
+import { Sliders, Music2, Activity, Plus, Mic, Piano } from 'lucide-react';
 import { analytics } from '../services/analytics';
 
 interface MixerProps {
@@ -40,20 +39,20 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
     window.history.replaceState({}, '', url);
   }, [tab]);
 
-  const updateTrack = (id: string, updates: Partial<typeof project.tracks[0]>) => {
+  const updateTrack = useCallback((id: string, updates: Partial<Track>) => {
     setProject(prev => ({
       ...prev,
       tracks: prev.tracks.map(t => t.id === id ? { ...t, ...updates } : t)
     }));
-  };
+  }, [setProject]);
 
-  const handleRenameTrack = (trackId: string, currentName: string) => {
+  const handleRenameTrack = useCallback((trackId: string, currentName: string) => {
       const newName = prompt('Rename Track', currentName);
       if (newName) {
           updateTrack(trackId, { name: newName });
           analytics.track('mixer_action', { action: 'rename_track', trackId });
       }
-  };
+  }, [updateTrack]);
 
   const handleAddTrack = (type: 'audio' | 'instrument' = 'audio') => {
       const newTrack: Track = {
@@ -66,11 +65,15 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
           instrument: type === 'instrument' ? { type: 'synth', preset: 'sawtooth', attack: 0.05, decay: 0.1, sustain: 0.5, release: 0.2 } : undefined,
           eq: { low: 0, mid: 0, high: 0 },
           compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-          sends: { reverb: 0, delay: 0, chorus: 0 }
+          sends: { reverb: 0, delay: 0, chorus: 0 },
+          sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
       };
       setProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       analytics.track('mixer_action', { action: 'add_track' });
   };
+
+  // Determine if solo mode is active globally
+  const isSoloActive = useMemo(() => project.tracks.some(t => t.solo), [project.tracks]);
 
   return (
     <div className="flex flex-col h-full bg-studio-bg overflow-hidden relative">
@@ -110,56 +113,20 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
                 {/* Scrollable Tracks Area */}
                 <div className="flex-1 overflow-x-auto overflow-y-hidden">
                     <div className="flex h-full min-w-max px-4 pt-4 pb-12 space-x-2">
-                        {project.tracks.map(track => (
-                            <div key={track.id} className="flex flex-col w-20 bg-zinc-900 border-x border-zinc-800 relative group h-full">
-                                {/* Top: Info & Routing */}
-                                <div className="h-24 p-2 flex flex-col items-center justify-between border-b border-zinc-800 bg-zinc-900">
-                                    <div className="w-6 h-6 rounded flex items-center justify-center bg-zinc-800 shadow-inner text-zinc-400">
-                                        <TrackIcon icon={track.icon} name={track.name} color={track.color} size={14} />
-                                    </div>
-                                    
-                                    <button 
-                                        className="text-[10px] font-bold text-zinc-400 hover:text-white truncate w-full text-center px-1"
-                                        onClick={() => handleRenameTrack(track.id, track.name)}
-                                    >
-                                        {track.name}
-                                    </button>
-
-                                    <div className="flex space-x-1 w-full justify-center">
-                                        <button 
-                                            onClick={() => updateTrack(track.id, { muted: !track.muted })}
-                                            className={`w-6 h-5 rounded text-[9px] font-bold transition-colors border ${track.muted ? 'bg-red-500 border-red-600 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'}`}
-                                        >M</button>
-                                        <button 
-                                            onClick={() => updateTrack(track.id, { solo: !track.solo })}
-                                            className={`w-6 h-5 rounded text-[9px] font-bold transition-colors border ${track.solo ? 'bg-yellow-500 border-yellow-600 text-black' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'}`}
-                                        >S</button>
-                                    </div>
-                                </div>
-
-                                {/* Middle: Fader Area */}
-                                <div className="flex-1 bg-zinc-950/50 p-2 flex justify-center relative">
-                                    {/* Grid Lines */}
-                                    <div className="absolute inset-0 pointer-events-none opacity-20 flex flex-col justify-between py-8 px-4">
-                                        {[...Array(10)].map((_, i) => <div key={i} className="w-full h-px bg-zinc-700" />)}
-                                    </div>
-                                    
-                                    <div className="h-full flex gap-1 z-10 py-2">
-                                        <CustomFader 
-                                            value={track.volume} 
-                                            onChange={(v) => updateTrack(track.id, { volume: v })} 
-                                            onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_volume', trackId: track.id, value: v })}
-                                            height={300} // Flexible based on container
-                                            defaultValue={0.8}
-                                        />
-                                        <LevelMeter trackId={track.id} vertical={true} />
-                                    </div>
-                                </div>
-
-                                {/* Bottom: Color */}
-                                <div className="h-3 w-full" style={{ backgroundColor: track.color }} />
-                            </div>
-                        ))}
+                        {project.tracks.map(track => {
+                            // If solo mode is active, any track not soloed is implicitly muted
+                            const isImplicitlyMuted = isSoloActive && !track.solo;
+                            return (
+                                <MixerStrip 
+                                    key={track.id} 
+                                    track={track} 
+                                    updateTrack={updateTrack} 
+                                    handleRenameTrack={handleRenameTrack}
+                                    analytics={analytics}
+                                    isImplicitlyMuted={isImplicitlyMuted}
+                                />
+                            );
+                        })}
                         
                         {/* Spacer for adding tracks */}
                         <div className="w-20 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded-lg m-2 opacity-50 hover:opacity-100 transition-opacity">

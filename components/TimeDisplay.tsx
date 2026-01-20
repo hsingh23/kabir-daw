@@ -1,6 +1,7 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { audio } from '../services/audio';
+import { animation } from '../services/animation';
 import { formatBars, formatTime } from '../services/utils';
 
 interface TimeDisplayProps {
@@ -12,7 +13,6 @@ interface TimeDisplayProps {
 const TimeDisplay: React.FC<TimeDisplayProps> = ({ currentTime, bpm, isPlaying }) => {
   const [mode, setMode] = useState<'bars' | 'time'>('bars');
   const [displayTime, setDisplayTime] = useState(currentTime);
-  const rafRef = useRef<number>(0);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -20,13 +20,13 @@ const TimeDisplay: React.FC<TimeDisplayProps> = ({ currentTime, bpm, isPlaying }
       return;
     }
 
-    const loop = () => {
+    const update = () => {
       setDisplayTime(audio.getCurrentTime());
-      rafRef.current = requestAnimationFrame(loop);
     };
-    loop();
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, currentTime]); // Sync with props when paused
+    
+    const unsubscribe = animation.subscribe(update);
+    return unsubscribe;
+  }, [isPlaying, currentTime]);
 
   return (
     <button 

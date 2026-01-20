@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { audio } from '../services/audio';
+import { animation } from '../services/animation';
 
 interface LevelMeterProps {
   trackId?: string; // If undefined, monitors master
@@ -9,11 +10,10 @@ interface LevelMeterProps {
 
 const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => {
   const fillRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number>(0);
   const [clipped, setClipped] = useState(false);
 
   useEffect(() => {
-    const loop = () => {
+    const update = () => {
       let level = 0;
       if (trackId) {
         level = audio.measureTrackLevel(trackId);
@@ -38,12 +38,10 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => 
             fillRef.current.style.width = `${pct}%`;
         }
       }
-      
-      rafRef.current = requestAnimationFrame(loop);
     };
     
-    loop();
-    return () => cancelAnimationFrame(rafRef.current);
+    const unsubscribe = animation.subscribe(update);
+    return unsubscribe;
   }, [trackId, vertical]);
 
   return (
