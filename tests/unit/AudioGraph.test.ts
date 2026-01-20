@@ -1,4 +1,5 @@
 
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 
@@ -48,24 +49,30 @@ describe('Audio Graph Connectivity', () => {
         // Channel structure: Input -> Distortion -> Filters... -> Gain -> Panner -> Sends/Master
         
         // Check Panner output (which is the effective output of the track strip)
-        // Note: In getTrackChannel, we connect panner to sends.
-        // But do we connect panner to master? 
-        // The `createTrackGraph` connects panner to `destination` arg (which is masterGain).
-        // Let's verify.
-        
         // In audio.ts `createTrackGraph(this.ctx, this.masterGain)` is called.
         // So panner should connect to masterGain.
         expect((channel.panner as any).connectedNodes).toContain(eng.masterGain);
         
-        // Sends
-        expect((channel.panner as any).connectedNodes).toContain(channel.reverbSend);
-        expect((channel.panner as any).connectedNodes).toContain(channel.delaySend);
-        expect((channel.panner as any).connectedNodes).toContain(channel.chorusSend);
+        // Sends (Post fader connects to Panner)
+        expect((channel.panner as any).connectedNodes).toContain(channel.reverbSendPost);
+        expect((channel.panner as any).connectedNodes).toContain(channel.delaySendPost);
+        expect((channel.panner as any).connectedNodes).toContain(channel.chorusSendPost);
+        
+        // Pre Sends (Pre Fader Tap connects to Pre Sends)
+        expect((channel.preFaderTap as any).connectedNodes).toContain(channel.reverbSendPre);
+        expect((channel.preFaderTap as any).connectedNodes).toContain(channel.delaySendPre);
+        expect((channel.preFaderTap as any).connectedNodes).toContain(channel.chorusSendPre);
         
         // Check Send routing to main FX inputs
-        expect((channel.reverbSend as any).connectedNodes).toContain(eng.reverbInput);
-        expect((channel.delaySend as any).connectedNodes).toContain(eng.delayInput);
-        expect((channel.chorusSend as any).connectedNodes).toContain(eng.chorusInput);
+        // Pre
+        expect((channel.reverbSendPre as any).connectedNodes).toContain(eng.reverbInput);
+        expect((channel.delaySendPre as any).connectedNodes).toContain(eng.delayInput);
+        expect((channel.chorusSendPre as any).connectedNodes).toContain(eng.chorusInput);
+        
+        // Post
+        expect((channel.reverbSendPost as any).connectedNodes).toContain(eng.reverbInput);
+        expect((channel.delaySendPost as any).connectedNodes).toContain(eng.delayInput);
+        expect((channel.chorusSendPost as any).connectedNodes).toContain(eng.chorusInput);
     });
 
     it('disconnects channel when track is removed', () => {

@@ -6,6 +6,26 @@ export interface MidiNote {
   duration: number; // Duration in seconds
 }
 
+export interface MidiMapping {
+  id: string;
+  cc: number; // Control Change Number
+  channel: number;
+  targetId: string; // Track ID or 'master'
+  parameter: 'volume' | 'pan' | 'cutoff'; // Parameter to control
+}
+
+export interface AutomationPoint {
+  id: string;
+  time: number; // Time in seconds
+  value: number; // Normalized value 0-1
+  curve?: 'linear' | 'exponential' | 'step'; // Interpolation type
+}
+
+export interface AutomationCurves {
+  volume?: AutomationPoint[];
+  pan?: AutomationPoint[];
+}
+
 export interface Clip {
   id: string;
   trackId: string;
@@ -47,6 +67,7 @@ export interface Track {
   color: string;
   icon?: string; // 'piano', 'drums', 'guitar', 'mic'
   instrument?: InstrumentConfig; // Only for 'instrument' type tracks
+  automation?: AutomationCurves;
   eq: {
     low: number; // Gain in dB (-12 to 12)
     mid: number; // Gain in dB
@@ -64,6 +85,11 @@ export interface Track {
     reverb: number; // 0 to 1
     delay: number; // 0 to 1
     chorus: number; // 0 to 1
+  };
+  sendConfig: {
+      reverbPre: boolean;
+      delayPre: boolean;
+      chorusPre: boolean;
   };
 }
 
@@ -143,10 +169,13 @@ export interface ProjectState {
   };
   tanpura: TanpuraState;
   tabla: TablaState;
+  midiMappings?: MidiMapping[]; // Saved MIDI mappings
+  lastModified?: number;
 }
 
 export enum ToolMode {
   POINTER = 'POINTER',
   SPLIT = 'SPLIT',
   ERASER = 'ERASER',
+  AUTOMATION = 'AUTOMATION'
 }

@@ -12,7 +12,11 @@ export type EventName =
   | 'mixer_action'
   | 'library_import'
   | 'export_started'
-  | 'export_completed';
+  | 'export_completed'
+  | 'app_crash'
+  | 'permission_denied'
+  | 'quota_exceeded'
+  | 'onboarding_completed';
 
 class Analytics {
   track(event: EventName, properties?: Record<string, any>) {
@@ -20,6 +24,7 @@ class Analytics {
       console.debug(`[Analytics] ${event}`, properties);
     }
     // Integration point for real analytics (Mixpanel, GA4, PostHog)
+    // Example: window.mixpanel?.track(event, properties);
   }
 }
 

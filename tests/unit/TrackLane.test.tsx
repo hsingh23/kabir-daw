@@ -1,4 +1,5 @@
 
+
 import { render, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import TrackLane from '../../components/TrackLane';
@@ -24,7 +25,8 @@ describe('TrackLane Component', () => {
         color: '#ff0000',
         eq: { low: 0, mid: 0, high: 0 },
         compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-        sends: { reverb: 0, delay: 0, chorus: 0 }
+        sends: { reverb: 0, delay: 0, chorus: 0 },
+        sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
     };
 
     const defaultProps = {

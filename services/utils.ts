@@ -1,84 +1,32 @@
 
-export function audioBufferToWav(buffer: AudioBuffer): Blob {
-  const numChannels = buffer.numberOfChannels;
-  const sampleRate = buffer.sampleRate;
-  const _format = 1; // PCM
-  const bitDepth = 16;
-  
-  let result: Float32Array;
-  if (numChannels === 2) {
-      result = interleave(buffer.getChannelData(0), buffer.getChannelData(1));
-  } else {
-      result = buffer.getChannelData(0);
-  }
+import { MidiNote, AutomationPoint } from "../types";
 
-  return encodeWAV(result, numChannels, sampleRate, bitDepth);
-}
+// Asynchronous WAV Encoding via Worker
+export function audioBufferToWav(buffer: AudioBuffer): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL('./export.worker.ts', import.meta.url), { type: 'module' });
+      
+      const left = buffer.getChannelData(0);
+      const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+      
+      worker.onmessage = (e) => {
+          resolve(e.data);
+          worker.terminate();
+      };
+      
+      worker.onerror = (e) => {
+          console.error('WAV Worker Error', e);
+          reject(e);
+          worker.terminate();
+      };
 
-function interleave(inputL: Float32Array, inputR: Float32Array): Float32Array {
-  const length = inputL.length + inputR.length;
-  const result = new Float32Array(length);
-
-  let index = 0;
-  let inputIndex = 0;
-
-  while (index < length) {
-    result[index++] = inputL[inputIndex];
-    result[index++] = inputR[inputIndex];
-    inputIndex++;
-  }
-  return result;
-}
-
-function encodeWAV(samples: Float32Array, numChannels: number, sampleRate: number, bitDepth: number): Blob {
-  const bytesPerSample = bitDepth / 8;
-  const blockAlign = numChannels * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
-  const view = new DataView(buffer);
-
-  /* RIFF identifier */
-  writeString(view, 0, 'RIFF');
-  /* RIFF chunk length */
-  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
-  /* RIFF type */
-  writeString(view, 8, 'WAVE');
-  /* format chunk identifier */
-  writeString(view, 12, 'fmt ');
-  /* format chunk length */
-  view.setUint32(16, 16, true);
-  /* sample format (raw) */
-  view.setUint16(20, 1, true);
-  /* channel count */
-  view.setUint16(22, numChannels, true);
-  /* sample rate */
-  view.setUint32(24, sampleRate, true);
-  /* byte rate (sample rate * block align) */
-  view.setUint32(28, sampleRate * blockAlign, true);
-  /* block align (channel count * bytes per sample) */
-  view.setUint16(32, blockAlign, true);
-  /* bits per sample */
-  view.setUint16(34, bitDepth, true);
-  /* data chunk identifier */
-  writeString(view, 36, 'data');
-  /* data chunk length */
-  view.setUint32(40, samples.length * bytesPerSample, true);
-
-  floatTo16BitPCM(view, 44, samples);
-
-  return new Blob([view], { type: 'audio/wav' });
-}
-
-function floatTo16BitPCM(output: DataView, offset: number, input: Float32Array) {
-  for (let i = 0; i < input.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, input[i]));
-    output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-  }
-}
-
-function writeString(view: DataView, offset: number, string: string) {
-  for (let i = 0; i < string.length; i++) {
-    view.setUint8(offset + i, string.charCodeAt(i));
-  }
+      worker.postMessage({
+          left,
+          right,
+          sampleRate: buffer.sampleRate,
+          bitDepth: 16
+      });
+  });
 }
 
 export function moveItem<T>(array: T[], fromIndex: number, toIndex: number): T[] {
@@ -129,6 +77,41 @@ export const formatTime = (time: number): string => {
     const seconds = Math.floor(time % 60);
     const millis = Math.floor((time % 1) * 10);
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${millis}`;
+};
+
+export const getAutomationValueAtTime = (points: AutomationPoint[], time: number, defaultValue: number): number => {
+    if (!points || points.length === 0) return defaultValue;
+    
+    // Sort points just in case
+    const sorted = [...points].sort((a, b) => a.time - b.time);
+    
+    // Time is before first point
+    if (time <= sorted[0].time) return sorted[0].value;
+    
+    // Time is after last point
+    if (time >= sorted[sorted.length - 1].time) return sorted[sorted.length - 1].value;
+    
+    // Find surrounding points
+    const index = sorted.findIndex(p => p.time > time);
+    if (index === -1) return sorted[sorted.length - 1].value;
+    
+    const pNext = sorted[index];
+    const pPrev = sorted[index - 1];
+    
+    if (pPrev.curve === 'step') {
+        return pPrev.value;
+    } else if (pPrev.curve === 'exponential') {
+        // Simple exponential interpolation
+        const t = (time - pPrev.time) / (pNext.time - pPrev.time);
+        // Avoid zero for log calcs
+        const v1 = Math.max(0.001, pPrev.value);
+        const v2 = Math.max(0.001, pNext.value);
+        return v1 * Math.pow(v2 / v1, t);
+    } else {
+        // Linear
+        const t = (time - pPrev.time) / (pNext.time - pPrev.time);
+        return pPrev.value + (pNext.value - pPrev.value) * t;
+    }
 };
 
 // EQ Constants matching AudioEngine
@@ -228,8 +211,6 @@ function addBiquadResponse(freqs: Float32Array, outputDb: Float32Array, type: nu
 }
 
 export const getCompressorCurve = (threshold: number, ratio: number, knee: number): { x: number, y: number }[] => {
-    // Generate transfer curve points [inputdB, outputdB]
-    // Range -60dB to 0dB
     const points: { x: number, y: number }[] = [];
     const minDb = -60;
     const maxDb = 0;
@@ -238,23 +219,13 @@ export const getCompressorCurve = (threshold: number, ratio: number, knee: numbe
     for (let i = 0; i <= steps; i++) {
         const x = minDb + (i / steps) * (maxDb - minDb);
         let y = x;
-
-        // Soft Knee Approximation logic similar to WebAudio API
-        // if x < threshold, y = x
-        // if x > threshold, y = threshold + (x - threshold) / ratio
-        // with knee smoothing
         
         if (ratio > 1) {
-            // Simple hard knee for visualization if knee is 0
             if (knee <= 0) {
                 if (x > threshold) {
                     y = threshold + (x - threshold) / ratio;
                 }
             } else {
-                // Soft knee
-                // 2*(x - T) < -W  => no compression
-                // 2*(x - T) > W   => full compression
-                // else            => interpolate
                 const W = knee;
                 const T = threshold;
                 
@@ -263,10 +234,6 @@ export const getCompressorCurve = (threshold: number, ratio: number, knee: numbe
                 } else if (2 * (x - T) > W) {
                     y = T + (x - T) / ratio;
                 } else {
-                    // Spline
-                    const slope = 1 / ratio;
-                    // Exact formula from WebAudio spec is complex, standard approximation:
-                    // y = x + (1/R - 1) * (x - T + W/2)^2 / (2*W)
                     const gainReduction = (1 - 1/ratio) * Math.pow(x - T + W/2, 2) / (2 * W);
                     y = x - gainReduction;
                 }
@@ -276,4 +243,32 @@ export const getCompressorCurve = (threshold: number, ratio: number, knee: numbe
         points.push({ x, y });
     }
     return points;
+};
+
+// --- Piano Roll Math ---
+
+export const getPitchAtY = (y: number, noteHeight: number, maxPitch: number): number => {
+    const row = Math.floor(y / noteHeight);
+    return maxPitch - row;
+};
+
+export const getTimeAtX = (x: number, keysWidth: number, zoomX: number): number => {
+    return Math.max(0, (x - keysWidth) / zoomX);
+};
+
+export const getNoteAtPosition = (
+    x: number, 
+    y: number, 
+    notes: MidiNote[], 
+    zoomX: number, 
+    noteHeight: number, 
+    maxPitch: number,
+    keysWidth: number
+): number => {
+    return notes.findIndex(n => {
+        const nx = keysWidth + (n.start * zoomX);
+        const ny = (maxPitch - n.note) * noteHeight;
+        const nw = n.duration * zoomX;
+        return x >= nx && x <= nx + nw && y >= ny && y <= ny + noteHeight;
+    });
 };

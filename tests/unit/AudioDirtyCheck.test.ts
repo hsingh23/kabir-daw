@@ -1,4 +1,5 @@
 
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 import { Track } from '../../types';
@@ -16,7 +17,8 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
             id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
             color: '#000', eq: { low: 0, mid: 0, high: 0 }, 
             compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-            sends: { reverb: 0, delay: 0, chorus: 0 } 
+            sends: { reverb: 0, delay: 0, chorus: 0 },
+            sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
         };
 
         const channel = audio.getTrackChannel(track.id);
@@ -34,7 +36,8 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
             id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
             color: '#000', eq: { low: 0, mid: 0, high: 0 }, 
             compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-            sends: { reverb: 0, delay: 0, chorus: 0 } 
+            sends: { reverb: 0, delay: 0, chorus: 0 },
+            sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
         };
 
         const channel = audio.getTrackChannel(track.id);
@@ -57,7 +60,8 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
             id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
             color: '#000', eq: { low: 0, mid: 0, high: 0 }, 
             compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-            sends: { reverb: 0, delay: 0, chorus: 0 } 
+            sends: { reverb: 0, delay: 0, chorus: 0 },
+            sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
         };
 
         const channel = audio.getTrackChannel(track.id);

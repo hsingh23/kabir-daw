@@ -1,5 +1,6 @@
 
 import { useState, useCallback } from 'react';
+import { produce, Draft } from 'immer';
 import { ProjectState } from '../types';
 
 export const useProjectState = (initialProject: ProjectState) => {
@@ -8,27 +9,30 @@ export const useProjectState = (initialProject: ProjectState) => {
   const [future, setFuture] = useState<ProjectState[]>([]);
 
   // Update without committing to history (for high-frequency events like drag)
-  const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
+  // Uses Immer 'produce' to allow mutable-style logic while keeping React state immutable
+  const updateProject = useCallback((recipe: ((draft: Draft<ProjectState>) => void) | Partial<ProjectState>) => {
       setProject(current => {
-          const next = typeof value === 'function' ? (value as (prev: ProjectState) => ProjectState)(current) : value;
-          return next;
+          if (typeof recipe === 'function') {
+              return produce(current, recipe as (draft: Draft<ProjectState>) => void);
+          }
+          // Handle partial object update
+          return produce(current, (draft) => {
+              Object.assign(draft, recipe);
+          });
       });
   }, []);
 
-  // Commit current state to history with deep clone to prevent mutation bugs
-  // IMPORTANT: Call this AFTER an action is complete (e.g. onPointerUp)
+  // Commit current state to history
+  // Removed structuredClone because Immer ensures the 'current' state is already a safe, immutable snapshot.
   const commitTransaction = useCallback(() => {
       setProject(current => {
-          try {
-              // Deep clone the current state before pushing to history
-              const snapshot = structuredClone(current);
-              setPast(prev => [...prev.slice(-19), snapshot]);
-              setFuture([]);
-          } catch (e) {
-              console.error("Failed to clone state for history", e);
-              // Fallback if structuredClone fails (unlikely in modern envs)
-              setPast(prev => [...prev.slice(-19), JSON.parse(JSON.stringify(current))]);
-          }
+          setPast(prev => {
+              // Keep history limited to 20 items
+              const newPast = [...prev, current];
+              if (newPast.length > 20) return newPast.slice(newPast.length - 20);
+              return newPast;
+          });
+          setFuture([]);
           return current;
       });
   }, []);

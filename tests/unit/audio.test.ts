@@ -1,4 +1,5 @@
 
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 import { Track, Clip } from '../../types';
@@ -25,15 +26,18 @@ describe('AudioEngine', () => {
         expect(channel).toBeDefined();
         expect(channel.gain).toBeDefined();
         expect(channel.panner).toBeDefined();
-        expect(channel.reverbSend).toBeDefined();
-        expect(channel.delaySend).toBeDefined();
-        expect(channel.chorusSend).toBeDefined();
+        expect(channel.reverbSendPre).toBeDefined();
+        expect(channel.reverbSendPost).toBeDefined();
+        expect(channel.delaySendPre).toBeDefined();
+        expect(channel.delaySendPost).toBeDefined();
+        expect(channel.chorusSendPre).toBeDefined();
+        expect(channel.chorusSendPost).toBeDefined();
         expect(audio.trackChannels.has('t1')).toBe(true);
     });
 
     it('syncs track parameters correctly including sends', () => {
         const tracks: Track[] = [
-            { id: 't1', type: 'audio', name: 'Test', volume: 0.5, pan: -0.5, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0.5, delay: 0.2, chorus: 0 } }
+            { id: 't1', type: 'audio', name: 'Test', volume: 0.5, pan: -0.5, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0.5, delay: 0.2, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }
         ];
 
         audio.syncTracks(tracks);
@@ -41,13 +45,13 @@ describe('AudioEngine', () => {
         const channel = audio.getTrackChannel('t1');
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
         expect(channel.panner.pan.setTargetAtTime).toHaveBeenCalledWith(-0.5, expect.any(Number), expect.any(Number));
-        expect(channel.reverbSend.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
-        expect(channel.delaySend.gain.setTargetAtTime).toHaveBeenCalledWith(0.2, expect.any(Number), expect.any(Number));
+        expect(channel.reverbSendPost.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
+        expect(channel.delaySendPost.gain.setTargetAtTime).toHaveBeenCalledWith(0.2, expect.any(Number), expect.any(Number));
     });
 
     it('mutes track when muted', () => {
         const tracks: Track[] = [
-            { id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: true, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
+            { id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: true, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }
         ];
 
         audio.syncTracks(tracks);
@@ -73,7 +77,7 @@ describe('AudioEngine', () => {
             { id: 'c2', trackId: 't1', name: 'Active Clip', muted: false, start: 5, duration: 4, offset: 0, bufferKey: 'k1', fadeIn: 0, fadeOut: 0 }
         ];
         
-        const tracks: Track[] = [{ id: 't1', type: 'audio', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }];
+        const tracks: Track[] = [{ id: 't1', type: 'audio', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0}, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }];
 
         // Spy on createBufferSource
         const spyCreateSource = vi.spyOn(audio.ctx, 'createBufferSource');

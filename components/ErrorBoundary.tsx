@@ -1,6 +1,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { analytics } from '../services/analytics';
 
 interface Props {
   children: ReactNode;
@@ -23,6 +24,11 @@ class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
+    analytics.track('app_crash', { 
+        message: error.message, 
+        stack: error.stack,
+        componentStack: errorInfo.componentStack 
+    });
   }
 
   public render() {

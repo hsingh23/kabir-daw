@@ -1,4 +1,5 @@
 
+
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useArrangerInteraction } from '../../../hooks/useArrangerInteraction';
@@ -11,7 +12,7 @@ const mockProject: ProjectState = {
     timeSignature: [4, 4],
     returnToStartOnStop: true,
     tracks: [
-        { id: 't1', type: 'audio', name: 'Track 1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq:{low:0,mid:0,high:0}, sends:{reverb:0,delay:0,chorus:0} }
+        { id: 't1', type: 'audio', name: 'Track 1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq:{low:0,mid:0,high:0}, sends:{reverb:0,delay:0,chorus:0}, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }
     ],
     clips: [{ id: 'c1', trackId: 't1', name: 'Clip', start: 0, duration: 4, offset: 0, bufferKey: 'k', fadeIn: 0, fadeOut: 0 }],
     markers: [], loopStart:0, loopEnd:4, isLooping:false, metronomeOn:false, countIn:0, recordingLatency:0, inputMonitoring:false,

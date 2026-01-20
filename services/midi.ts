@@ -1,10 +1,12 @@
 
 type MidiNoteHandler = (note: number, velocity: number, timestamp: number) => void;
+type MidiControlHandler = (cc: number, value: number, channel: number) => void;
 
 class MidiService {
   private midiAccess: MIDIAccess | null = null;
   private noteOnListeners: Set<MidiNoteHandler> = new Set();
   private noteOffListeners: Set<MidiNoteHandler> = new Set();
+  private controlChangeListeners: Set<MidiControlHandler> = new Set();
   public isSupported: boolean = false;
 
   constructor() {
@@ -35,6 +37,7 @@ class MidiService {
   private handleMidiMessage(event: MIDIMessageEvent) {
     const [status, data1, data2] = event.data;
     const command = status & 0xf0;
+    const channel = status & 0x0f;
     // timestamp is in milliseconds (DOMHighResTimeStamp)
     const timestamp = event.timeStamp; 
 
@@ -44,6 +47,9 @@ class MidiService {
     } else if (command === 0x80 || (command === 0x90 && data2 === 0)) {
       // Note Off
       this.noteOffListeners.forEach(cb => cb(data1, 0, timestamp));
+    } else if (command === 0xB0) {
+      // Control Change
+      this.controlChangeListeners.forEach(cb => cb(data1, data2, channel));
     }
   }
 
@@ -55,6 +61,11 @@ class MidiService {
   onNoteOff(cb: MidiNoteHandler) {
     this.noteOffListeners.add(cb);
     return () => this.noteOffListeners.delete(cb);
+  }
+
+  onControlChange(cb: MidiControlHandler) {
+      this.controlChangeListeners.add(cb);
+      return () => this.controlChangeListeners.delete(cb);
   }
 }
 
