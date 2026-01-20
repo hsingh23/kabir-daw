@@ -12,7 +12,7 @@ describe('ExportDialog Component', () => {
       timeSignature: [4, 4],
       returnToStartOnStop: true,
       tracks: [
-          { id: 't1', name: 'Track 1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }
+          { id: 't1', type: 'audio', name: 'Track 1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }
       ],
       clips: [],
       markers: [],

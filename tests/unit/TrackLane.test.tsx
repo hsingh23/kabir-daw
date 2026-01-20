@@ -15,6 +15,7 @@ vi.mock('../../components/LevelMeter', () => ({
 describe('TrackLane Component', () => {
     const mockTrack: Track = {
         id: 't1',
+        type: 'audio',
         name: 'Guitar',
         volume: 0.8,
         pan: 0,

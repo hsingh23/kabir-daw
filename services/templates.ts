@@ -3,6 +3,7 @@ import { ProjectState, Track } from '../types';
 
 export const createTrack = (name: string, color: string, icon: string = 'music'): Track => ({
     id: crypto.randomUUID(),
+    type: 'audio',
     name,
     volume: 0.8,
     pan: 0,

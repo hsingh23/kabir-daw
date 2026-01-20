@@ -3,26 +3,106 @@ import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
 // Mock Web Audio API
+class AudioNodeMock {
+  context: AudioContextMock;
+  numberOfInputs = 1;
+  numberOfOutputs = 1;
+  channelCount = 2;
+  channelCountMode = 'max';
+  channelInterpretation = 'speakers';
+  connectedNodes: AudioNodeMock[] = [];
+
+  constructor(context: any) {
+    this.context = context;
+  }
+
+  connect(dest: AudioNodeMock) {
+    this.connectedNodes.push(dest);
+    return dest;
+  }
+
+  disconnect() {
+    this.connectedNodes = [];
+  }
+}
+
+class AudioParamMock {
+  value = 0;
+  setValueAtTime = vi.fn();
+  linearRampToValueAtTime = vi.fn();
+  exponentialRampToValueAtTime = vi.fn();
+  setTargetAtTime = vi.fn();
+  cancelScheduledValues = vi.fn();
+  connect = vi.fn();
+}
+
+class GainNodeMock extends AudioNodeMock {
+  gain = new AudioParamMock();
+}
+
+class OscillatorNodeMock extends AudioNodeMock {
+  frequency = new AudioParamMock();
+  detune = new AudioParamMock();
+  type = 'sine';
+  start = vi.fn();
+  stop = vi.fn();
+}
+
+class BiquadFilterNodeMock extends AudioNodeMock {
+  frequency = new AudioParamMock();
+  Q = new AudioParamMock();
+  gain = new AudioParamMock();
+  type = 'lowpass';
+}
+
+class StereoPannerNodeMock extends AudioNodeMock {
+  pan = new AudioParamMock();
+}
+
+class DynamicsCompressorNodeMock extends AudioNodeMock {
+  threshold = new AudioParamMock();
+  knee = new AudioParamMock();
+  ratio = new AudioParamMock();
+  attack = new AudioParamMock();
+  release = new AudioParamMock();
+  reduction = 0;
+}
+
+class AnalyserNodeMock extends AudioNodeMock {
+  fftSize = 2048;
+  frequencyBinCount = 1024;
+  smoothingTimeConstant = 0.8;
+  getByteFrequencyData = vi.fn((array) => array.fill(0));
+  getByteTimeDomainData = vi.fn((array) => array.fill(0));
+  getFloatTimeDomainData = vi.fn((array) => array.fill(0));
+}
+
 class AudioContextMock {
-  createGain() { return { connect: vi.fn(), gain: { value: 0, setTargetAtTime: vi.fn(), setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() } }; }
-  createOscillator() { return { connect: vi.fn(), start: vi.fn(), stop: vi.fn(), frequency: { value: 0 }, type: 'sine', exponentialRampToValueAtTime: vi.fn() }; }
-  createDynamicsCompressor() { return { connect: vi.fn() }; }
-  createConvolver() { return { connect: vi.fn(), buffer: null }; }
-  createDelay() { return { connect: vi.fn(), delayTime: { value: 0 } }; }
-  createStereoPanner() { return { connect: vi.fn(), pan: { value: 0, setTargetAtTime: vi.fn() } }; }
-  createBiquadFilter() { return { connect: vi.fn(), gain: { value: 0, setTargetAtTime: vi.fn() }, frequency: { value: 0 }, Q: { value: 0 }, type: 'lowpass' }; }
-  createAnalyser() { return { connect: vi.fn(), fftSize: 2048, frequencyBinCount: 1024, getByteTimeDomainData: vi.fn(), getFloatTimeDomainData: vi.fn(), smoothingTimeConstant: 0.8 }; }
-  createBuffer() { return { getChannelData: vi.fn(() => new Float32Array(1024)) }; }
-  decodeAudioData() { return Promise.resolve({}); }
-  resume() { return Promise.resolve(); }
-  get currentTime() { return 0; }
-  get sampleRate() { return 44100; }
-  get state() { return 'suspended'; }
+  state = 'suspended';
+  sampleRate = 44100;
+  currentTime = 0;
+  destination = new AudioNodeMock(this);
+
+  createGain() { return new GainNodeMock(this); }
+  createOscillator() { return new OscillatorNodeMock(this); }
+  createDynamicsCompressor() { return new DynamicsCompressorNodeMock(this); }
+  createConvolver() { return new AudioNodeMock(this) as any; }
+  createDelay() { return new AudioNodeMock(this) as any; } // DelayNode has delayTime param, simplified here
+  createStereoPanner() { return new StereoPannerNodeMock(this); }
+  createBiquadFilter() { return new BiquadFilterNodeMock(this); }
+  createAnalyser() { return new AnalyserNodeMock(this); }
+  createBuffer() { return { getChannelData: vi.fn(() => new Float32Array(1024)), sampleRate: 44100, length: 1024, numberOfChannels: 2, duration: 1024/44100 }; }
+  createBufferSource() { return { buffer: null, connect: vi.fn(), start: vi.fn(), stop: vi.fn(), playbackRate: { value: 1 }, detune: { value: 0 }, loop: false, loopStart: 0, loopEnd: 0, onended: null }; }
+  createWaveShaper() { return { connect: vi.fn(), curve: null, oversample: 'none' }; }
+  createMediaStreamSource() { return new AudioNodeMock(this); }
+  decodeAudioData() { return Promise.resolve(this.createBuffer()); }
+  resume() { this.state = 'running'; return Promise.resolve(); }
+  suspend() { this.state = 'suspended'; return Promise.resolve(); }
   setSinkId(id: string) { return Promise.resolve(); }
 }
 
 class OfflineAudioContextMock extends AudioContextMock {
-    startRendering() { return Promise.resolve({} as AudioBuffer); }
+    startRendering() { return Promise.resolve(this.createBuffer()); }
 }
 
 window.AudioContext = AudioContextMock as any;

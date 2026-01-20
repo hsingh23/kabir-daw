@@ -13,7 +13,7 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
 
     it('creates channel and applies settings on first call', () => {
         const track: Track = { 
-            id: 't1', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
+            id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
             color: '#000', eq: { low: 0, mid: 0, high: 0 }, 
             compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
             sends: { reverb: 0, delay: 0, chorus: 0 } 
@@ -31,7 +31,7 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
 
     it('skips redundant updates', () => {
         const track: Track = { 
-            id: 't1', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
+            id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
             color: '#000', eq: { low: 0, mid: 0, high: 0 }, 
             compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
             sends: { reverb: 0, delay: 0, chorus: 0 } 
@@ -54,7 +54,7 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
 
     it('updates only changed parameters', () => {
         const track: Track = { 
-            id: 't1', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
+            id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: false, solo: false, 
             color: '#000', eq: { low: 0, mid: 0, high: 0 }, 
             compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
             sends: { reverb: 0, delay: 0, chorus: 0 } 

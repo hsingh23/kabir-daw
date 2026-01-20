@@ -1,10 +1,10 @@
 
 import React from 'react';
-import { Track } from '../types';
+import { Track, InstrumentConfig } from '../types';
 import Knob from './Knob';
 import VisualEQ from './VisualEQ';
 import TrackIcon, { ICONS } from './TrackIcon';
-import { X, Trash2, Zap, Palette, Copy, Smile } from 'lucide-react';
+import { X, Trash2, Zap, Palette, Copy, Smile, Waves } from 'lucide-react';
 import CustomFader from './Fader';
 
 interface TrackInspectorProps {
@@ -26,6 +26,8 @@ const TRACK_COLORS = [
     '#ec4899', // Pink
     '#71717a', // Zinc
 ];
+
+const WAVEFORMS = ['sine', 'square', 'sawtooth', 'triangle'];
 
 const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onDeleteTrack, onDuplicateTrack, onClose }) => {
   
@@ -62,6 +64,16 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
       });
   };
 
+  const updateInstrument = (updates: Partial<InstrumentConfig>) => {
+      if (!track.instrument) return;
+      updateTrack(track.id, {
+          instrument: {
+              ...track.instrument,
+              ...updates
+          }
+      });
+  };
+
   return (
     <div className="fixed inset-x-0 bottom-0 top-14 bg-studio-panel z-[150] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
       
@@ -77,7 +89,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                     onChange={(e) => updateTrack(track.id, { name: e.target.value })}
                     className="bg-transparent text-lg font-bold text-white outline-none w-full placeholder-zinc-500 focus:text-studio-accent"
                  />
-                 <p className="text-xs text-zinc-400 uppercase tracking-widest">Channel Strip</p>
+                 <p className="text-xs text-zinc-400 uppercase tracking-widest">{track.type === 'instrument' ? 'Synth Channel' : 'Audio Channel'}</p>
              </div>
         </div>
         <button onClick={onClose} className="p-2 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-colors">
@@ -87,6 +99,57 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
 
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 pb-20">
           
+          {track.type === 'instrument' && track.instrument && (
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
+                      <Waves size={12} className="mr-2" /> Synthesizer
+                  </h3>
+                  
+                  <div className="flex flex-col space-y-4">
+                      {/* Waveform Selector */}
+                      <div className="flex bg-zinc-800 p-1 rounded-lg">
+                          {WAVEFORMS.map(wf => (
+                              <button
+                                key={wf}
+                                onClick={() => updateInstrument({ preset: wf as any })}
+                                className={`flex-1 py-1.5 text-[10px] uppercase font-bold rounded-md transition-colors ${track.instrument?.preset === wf ? 'bg-studio-accent text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+                              >
+                                  {wf}
+                              </button>
+                          ))}
+                      </div>
+
+                      {/* ADSR Envelope */}
+                      <div className="flex justify-around items-center pt-2">
+                          <Knob 
+                            label="Attack" 
+                            value={track.instrument.attack * 2} // 0-0.5s mapped to 0-1
+                            min={0} max={1}
+                            onChange={(v) => updateInstrument({ attack: v * 0.5 })} 
+                          />
+                          <Knob 
+                            label="Decay" 
+                            value={track.instrument.decay * 2} 
+                            min={0} max={1}
+                            onChange={(v) => updateInstrument({ decay: v * 0.5 })} 
+                          />
+                          <Knob 
+                            label="Sustain" 
+                            value={track.instrument.sustain} 
+                            min={0} max={1}
+                            onChange={(v) => updateInstrument({ sustain: v })} 
+                          />
+                          <Knob 
+                            label="Release" 
+                            value={track.instrument.release * 0.5} // 0-2s mapped to 0-1
+                            min={0} max={1}
+                            onChange={(v) => updateInstrument({ release: v * 2 })} 
+                          />
+                      </div>
+                  </div>
+              </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Color Picker */}
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">

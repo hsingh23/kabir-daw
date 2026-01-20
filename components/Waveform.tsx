@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef, memo } from 'react';
+import React, { useLayoutEffect, useRef, memo } from 'react';
 import { audio } from '../services/audio';
 
 interface WaveformProps {
@@ -15,32 +15,38 @@ interface WaveformProps {
 const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, duration, fadeIn = 0, fadeOut = 0, gain = 1.0 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const resizeTimeoutRef = useRef<number>(0);
 
-  useEffect(() => {
-    const draw = () => {
+  const draw = () => {
       const canvas = canvasRef.current;
       const container = containerRef.current;
       if (!canvas || !container) return;
       
       const buffer = audio.buffers.get(bufferKey);
+      
+      // Get dimensions directly from the styled container
+      // This is performant because the parent (Arranger) sets these styles
       const rect = container.getBoundingClientRect();
-      if (rect.width === 0) return;
+      if (rect.width === 0 || rect.height === 0) return;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-          canvas.width = rect.width * dpr;
-          canvas.height = rect.height * dpr;
+      
+      // Only resize canvas if dimensions actually changed to avoid layout thrashing
+      const targetWidth = Math.floor(rect.width * dpr);
+      const targetHeight = Math.floor(rect.height * dpr);
+
+      if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
           ctx.scale(dpr, dpr);
       }
 
       ctx.clearRect(0, 0, rect.width, rect.height);
 
       if (!buffer) {
-          // Error State
+          // Error State / Loading State
           ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'; 
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -58,6 +64,7 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
       const bufferDuration = buffer.duration;
       const renderDuration = duration || bufferDuration;
       
+      // Optimization: Downsample if pixel density is high
       const pixelsPerSecond = rect.width / renderDuration;
       const usePeaks = pixelsPerSecond < 100;
       const peaks = usePeaks ? audio.getPeaks(bufferKey) : null;
@@ -82,11 +89,10 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
           const startIndex = Math.floor(segTimeOffset * dataRate);
           const segmentSamples = Math.floor(segDuration * dataRate);
-          const endIndex = Math.min(dataLength, startIndex + segmentSamples);
           
-          if (endIndex <= startIndex) return;
+          if (startIndex >= dataLength) return;
 
-          const step = (endIndex - startIndex) / segWidth;
+          const step = Math.max(1, segmentSamples / segWidth);
           const amp = rect.height / 2;
           const mid = rect.height / 2;
 
@@ -95,13 +101,12 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           // Draw Top
           for (let i = 0; i < segWidth; i++) {
               const dataIdx = Math.floor(startIndex + (i * step));
-              // Safeguard index
               if (dataIdx >= dataLength) break;
               
-              const stride = Math.max(1, Math.floor(step)); 
+              const sampleStride = Math.floor(step);
               let max = 0;
               // Sample visual peak
-              for (let j = 0; j < stride && (dataIdx+j) < dataLength; j++) {
+              for (let j = 0; j < sampleStride && (dataIdx+j) < dataLength; j++) {
                   const val = Math.abs(dataSource[dataIdx + j]);
                   if (val > max) max = val;
               }
@@ -115,9 +120,9 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
               const dataIdx = Math.floor(startIndex + (i * step));
               if (dataIdx >= dataLength) break;
               
-              const stride = Math.max(1, Math.floor(step)); 
+              const sampleStride = Math.floor(step);
               let max = 0;
-              for (let j = 0; j < stride && (dataIdx+j) < dataLength; j++) {
+              for (let j = 0; j < sampleStride && (dataIdx+j) < dataLength; j++) {
                   const val = Math.abs(dataSource[dataIdx + j]);
                   if (val > max) max = val;
               }
@@ -131,11 +136,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
       ctx.fillStyle = color;
 
-      // Handle Ghost Repeats (Looping)
-      // Logic: If renderDuration > remaining buffer duration from offset, loop from start of buffer.
-      // 1. First segment: from offset to min(bufferDuration, offset+renderDuration)
-      // 2. Subsequent segments: from 0 to bufferDuration (or remainder)
-      
       let currentDrawX = 0;
       let timeRemaining = renderDuration;
       let currentBufferOffset = offset % bufferDuration;
@@ -148,7 +148,7 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           
           drawSegment(currentDrawX, widthToDraw, currentBufferOffset, timeToDraw);
           
-          // Draw loop indicator line if we are looping
+          // Draw loop markers
           if (timeRemaining > timeToDraw) {
               ctx.save();
               ctx.strokeStyle = 'rgba(255,255,255,0.3)';
@@ -162,35 +162,18 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
           currentDrawX += widthToDraw;
           timeRemaining -= timeToDraw;
-          currentBufferOffset = 0; // Next loops start from 0
+          currentBufferOffset = 0; 
       }
 
       // --- Fade Overlays ---
-      // Fade In
       if (fadeIn > 0) {
           const fadeWidth = (fadeIn / renderDuration) * rect.width;
-          ctx.fillStyle = 'rgba(0,0,0,0.5)';
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          // Draw curve
-          for (let x = 0; x <= fadeWidth; x++) {
-              const progress = x / fadeWidth;
-              // Quadratic curve approximation for visual fade
-              const y = (1 - progress) * rect.height; 
-              ctx.lineTo(x, 0); // Cover top area? No, we want to mask content or overlay shadow.
-              // Let's draw an overlay that is opaque at start and transparent at end
-          }
-          // Simpler: Draw a gradient mask or simply fill areas that are faded "out"
-          // Actually, standard DAW visual is often just changing the waveform amplitude locally.
-          // But since we draw the waveform in one pass (or loops), modifying amp there is complex with loops.
-          // Let's draw a semi-transparent overlay to indicate fade.
           const grad = ctx.createLinearGradient(0, 0, fadeWidth, 0);
           grad.addColorStop(0, 'rgba(0,0,0,0.6)');
           grad.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = grad;
           ctx.fillRect(0, 0, fadeWidth, rect.height);
           
-          // Draw Fade Line
           ctx.strokeStyle = 'rgba(255,255,255,0.8)';
           ctx.lineWidth = 1;
           ctx.beginPath();
@@ -199,7 +182,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.stroke();
       }
 
-      // Fade Out
       if (fadeOut > 0) {
           const fadeWidth = (fadeOut / renderDuration) * rect.width;
           const startX = rect.width - fadeWidth;
@@ -210,7 +192,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.fillStyle = grad;
           ctx.fillRect(startX, 0, fadeWidth, rect.height);
 
-          // Draw Fade Line
           ctx.strokeStyle = 'rgba(255,255,255,0.8)';
           ctx.lineWidth = 1;
           ctx.beginPath();
@@ -218,24 +199,14 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.quadraticCurveTo(startX + fadeWidth * 0.5, rect.height * 0.8, rect.width, rect.height);
           ctx.stroke();
       }
-    };
+  };
 
-    draw();
-    
-    const resizeObserver = new ResizeObserver(() => {
-        if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
-        resizeTimeoutRef.current = window.setTimeout(draw, 100);
-    });
-    
-    if (containerRef.current) {
-        resizeObserver.observe(containerRef.current);
-    }
-
-    return () => {
-        resizeObserver.disconnect();
-        if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
-    };
-  }, [bufferKey, color, offset, duration, fadeIn, fadeOut, gain]);
+  // Re-draw when props change or container resizes (handled by parents passing new props/style)
+  // We don't need ResizeObserver because the Arranger re-renders this component 
+  // with new style width whenever zoom changes.
+  useLayoutEffect(() => {
+      draw();
+  });
 
   return (
       <div ref={containerRef} className="w-full h-full pointer-events-none">

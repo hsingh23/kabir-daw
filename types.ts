@@ -1,4 +1,11 @@
 
+export interface MidiNote {
+  note: number; // MIDI note number (0-127)
+  velocity: number; // 0-127
+  start: number; // Start time relative to clip start (seconds)
+  duration: number; // Duration in seconds
+}
+
 export interface Clip {
   id: string;
   trackId: string;
@@ -6,7 +13,9 @@ export interface Clip {
   start: number; // Start time in seconds on timeline
   offset: number; // Start time in the source audio file
   duration: number; // Duration of the clip
-  bufferKey: string; // IDB key for the audio buffer
+  loopLength?: number; // Length of the loop source in seconds (for MIDI looping)
+  bufferKey?: string; // IDB key for the audio buffer (Optional for MIDI)
+  notes?: MidiNote[]; // Array of MIDI notes (Optional for Audio)
   color?: string;
   muted?: boolean; // Whether the clip is muted
   fadeIn: number; // Duration of fade in seconds
@@ -16,8 +25,20 @@ export interface Clip {
   detune?: number; // Pitch shift in cents
 }
 
+export type TrackType = 'audio' | 'instrument';
+
+export interface InstrumentConfig {
+  type: 'synth';
+  preset: 'sine' | 'square' | 'sawtooth' | 'triangle';
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+}
+
 export interface Track {
   id: string;
+  type: TrackType;
   name: string;
   volume: number; // 0 to 1
   pan: number; // -1 to 1
@@ -25,6 +46,7 @@ export interface Track {
   solo: boolean;
   color: string;
   icon?: string; // 'piano', 'drums', 'guitar', 'mic'
+  instrument?: InstrumentConfig; // Only for 'instrument' type tracks
   eq: {
     low: number; // Gain in dB (-12 to 12)
     mid: number; // Gain in dB

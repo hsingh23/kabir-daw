@@ -33,7 +33,7 @@ describe('AudioEngine', () => {
 
     it('syncs track parameters correctly including sends', () => {
         const tracks: Track[] = [
-            { id: 't1', name: 'Test', volume: 0.5, pan: -0.5, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0.5, delay: 0.2, chorus: 0 } }
+            { id: 't1', type: 'audio', name: 'Test', volume: 0.5, pan: -0.5, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0.5, delay: 0.2, chorus: 0 } }
         ];
 
         audio.syncTracks(tracks);
@@ -47,7 +47,7 @@ describe('AudioEngine', () => {
 
     it('mutes track when muted', () => {
         const tracks: Track[] = [
-            { id: 't1', name: 'Test', volume: 0.8, pan: 0, muted: true, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
+            { id: 't1', type: 'audio', name: 'Test', volume: 0.8, pan: 0, muted: true, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
         ];
 
         audio.syncTracks(tracks);
@@ -73,7 +73,7 @@ describe('AudioEngine', () => {
             { id: 'c2', trackId: 't1', name: 'Active Clip', muted: false, start: 5, duration: 4, offset: 0, bufferKey: 'k1', fadeIn: 0, fadeOut: 0 }
         ];
         
-        const tracks: Track[] = [{ id: 't1', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }];
+        const tracks: Track[] = [{ id: 't1', type: 'audio', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }];
 
         // Spy on createBufferSource
         const spyCreateSource = vi.spyOn(audio.ctx, 'createBufferSource');
