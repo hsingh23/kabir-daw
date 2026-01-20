@@ -2,9 +2,10 @@
 import React from 'react';
 import { Track } from '../types';
 import Knob from './Knob';
-import CustomFader from './Fader';
 import VisualEQ from './VisualEQ';
-import { X, Mic, Music, Drum, Guitar, Keyboard, Trash2, Zap, Palette, Copy } from 'lucide-react';
+import TrackIcon, { ICONS } from './TrackIcon';
+import { X, Trash2, Zap, Palette, Copy, Smile } from 'lucide-react';
+import CustomFader from './Fader';
 
 interface TrackInspectorProps {
   track: Track;
@@ -25,15 +26,6 @@ const TRACK_COLORS = [
     '#ec4899', // Pink
     '#71717a', // Zinc
 ];
-
-const TrackIcon = ({ name, color, size = 24 }: { name: string, color: string, size?: number }) => {
-    const n = name.toLowerCase();
-    if (n.includes('drum') || n.includes('beat')) return <Drum size={size} style={{ color }} />;
-    if (n.includes('bass') || n.includes('guitar')) return <Guitar size={size} style={{ color }} />;
-    if (n.includes('synth') || n.includes('piano') || n.includes('key')) return <Keyboard size={size} style={{ color }} />;
-    if (n.includes('voc') || n.includes('mic')) return <Mic size={size} style={{ color }} />;
-    return <Music size={size} style={{ color }} />;
-};
 
 const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onDeleteTrack, onDuplicateTrack, onClose }) => {
   
@@ -77,7 +69,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
       <div className="flex items-center justify-between p-4 border-b border-zinc-700 bg-zinc-800">
         <div className="flex items-center space-x-3">
              <div className="w-8 h-8 rounded flex items-center justify-center bg-zinc-900 shadow-inner">
-                <TrackIcon name={track.name} color={track.color} />
+                <TrackIcon icon={track.icon} name={track.name} color={track.color} size={20} />
              </div>
              <div>
                  <input 
@@ -95,22 +87,43 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-20">
           
-          {/* Color Picker */}
-          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                <h3 className="text-xs font-bold text-zinc-500 uppercase mb-3 tracking-wider flex items-center">
-                    <Palette size={12} className="mr-2" /> Track Color
-                </h3>
-                <div className="flex flex-wrap gap-3">
-                    {TRACK_COLORS.map(color => (
-                        <button
-                            key={color}
-                            onClick={() => updateTrack(track.id, { color })}
-                            className={`w-6 h-6 rounded-full border-2 transition-all ${track.color === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:border-zinc-500'}`}
-                            style={{ backgroundColor: color }}
-                            title={color}
-                        />
-                    ))}
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Color Picker */}
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase mb-3 tracking-wider flex items-center">
+                        <Palette size={12} className="mr-2" /> Track Color
+                    </h3>
+                    <div className="flex flex-wrap gap-3">
+                        {TRACK_COLORS.map(color => (
+                            <button
+                                key={color}
+                                onClick={() => updateTrack(track.id, { color })}
+                                className={`w-6 h-6 rounded-full border-2 transition-all ${track.color === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:border-zinc-500'}`}
+                                style={{ backgroundColor: color }}
+                                title={color}
+                            />
+                        ))}
+                    </div>
+              </div>
+
+              {/* Icon Picker */}
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase mb-3 tracking-wider flex items-center">
+                        <Smile size={12} className="mr-2" /> Track Icon
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                        {Object.entries(ICONS).map(([key, Icon]) => (
+                            <button
+                                key={key}
+                                onClick={() => updateTrack(track.id, { icon: key })}
+                                className={`p-2 rounded-lg transition-all ${track.icon === key ? 'bg-zinc-700 text-white shadow-sm' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'}`}
+                                title={key}
+                            >
+                                <Icon size={16} />
+                            </button>
+                        ))}
+                    </div>
+              </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4">
@@ -173,6 +186,12 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                   </div>
                   
                   <div className={`flex justify-around items-center transition-opacity ${track.compressor?.enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                      <Knob 
+                        label="Drive" 
+                        value={track.distortion || 0}
+                        min={0} max={1}
+                        onChange={(v) => updateTrack(track.id, { distortion: v })}
+                      />
                       <Knob 
                         label="Thresh" 
                         value={((track.compressor?.threshold ?? -20) + 60) / 60} // -60 to 0

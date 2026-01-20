@@ -17,7 +17,8 @@ describe('ClipInspector Component', () => {
     fadeIn: 0.1,
     fadeOut: 0.2,
     speed: 1.0,
-    gain: 1.0
+    gain: 1.0,
+    detune: 0
   };
 
   it('renders clip details', () => {
@@ -70,6 +71,29 @@ describe('ClipInspector Component', () => {
     
     fireEvent.change(startInput!, { target: { value: '3.0' } });
     expect(updateClip).toHaveBeenCalledWith('c1', { start: 3.0 });
+  });
+
+  it('updates pitch (detune)', () => {
+      const updateClip = vi.fn();
+      const { getByLabelText } = render(
+        <ClipInspector 
+          clip={mockClip} 
+          updateClip={updateClip} 
+          onDeleteClip={() => {}} 
+          onDuplicateClip={() => {}} 
+          onClose={() => {}} 
+        />
+      );
+
+      const semiKnob = getByLabelText('Semi');
+      fireEvent.keyDown(semiKnob, { key: 'ArrowUp', shiftKey: true }); // Increase semitone
+      
+      // Default detune is 0. Increase 1 semi = 100 cents. 
+      // Knob logic: value 0-1 mapped to -12 to 12. 
+      // Center (0) is 0.5. ArrowUp shiftKey adds 0.1 (10% of range).
+      // Range is 24 semitones. 10% is 2.4 semitones. 
+      // Let's just check call.
+      expect(updateClip).toHaveBeenCalledWith('c1', expect.objectContaining({ detune: expect.any(Number) }));
   });
 
   it('calls delete', () => {

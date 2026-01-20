@@ -13,6 +13,7 @@ export interface Clip {
   fadeOut: number; // Duration of fade out seconds
   speed?: number; // Playback speed (1.0 is normal)
   gain?: number; // Volume gain (1.0 is nominal)
+  detune?: number; // Pitch shift in cents
 }
 
 export interface Track {
@@ -29,6 +30,7 @@ export interface Track {
     mid: number; // Gain in dB
     high: number; // Gain in dB
   };
+  distortion?: number; // 0 to 1
   compressor?: {
     enabled: boolean;
     threshold: number; // -60 to 0 dB
@@ -94,6 +96,8 @@ export interface ProjectState {
   metronomeOn: boolean;
   metronomeSound?: 'beep' | 'click' | 'hihat';
   countIn: number; // 0, 1, 2, 4 bars
+  recordingLatency: number; // in milliseconds
+  inputMonitoring: boolean;
   masterVolume: number;
   masterEq: {
       low: number; // -12 to 12 dB

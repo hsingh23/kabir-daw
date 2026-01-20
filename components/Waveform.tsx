@@ -9,23 +9,31 @@ interface WaveformProps {
 
 const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null); // Use wrapper for size
+  const lastWidth = useRef<number>(0);
 
   useEffect(() => {
-    const draw = async () => {
+    const draw = () => {
       const canvas = canvasRef.current;
-      if (!canvas) return;
+      const container = containerRef.current;
+      if (!canvas || !container) return;
       
       const buffer = audio.buffers.get(bufferKey);
       if (!buffer) return;
 
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0) return;
+
+      // Don't redraw if width hasn't changed significantly (perf opt)
+      if (Math.abs(rect.width - lastWidth.current) < 2) return;
+      lastWidth.current = rect.width;
+
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width === 0) return;
-
-      // Handle High DPI
-      const dpr = window.devicePixelRatio || 1;
+      // Limit max resolution for performance on mobile
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
       ctx.scale(dpr, dpr);
@@ -37,42 +45,38 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color }) => {
       
       ctx.clearRect(0, 0, rect.width, rect.height);
       
-      // Create Gradient
       const gradient = ctx.createLinearGradient(0, 0, 0, rect.height);
       gradient.addColorStop(0, color); 
       gradient.addColorStop(1, color); 
 
       ctx.fillStyle = color;
-
       ctx.beginPath();
       
-      // Draw top half
       for (let i = 0; i < rect.width; i++) {
         const idx = Math.floor(i * step);
-        // if (idx >= data.length) break;
-
         let max = 0;
-        // Simple decimation (peak finding)
         const bound = Math.min(data.length, idx + step);
-        for (let j = idx; j < bound; j++) {
+        
+        // Optimize loop: skip samples if step is huge
+        const innerStep = Math.max(1, Math.floor((bound - idx) / 10));
+        
+        for (let j = idx; j < bound; j += innerStep) {
             const val = Math.abs(data[j]);
             if (val > max) max = val;
         }
 
-        const y = mid - (max * amp * 0.95); // 0.95 to leave a tiny margin
-        if (i === 0) {
-            ctx.moveTo(i, y);
-        } else {
-            ctx.lineTo(i, y);
-        }
+        const y = mid - (max * amp * 0.95);
+        if (i === 0) ctx.moveTo(i, y);
+        else ctx.lineTo(i, y);
       }
 
-      // Draw bottom half (mirror)
       for (let i = rect.width - 1; i >= 0; i--) {
         const idx = Math.floor(i * step);
         let max = 0;
         const bound = Math.min(data.length, idx + step);
-        for (let j = idx; j < bound; j++) {
+        const innerStep = Math.max(1, Math.floor((bound - idx) / 10));
+
+        for (let j = idx; j < bound; j += innerStep) {
             const val = Math.abs(data[j]);
             if (val > max) max = val;
         }
@@ -88,17 +92,22 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color }) => {
     draw();
     
     const resizeObserver = new ResizeObserver(() => {
-        draw();
+        // Debounce slightly or just draw
+        requestAnimationFrame(draw);
     });
     
-    if (canvasRef.current) {
-        resizeObserver.observe(canvasRef.current);
+    if (containerRef.current) {
+        resizeObserver.observe(containerRef.current);
     }
 
     return () => resizeObserver.disconnect();
   }, [bufferKey, color]);
 
-  return <canvas ref={canvasRef} className="w-full h-full" />;
+  return (
+      <div ref={containerRef} className="w-full h-full">
+          <canvas ref={canvasRef} className="w-full h-full block" />
+      </div>
+  );
 });
 
 export default Waveform;

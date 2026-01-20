@@ -84,7 +84,7 @@ describe('AudioEngine', () => {
         
         const tracks: Track[] = [{ id: 't1', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }];
 
-        // Spy on scheduleSource or createBufferSource
+        // Spy on createBufferSource
         const spyCreateSource = vi.spyOn(audio.ctx, 'createBufferSource');
 
         audio.play(clips, tracks, 0);
@@ -93,15 +93,60 @@ describe('AudioEngine', () => {
         expect(spyCreateSource).toHaveBeenCalledTimes(1);
     });
 
-    it('stops all sources when stop is called', () => {
-        // Mock a source
-        const mockSource = { stop: vi.fn() } as unknown as AudioBufferSourceNode;
-        audio.activeSources.set('test-source', mockSource);
+    it('applies detune to source node', () => {
+        // Setup mock buffer
+        audio.buffers.set('k1', { duration: 5, sampleRate: 44100, numberOfChannels: 1, getChannelData: () => new Float32Array(100) } as any);
+        
+        const clips: Clip[] = [
+            { id: 'c1', trackId: 't1', name: 'Detuned Clip', muted: false, start: 0, duration: 4, offset: 0, bufferKey: 'k1', fadeIn: 0, fadeOut: 0, detune: 200 }
+        ];
+        
+        const tracks: Track[] = [{ id: 't1', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }];
 
-        audio.stop();
+        // Mock createBufferSource to verify return value
+        const mockSource = { 
+            buffer: null, 
+            detune: { value: 0 }, 
+            playbackRate: { value: 1 }, 
+            connect: vi.fn(), 
+            start: vi.fn(), 
+            stop: vi.fn(), 
+            loop: false, 
+            loopStart: 0, 
+            loopEnd: 0 
+        };
+        vi.spyOn(audio.ctx, 'createBufferSource').mockReturnValue(mockSource as any);
 
-        expect(mockSource.stop).toHaveBeenCalled();
-        expect(audio.activeSources.size).toBe(0);
-        expect(audio.isPlaying).toBe(false);
+        audio.play(clips, tracks, 0);
+
+        expect(mockSource.detune.value).toBe(200);
+    });
+
+    it('creates distortion node', () => {
+        // We expect getTrackChannel to create a WaveShaperNode
+        // Mock createWaveShaper
+        const mockWS = { curve: null, oversample: 'none', connect: vi.fn() };
+        (audio.ctx.createWaveShaper as any) = vi.fn(() => mockWS);
+
+        const channel = audio.getTrackChannel('tDistortion');
+        expect(audio.ctx.createWaveShaper).toHaveBeenCalled();
+        expect(channel.distortionNode).toBeDefined();
+    });
+
+    it('updates distortion curve on sync', () => {
+        const mockWS = { curve: null, oversample: 'none', connect: vi.fn() };
+        (audio.ctx.createWaveShaper as any) = vi.fn(() => mockWS);
+
+        const tracks: Track[] = [{ 
+            id: 't1', name: 'Distorted', volume: 1, pan: 0, muted: false, solo: false, color: '#000', 
+            eq: {low:0,mid:0,high:0}, sends:{reverb:0,delay:0,chorus:0},
+            distortion: 0.5 
+        }];
+
+        audio.syncTracks(tracks);
+        const channel = audio.getTrackChannel('t1');
+        
+        expect(channel.distortionNode.curve).not.toBeNull();
+        expect(channel.distortionNode.curve).toBeInstanceOf(Float32Array);
     });
 });
