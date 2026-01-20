@@ -1,7 +1,7 @@
 
 import { useMemo, useCallback } from 'react';
 
-export const useTimelineMath = (zoom: number, bpm: number, timeSignature: [number, number]) => {
+export const useTimelineMath = (zoomLevel: number, bpm: number, timeSignature: [number, number]) => {
     const math = useMemo(() => {
         const safeBpm = Math.max(20, bpm);
         const secondsPerBeat = 60.0 / safeBpm;
@@ -10,15 +10,11 @@ export const useTimelineMath = (zoom: number, bpm: number, timeSignature: [numbe
         const secondsPerTick = secondsPerBeat * beatMultiplier;
         const secondsPerBar = secondsPerTick * numerator;
         
-        // Zoom is pixels per second approx? 
-        // In Arranger: pixelsPerTick = zoom * secondsPerTick.
-        // So zoom acts as a scaling factor on the tick duration.
-        // Let's standardize: 
-        // pixelsPerSecond = zoom (if zoom was strictly px/s)
-        // But current implementation: left = time * zoom.
-        // So `zoom` IS `pixelsPerSecond`.
+        // Cognitive Refactor: 
+        // The user concept is "Zoom", but the system concept is "Pixels Per Second".
+        // Explicitly naming this variable reduces the need to recall what "zoom" mathematically represents.
+        const pixelsPerSecond = zoomLevel;
         
-        const pixelsPerSecond = zoom;
         const pixelsPerBar = secondsPerBar * pixelsPerSecond;
         const pixelsPerTick = secondsPerTick * pixelsPerSecond;
 
@@ -32,7 +28,7 @@ export const useTimelineMath = (zoom: number, bpm: number, timeSignature: [numbe
             numerator,
             denominator
         };
-    }, [zoom, bpm, timeSignature]);
+    }, [zoomLevel, bpm, timeSignature]);
 
     const timeToPixels = useCallback((time: number) => {
         return time * math.pixelsPerSecond;
@@ -42,14 +38,9 @@ export const useTimelineMath = (zoom: number, bpm: number, timeSignature: [numbe
         return pixels / math.pixelsPerSecond;
     }, [math.pixelsPerSecond]);
 
-    const snapToGrid = useCallback((time: number, gridValue: number) => {
-        if (gridValue <= 0) return time;
-        const snapSeconds = gridValue * math.secondsPerBeat; // gridValue is in beats (e.g. 0.25 = 1/16th)
-        // Actually gridValue in Arranger passed as "fraction of bar" or "beats"?
-        // In Arranger select: option value="1" (1/4), "0.5" (1/8). 
-        // These look like beat fractions.
-        // Correct logic: gridValue * secondsPerBeat * (4 / denominator)? 
-        // Let's assume gridValue is in Quarter Notes (Beats).
+    const snapToGrid = useCallback((time: number, gridValueInBeats: number) => {
+        if (gridValueInBeats <= 0) return time;
+        const snapSeconds = gridValueInBeats * math.secondsPerBeat;
         
         return Math.round(time / snapSeconds) * snapSeconds;
     }, [math.secondsPerBeat]);

@@ -5,17 +5,17 @@ import Knob from './Knob';
 import VisualEQ from './VisualEQ';
 import VisualCompressor from './VisualCompressor';
 import { X, Volume2, Activity } from 'lucide-react';
+import { useProject } from '../contexts/ProjectContext';
 
 interface MasterInspectorProps {
-  project: ProjectState;
-  setProject: React.Dispatch<React.SetStateAction<ProjectState>>;
   onClose: () => void;
 }
 
-const MasterInspector: React.FC<MasterInspectorProps> = ({ project, setProject, onClose }) => {
+const MasterInspector: React.FC<MasterInspectorProps> = ({ onClose }) => {
+  const { project, updateProject } = useProject();
   
   const updateEq = (band: 'low' | 'mid' | 'high', val: number) => {
-      setProject(prev => ({
+      updateProject((prev: ProjectState) => ({
           ...prev,
           masterEq: {
               ...prev.masterEq,
@@ -25,7 +25,7 @@ const MasterInspector: React.FC<MasterInspectorProps> = ({ project, setProject, 
   };
 
   const updateComp = (param: keyof ProjectState['masterCompressor'], val: number) => {
-      setProject(prev => ({
+      updateProject((prev: ProjectState) => ({
           ...prev,
           masterCompressor: {
               ...prev.masterCompressor,
@@ -110,7 +110,7 @@ const MasterInspector: React.FC<MasterInspectorProps> = ({ project, setProject, 
                               import('../services/audio').then(({ audio }) => audio.setMasterVolume(v));
                           }}
                           // Sync to state on release
-                          onChangeEnd={(v) => setProject(p => ({...p, masterVolume: v}))}
+                          onChangeEnd={(v) => updateProject((p: ProjectState) => ({...p, masterVolume: v}))}
                       />
                       <div className="text-xl font-mono text-white font-bold">{Math.round(project.masterVolume * 100)}%</div>
                   </div>

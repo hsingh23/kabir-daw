@@ -92,7 +92,7 @@ describe('AudioEngine', () => {
 
         audio.play(clips, tracks, 0);
         
-        audio.scheduler(tracks, clips);
+        audio.processSchedule(tracks, clips);
         
         expect(spyCreateSource).toHaveBeenCalledTimes(0);
     });

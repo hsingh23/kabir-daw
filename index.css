@@ -1,3 +1,4 @@
+
 @import "tailwindcss";
 
 @theme {
@@ -8,6 +9,8 @@
 
   --shadow-knob: 0 4px 6px -1px rgba(0, 0, 0, 0.5), inset 0 2px 4px 0 rgba(255, 255, 255, 0.1);
   --shadow-inset-track: inset 0 2px 4px 0 rgba(0, 0, 0, 0.6);
+  
+  --animate-progress-indeterminate: progress-indeterminate 1.5s infinite linear;
 }
 
 /* Custom Utilities */
@@ -21,6 +24,18 @@
 
 @utility pb-safe {
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%) scaleX(0.2);
+  }
+  50% {
+    transform: translateX(0%) scaleX(0.5);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.2);
+  }
 }
 
 body {

@@ -15,11 +15,12 @@ interface TrackLaneProps {
     onOpenInspector: (id: string) => void;
     handleTrackDragStart: (e: React.PointerEvent, id: string, index: number) => void;
     updateTrack: (id: string, updates: Partial<Track>) => void;
+    onContextMenu?: (e: React.MouseEvent, id: string) => void;
 }
 
 const TrackLane: React.FC<TrackLaneProps> = memo(({ 
     track, index, trackHeight, isCompactHeader, isSelected, 
-    onSelectTrack, onOpenInspector, handleTrackDragStart, updateTrack 
+    onSelectTrack, onOpenInspector, handleTrackDragStart, updateTrack, onContextMenu
 }) => {
     return (
         <div 
@@ -27,6 +28,12 @@ const TrackLane: React.FC<TrackLaneProps> = memo(({
             style={{ height: trackHeight }}
             onPointerDown={() => onSelectTrack(track.id)}
             onDoubleClick={() => onOpenInspector(track.id)}
+            onContextMenu={(e) => {
+                if(onContextMenu) {
+                    e.preventDefault();
+                    onContextMenu(e, track.id);
+                }
+            }}
         >
             {/* Color Strip */}
             <div className="absolute left-0 top-0 bottom-0 w-1" style={{ backgroundColor: track.color }} />

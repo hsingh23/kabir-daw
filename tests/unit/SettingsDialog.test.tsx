@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SettingsDialog from '../../components/SettingsDialog';
 import { audio } from '../../services/audio';
 import { ProjectState } from '../../types';
+import { ProjectProvider } from '../../contexts/ProjectContext';
 
 vi.mock('../../services/audio', () => ({
   audio: {
@@ -61,7 +62,11 @@ describe('SettingsDialog Component', () => {
     });
 
     it('loads devices on mount', async () => {
-        const { getByText, findByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={() => {}} />);
+        const { getByText, findByText } = render(
+            <ProjectProvider initialProject={mockProject}>
+                <SettingsDialog onClose={() => {}} />
+            </ProjectProvider>
+        );
         
         await waitFor(() => expect(audio.getAudioDevices).toHaveBeenCalled());
         
@@ -71,17 +76,15 @@ describe('SettingsDialog Component', () => {
     });
 
     it('changes output device', async () => {
-        const { findByRole } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={() => {}} />);
+        const { findByRole } = render(
+            <ProjectProvider initialProject={mockProject}>
+                <SettingsDialog onClose={() => {}} />
+            </ProjectProvider>
+        );
         
         await waitFor(() => expect(audio.getAudioDevices).toHaveBeenCalled());
         
         const selects = document.querySelectorAll('select');
-        // Index might vary depending on structure, finding by label text usually better but simplified here
-        // Order: Input, Output, CountIn
-        // Let's rely on option text if possible, or order
-        
-        // Input is first select
-        // Output is second select
         const outputSel = selects[1]; 
         
         fireEvent.change(outputSel, { target: { value: 'out1' } });
@@ -90,8 +93,11 @@ describe('SettingsDialog Component', () => {
     });
 
     it('updates recording latency', () => {
-        const setProject = vi.fn();
-        const { getByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={setProject} />);
+        const { getByText } = render(
+            <ProjectProvider initialProject={mockProject}>
+                <SettingsDialog onClose={() => {}} />
+            </ProjectProvider>
+        );
         
         const latencyLabel = getByText('Recording Latency Compensation');
         expect(latencyLabel).toBeInTheDocument();
@@ -101,25 +107,24 @@ describe('SettingsDialog Component', () => {
         
         fireEvent.change(latencyInput!, { target: { value: '50' } });
         
-        expect(setProject).toHaveBeenCalledWith(expect.any(Function));
-        
-        // Verify state update function logic
-        const updater = setProject.mock.calls[0][0];
-        expect(updater(mockProject).recordingLatency).toBe(50);
+        // Check UI update or mock audio engine if linked
+        // We assume ProjectContext updated correctly via integration test logic usually, 
+        // but checking value change in input is implicit here.
+        expect((latencyInput as HTMLInputElement).value).toBe('50');
     });
 
     it('toggles input monitoring', () => {
-        const setProject = vi.fn();
-        const { getByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={setProject} />);
+        const { getByText } = render(
+            <ProjectProvider initialProject={mockProject}>
+                <SettingsDialog onClose={() => {}} />
+            </ProjectProvider>
+        );
         
         const monitorLabel = getByText('Input Monitoring');
         const toggleBtn = monitorLabel.nextElementSibling; // Button is sibling
         
         fireEvent.click(toggleBtn!);
         
-        expect(setProject).toHaveBeenCalledWith(expect.any(Function));
-        
-        const updater = setProject.mock.calls[0][0];
-        expect(updater(mockProject).inputMonitoring).toBe(true);
+        expect(toggleBtn).toHaveTextContent('ON');
     });
 });

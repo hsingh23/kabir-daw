@@ -18,6 +18,13 @@ vi.mock('../../components/Waveform', () => ({
   default: () => <div data-testid="mock-waveform">Waveform</div>
 }));
 
+// Mock useProject
+const useProjectMock = vi.fn();
+vi.mock('../../contexts/ProjectContext', () => ({
+    useProject: () => useProjectMock(),
+    ProjectProvider: ({children}: any) => <div>{children}</div>
+}));
+
 // Mock getBoundingClientRect
 Element.prototype.getBoundingClientRect = vi.fn(() => ({
     top: 0, left: 0, right: 1000, bottom: 1000, width: 1000, height: 1000, x: 0, y: 0, toJSON: () => {}
@@ -54,10 +61,11 @@ const mockProject: ProjectState = {
 describe('Arranger Component Interaction', () => {
     
     it('opens context menu on right click', () => {
+        const setProject = vi.fn();
+        useProjectMock.mockReturnValue({ project: mockProject, setProject, updateProject: setProject });
+
         const { getByText } = render(
             <Arranger
-                project={mockProject}
-                setProject={() => {}}
                 currentTime={0}
                 isPlaying={false}
                 isRecording={false}
@@ -89,10 +97,11 @@ describe('Arranger Component Interaction', () => {
     });
 
     it('renders loop region and handles', () => {
+        const setProject = vi.fn();
+        useProjectMock.mockReturnValue({ project: mockProject, setProject, updateProject: setProject });
+
         const { container } = render(
             <Arranger
-                project={mockProject}
-                setProject={() => {}}
                 currentTime={0}
                 isPlaying={false}
                 isRecording={false}
@@ -119,11 +128,11 @@ describe('Arranger Component Interaction', () => {
     it('displays Zero State when no tracks exist', () => {
         const emptyProject = { ...mockProject, tracks: [] };
         const setProject = vi.fn();
+        const updateProject = vi.fn();
+        useProjectMock.mockReturnValue({ project: emptyProject, setProject, updateProject });
 
         const { getByText } = render(
             <Arranger
-                project={emptyProject}
-                setProject={setProject}
                 currentTime={0}
                 isPlaying={false}
                 isRecording={false}
@@ -149,6 +158,6 @@ describe('Arranger Component Interaction', () => {
         const addBtn = getByText('Audio Track'); // Updated text from 'Add First Track'
         fireEvent.click(addBtn);
         
-        expect(setProject).toHaveBeenCalled();
+        expect(updateProject).toHaveBeenCalled();
     });
 });

@@ -36,7 +36,7 @@ describe('useArrangerInteraction Hook', () => {
 
         mockProps = {
             project: mockProject,
-            setProject: vi.fn(),
+            updateProject: vi.fn(), // Renamed from setProject
             zoom: 50,
             setZoom: vi.fn(),
             tool: ToolMode.POINTER,
@@ -114,7 +114,7 @@ describe('useArrangerInteraction Hook', () => {
         expect(snapLineRefMock.current.style.left).toBeDefined();
     });
 
-    it('updates selection box ref when maruee selecting', () => {
+    it('updates selection box ref when marquee selecting', () => {
         const { result } = renderHook(() => useArrangerInteraction(mockProps));
         
         // Start selection

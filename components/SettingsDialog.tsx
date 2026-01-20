@@ -3,19 +3,19 @@ import React, { useEffect, useState, useRef } from 'react';
 import { audio } from '../services/audio';
 import { cleanupOrphanedAssets } from '../services/db';
 import { ProjectState } from '../types';
-import { X, Mic, Music, Settings, Info, Keyboard, Database, Trash2 } from 'lucide-react';
+import { X, Mic, Music, Settings, Info, Keyboard, Database, Trash2, Clock } from 'lucide-react';
 import { useToast } from './Toast';
 import LatencyCalibrator from './LatencyCalibrator';
+import { useProject } from '../contexts/ProjectContext';
 
 interface SettingsDialogProps {
   onClose: () => void;
-  project?: ProjectState;
-  setProject?: (value: React.SetStateAction<ProjectState>) => void;
   isMidiLearnActive?: boolean;
   setMidiLearnActive?: (active: boolean) => void;
 }
 
-const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setProject, isMidiLearnActive, setMidiLearnActive }) => {
+const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, isMidiLearnActive, setMidiLearnActive }) => {
+  const { project, updateProject } = useProject();
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'audio' | 'general' | 'midi'>('audio');
   const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
@@ -103,48 +103,46 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
   };
 
   const handleMetronomeSoundChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      if (setProject) {
-          setProject((prev: ProjectState) => ({
-              ...prev,
-              metronomeSound: e.target.value as 'beep' | 'click' | 'hihat'
-          }));
-      }
+      updateProject((prev: ProjectState) => ({
+          ...prev,
+          metronomeSound: e.target.value as 'beep' | 'click' | 'hihat'
+      }));
   };
 
   const handleCountInChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-      if (setProject) {
-          setProject((prev: ProjectState) => ({
-              ...prev,
-              countIn: parseInt(e.target.value)
-          }));
-      }
+      updateProject((prev: ProjectState) => ({
+          ...prev,
+          countIn: parseInt(e.target.value)
+      }));
   };
 
   const handleLatencyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (setProject) {
-          setProject((prev: ProjectState) => ({
-              ...prev,
-              recordingLatency: parseInt(e.target.value)
-          }));
-      }
+      updateProject((prev: ProjectState) => ({
+          ...prev,
+          recordingLatency: parseInt(e.target.value)
+      }));
   };
 
   const handleApplyLatency = (val: number) => {
-      if (setProject) {
-          setProject((prev: ProjectState) => ({
-              ...prev,
-              recordingLatency: val
-          }));
-      }
+      updateProject((prev: ProjectState) => ({
+          ...prev,
+          recordingLatency: val
+      }));
   };
 
   const handleInputMonitoringChange = () => {
-      if (setProject) {
-          setProject((prev: ProjectState) => ({
-              ...prev,
-              inputMonitoring: !prev.inputMonitoring
-          }));
-      }
+      updateProject((prev: ProjectState) => ({
+          ...prev,
+          inputMonitoring: !prev.inputMonitoring
+      }));
+  };
+
+  const handleTimeSignatureChange = (index: 0 | 1, value: number) => {
+      updateProject((prev: ProjectState) => {
+          const newSig = [...prev.timeSignature] as [number, number];
+          newSig[index] = value;
+          return { ...prev, timeSignature: newSig };
+      });
   };
 
   const handleCleanup = async () => {
@@ -161,8 +159,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-        <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center sm:p-4 animate-in fade-in duration-200">
+        <div className="bg-zinc-900 border border-zinc-700 sm:rounded-xl w-full h-full sm:h-auto sm:max-h-[85vh] sm:max-w-lg shadow-2xl flex flex-col overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b border-zinc-800 bg-zinc-800/50">
                 <div className="flex space-x-4">
                     <button onClick={() => setActiveTab('audio')} className={`text-sm font-bold pb-1 border-b-2 transition-colors ${activeTab === 'audio' ? 'text-white border-studio-accent' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}>Audio</button>
@@ -172,7 +170,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                 <button onClick={onClose} className="p-1.5 rounded-full hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"><X size={20} /></button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-6">
+            <div className="p-6 overflow-y-auto space-y-6 flex-1">
                 {activeTab === 'audio' && (
                     <>
                         <div className="space-y-4">
@@ -263,11 +261,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                                                 <span className="text-zinc-500">→</span>
                                                 <span className="text-zinc-300">{m.targetId === 'master' ? 'Master' : 'Track'} {m.parameter}</span>
                                                 <button 
-                                                    onClick={() => {
-                                                        if(setProject) {
-                                                            setProject(p => ({...p, midiMappings: p.midiMappings!.filter(mm => mm.id !== m.id)}));
-                                                        }
-                                                    }}
+                                                    onClick={() => updateProject((p: ProjectState) => ({...p, midiMappings: p.midiMappings!.filter(mm => mm.id !== m.id)}))}
                                                     className="text-red-500 hover:text-red-400 font-bold ml-2"
                                                 >
                                                     ×
@@ -285,7 +279,37 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
 
                 {activeTab === 'general' && (
                     <div className="space-y-6">
+                        {/* Time Signature */}
                         <div className="space-y-4">
+                            <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2"><Clock size={14} /> Project Settings</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs text-zinc-400 block mb-1">Time Signature</label>
+                                    <div className="flex items-center gap-2">
+                                        <input 
+                                            type="number" 
+                                            min="1" max="16" 
+                                            value={project?.timeSignature[0] || 4} 
+                                            onChange={(e) => handleTimeSignatureChange(0, parseInt(e.target.value))}
+                                            className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none text-center"
+                                        />
+                                        <span className="text-zinc-500">/</span>
+                                        <select 
+                                            value={project?.timeSignature[1] || 4} 
+                                            onChange={(e) => handleTimeSignatureChange(1, parseInt(e.target.value))}
+                                            className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-white focus:border-studio-accent outline-none text-center appearance-none"
+                                        >
+                                            <option value="2">2</option>
+                                            <option value="4">4</option>
+                                            <option value="8">8</option>
+                                            <option value="16">16</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4 pt-4 border-t border-zinc-800">
                             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2"><Music size={14} /> Metronome</h3>
                             <div className="space-y-3">
                                 <div>
@@ -323,7 +347,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                         <div className="space-y-4 pt-4 border-t border-zinc-800">
                             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-2"><Info size={14} /> About</h3>
                             <div className="bg-zinc-800/50 p-3 rounded-lg text-xs text-zinc-400 space-y-2">
-                                <p>PocketStudio v1.1.0</p>
+                                <p>PocketStudio v1.3.0</p>
                                 <p>A mobile-first DAW built with React & Web Audio API.</p>
                             </div>
                         </div>

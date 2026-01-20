@@ -21,7 +21,7 @@ const bitmapPromiseCache = new Map<string, Promise<ImageBitmap | null>>();
 const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, duration, fadeIn = 0, fadeOut = 0, gain = 1.0, speed = 1.0 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isReady, setIsReady] = useState(false); // New state for fade-in
 
   const getWaveformBitmap = (key: string, buffer: AudioBuffer): Promise<ImageBitmap | null> => {
       const cacheKey = `${key}-${color}`;
@@ -58,14 +58,12 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
       let buffer = audio.buffers.get(bufferKey);
       if (!buffer) {
-          setIsLoading(true);
           try {
              const dbBlob = await import('../services/db').then(m => m.getAudioBlob(bufferKey));
              if (dbBlob) {
                  buffer = await audio.loadAudio(bufferKey, dbBlob);
              }
           } catch(e) {}
-          setIsLoading(false);
       }
 
       if (!buffer) return;
@@ -100,12 +98,12 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
               currentSourceTime = 0;
           }
       } else {
-          // Fallback if bitmap generation failed or OffscreenCanvas not supported
+          // Fallback
           ctx.fillStyle = color;
           ctx.fillRect(0, rect.height/2 - 1, rect.width, 2);
       }
 
-      // Render Fades & Visual Gain Adjustment (Only visual, real gain is audio)
+      // Render Fades
       if (fadeIn > 0) {
           const fadeWidth = (fadeIn / (duration || buffer.duration/speed)) * rect.width;
           const grad = ctx.createLinearGradient(0, 0, fadeWidth, 0);
@@ -145,6 +143,9 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.quadraticCurveTo(startX + fadeWidth * 0.5, rect.height * 0.8, rect.width, rect.height);
           ctx.stroke();
       }
+      
+      // Trigger fade in
+      setIsReady(true);
   };
 
   useLayoutEffect(() => {
@@ -153,10 +154,13 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
   return (
       <div ref={containerRef} className="w-full h-full pointer-events-none relative">
-          <canvas ref={canvasRef} className="w-full h-full block" />
-          {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                  <Loader2 className="animate-spin text-white" size={16} />
+          <canvas 
+            ref={canvasRef} 
+            className={`w-full h-full block transition-opacity duration-300 ease-out ${isReady ? 'opacity-100' : 'opacity-0'}`} 
+          />
+          {!isReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/10 backdrop-blur-[1px] transition-opacity duration-300">
+                  <Loader2 className="animate-spin text-white/50" size={12} />
               </div>
           )}
       </div>
