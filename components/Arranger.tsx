@@ -1,18 +1,23 @@
 
-import React, { useRef, useMemo, useState, useEffect } from 'react';
+import React, { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { ProjectState, ToolMode, Track, AssetMetadata, AutomationPoint } from '../types';
 import Playhead from './Playhead'; 
 import Ruler from './Ruler'; 
 import TrackLane from './TrackLane'; 
 import ArrangerTrack from './ArrangerTrack';
-import Tanpura from './Tanpura';
-import Tabla from './Tabla';
+import StepSequencer from './StepSequencer';
+import DroneSynth from './DroneSynth';
+import ArrangerContextMenus from './ArrangerContextMenus';
+import ArrangerGrid from './ArrangerGrid';
+import ArrangerToolbar from './ArrangerToolbar';
+import Library from './Library';
 import { useArrangerInteraction } from '../hooks/useArrangerInteraction';
 import { useTimelineMath } from '../hooks/useTimelineMath';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, Minimize, Plus, Mic, Piano, Edit2, Layers, AlignStartVertical, X, Split, TrendingUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Mic, Piano, Layers, X } from 'lucide-react';
 import { analytics } from '../services/analytics';
 import { getAllAssetsMetadata } from '../services/db';
-import { HEADER_WIDTH_DESKTOP, HEADER_WIDTH_TABLET, HEADER_WIDTH_MOBILE, TRACK_HEIGHT_DEFAULT } from '../constants/layout';
+import { createTrack } from '../services/templates';
+import { HEADER_WIDTH_DESKTOP, HEADER_WIDTH_TABLET, HEADER_WIDTH_MOBILE, TRACK_HEIGHT_DEFAULT, TRACK_HEIGHT_COMPACT } from '../constants/layout';
 
 interface ArrangerProps {
   project: ProjectState;
@@ -44,10 +49,6 @@ interface ArrangerProps {
   commitTransaction: () => void;
 }
 
-const CLIP_COLORS = [
-    '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#06b6d4', '#ec4899', '#71717a'
-];
-
 const Arranger: React.FC<ArrangerProps> = ({ 
     project, setProject, currentTime, isPlaying, isRecording, recordingStartTime = 0,
     onPlayPause, onStop, onRecord, onSeek, onSplit, onSplitAtPlayhead, zoom, setZoom,
@@ -70,6 +71,9 @@ const Arranger: React.FC<ArrangerProps> = ({
   const [headerWidth, setHeaderWidth] = React.useState(HEADER_WIDTH_DESKTOP);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   
+  // Library Sidebar State
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  
   // Instrument Drawer State
   const [showInstruments, setShowInstruments] = useState(false);
   
@@ -87,11 +91,14 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Automation Context Menu State
   const [autoContextMenu, setAutoContextMenu] = useState<{ x: number, y: number, trackId: string, pointId: string } | null>(null);
 
-  useEffect(() => {
+  const refreshAssets = useCallback(() => {
       getAllAssetsMetadata().then(setCachedAssets);
   }, []);
 
-  // Use new hook
+  useEffect(() => {
+      refreshAssets();
+  }, [refreshAssets]);
+
   const { 
       secondsPerBeat, 
       secondsPerBar, 
@@ -120,7 +127,6 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Calculate visible range for virtualization
   const visibleStartTime = Math.max(0, pixelsToTime(scrollLeft));
   const visibleEndTime = pixelsToTime(scrollLeft + containerWidth);
-  // Buffer: Render extra 2 screens worth or fixed time to ensure smooth scrolling
   const renderStartTime = Math.max(0, visibleStartTime - 5); 
   const renderEndTime = visibleEndTime + 5;
 
@@ -146,7 +152,9 @@ const Arranger: React.FC<ArrangerProps> = ({
         if (w < 640) {
             setHeaderWidth(HEADER_WIDTH_MOBILE); 
             setIsCompactHeader(true);
-            setIsSidebarCollapsed(true); // Auto collapse on mobile
+            setIsSidebarCollapsed(true);
+            // Auto close library on small screens
+            if (isLibraryOpen) setIsLibraryOpen(false);
         } else if (w < 1024) {
             setHeaderWidth(HEADER_WIDTH_TABLET);
             setIsCompactHeader(false);
@@ -164,7 +172,7 @@ const Arranger: React.FC<ArrangerProps> = ({
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [isLibraryOpen]);
 
   const updateTrack = (id: string, updates: Partial<Track>) => {
     setProject(prev => ({
@@ -192,7 +200,6 @@ const Arranger: React.FC<ArrangerProps> = ({
           clips: prev.clips.map(c => {
               if (selectedClipIds.includes(c.id)) {
                   const targetStart = snapToGrid(c.start, gridValue);
-                  // Interpolate between current start and target start based on strength
                   const newStart = c.start + (targetStart - c.start) * strength;
                   return { ...c, start: newStart };
               }
@@ -205,38 +212,22 @@ const Arranger: React.FC<ArrangerProps> = ({
   const handleTimelineDrop = (e: React.DragEvent, trackId: string) => {
       e.preventDefault();
       e.stopPropagation();
-      
       const assetId = e.dataTransfer.getData('application/x-pocketstudio-asset-id');
-      
       if (assetId && onDropAsset && scrollContainerRef.current) {
           const asset = cachedAssets.find(a => a.id === assetId);
           if (asset) {
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
               const offsetX = e.clientX - rect.left;
               const time = Math.max(0, pixelsToTime(offsetX));
-              
               const gridValue = snapGrid > 0 ? snapGrid : 0;
               const snappedTime = snapToGrid(time, gridValue);
-              
               onDropAsset(trackId, snappedTime, asset);
           }
       }
   };
 
   const handleAddTrack = (type: 'audio' | 'instrument' = 'audio') => {
-      const newTrack: Track = {
-          id: crypto.randomUUID(),
-          type,
-          name: type === 'instrument' ? `Synth ${project.tracks.length + 1}` : `Track ${project.tracks.length + 1}`,
-          volume: 0.8, pan: 0, muted: false, solo: false, 
-          color: CLIP_COLORS[project.tracks.length % CLIP_COLORS.length],
-          icon: type === 'instrument' ? 'keyboard' : 'music',
-          instrument: type === 'instrument' ? { type: 'synth', preset: 'sawtooth', attack: 0.05, decay: 0.1, sustain: 0.5, release: 0.2 } : undefined,
-          eq: { low: 0, mid: 0, high: 0 },
-          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-          sends: { reverb: 0, delay: 0, chorus: 0 },
-          sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
-      };
+      const newTrack = createTrack(type, type === 'instrument' ? `Synth ${project.tracks.length + 1}` : `Track ${project.tracks.length + 1}`);
       setProject(p => ({...p, tracks: [...p.tracks, newTrack]}));
       setShowAddMenu(false);
       analytics.track('mixer_action', { action: 'add_track' });
@@ -252,10 +243,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                   points.push({ id: crypto.randomUUID(), time, value, curve: 'linear' });
                   return {
                       ...t,
-                      automation: {
-                          ...t.automation,
-                          volume: points.sort((a, b) => a.time - b.time)
-                      }
+                      automation: { ...t.automation, volume: points.sort((a, b) => a.time - b.time) }
                   };
               }
               return t;
@@ -301,44 +289,27 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
       const left = e.currentTarget.scrollLeft;
-      
-      // Throttle virtualization state update
       if (Math.abs(left - lastScrollLeft.current) > 100) {
           setScrollLeft(left);
           lastScrollLeft.current = left;
       }
-      
-      // Sync track headers immediately
       if (trackHeaderRef.current) {
           const el = trackHeaderRef.current.querySelector('div[style*="translateY"]');
           if (el) (el as HTMLElement).style.transform = `translateY(-${e.currentTarget.scrollTop || 0}px)`;
       }
   };
 
-  const { backgroundImage, backgroundSize } = useMemo(() => {
-      const showTicks = pixelsPerTick > 20;
-      let bgImage = `linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)`;
-      let bgSize = `${pixelsPerBar}px 100%`;
-      if (showTicks) {
-          bgImage += `, linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px)`;
-          bgSize += `, ${pixelsPerTick}px 100%`;
-      }
-      if (pixelsPerTick > 80) {
-          bgImage += `, linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px)`;
-          bgSize += `, ${pixelsPerTick / 4}px 100%`;
-      }
-      return { backgroundImage: bgImage, backgroundSize: bgSize };
-  }, [pixelsPerTick, pixelsPerBar]);
-
   const currentHeaderWidth = isSidebarCollapsed ? 40 : headerWidth;
+
+  const toggleTrackHeight = () => {
+      setTrackHeight(h => h === TRACK_HEIGHT_DEFAULT ? TRACK_HEIGHT_COMPACT : TRACK_HEIGHT_DEFAULT);
+  };
 
   return (
     <div 
         className="flex flex-col h-full bg-studio-bg text-xs select-none touch-none"
         onPointerDown={handleGlobalPointerDown}
-        onPointerMove={(e) => {
-            handleGlobalPointerMove(e);
-        }}
+        onPointerMove={(e) => handleGlobalPointerMove(e)}
         onPointerUp={handleGlobalPointerUp}
         onPointerCancel={handleGlobalPointerUp}
         onContextMenu={e => e.preventDefault()}
@@ -348,131 +319,49 @@ const Arranger: React.FC<ArrangerProps> = ({
             setShowAddMenu(false);
         }}
     >
-      {/* Toolbar */}
-      <div className="h-10 border-b border-zinc-800 bg-studio-panel flex items-center px-3 justify-between shrink-0 z-30">
-         <div className="flex space-x-2 items-center">
-            {/* Sidebar Toggle */}
-            <button 
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="p-1.5 rounded transition-all bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800"
-                title={isSidebarCollapsed ? "Expand Headers" : "Collapse Headers"}
-            >
-                {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-            </button>
-
-            <div className="flex bg-zinc-900 rounded p-0.5 space-x-0.5 shrink-0 border border-zinc-800">
-                <button onClick={() => setTool(ToolMode.POINTER)} className={`p-1.5 rounded transition-all ${tool === ToolMode.POINTER ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Pointer"><MousePointer size={14} /></button>
-                <button onClick={() => setTool(ToolMode.SPLIT)} className={`p-1.5 rounded transition-all ${tool === ToolMode.SPLIT ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Split"><Scissors size={14} /></button>
-                <button onClick={() => setTool(ToolMode.ERASER)} className={`p-1.5 rounded transition-all ${tool === ToolMode.ERASER ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Erase"><Trash2 size={14} /></button>
-                <button onClick={() => setTool(ToolMode.AUTOMATION)} className={`p-1.5 rounded transition-all ${tool === ToolMode.AUTOMATION ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`} title="Automation"><TrendingUp size={14} /></button>
-            </div>
-            
-            {onSplitAtPlayhead && (
-                <button 
-                    onClick={onSplitAtPlayhead}
-                    className="flex items-center space-x-1 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
-                    title="Split at Playhead (Ctrl+B)"
-                >
-                    <Split size={12} />
-                    <span className="hidden sm:inline">Split</span>
-                </button>
-            )}
-
-            {selectedClipIds.length > 0 && (
-                <div className="flex items-center gap-1 bg-zinc-900 rounded px-1 border border-zinc-800">
-                    <button 
-                        onClick={handleQuantize}
-                        className="flex items-center space-x-1 px-2 py-1 hover:text-white text-zinc-400 transition-colors"
-                        title={`Quantize Selection (${quantizeStrength}%)`}
-                    >
-                        <AlignStartVertical size={12} />
-                        <span className="hidden sm:inline">Q</span>
-                    </button>
-                    {/* Quantize Strength Toggle */}
-                    <select 
-                        value={quantizeStrength} 
-                        onChange={(e) => setQuantizeStrength(Number(e.target.value))}
-                        className="bg-transparent text-zinc-500 text-[10px] w-12 outline-none"
-                    >
-                        <option value="100">100%</option>
-                        <option value="50">50%</option>
-                        <option value="25">25%</option>
-                    </select>
-                </div>
-            )}
-
-            <div className="w-px h-5 bg-zinc-800 shrink-0 mx-1" />
-            <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800">
-                <Grid size={12} className="text-zinc-500" />
-                <select value={snapGrid} onChange={(e) => setSnapGrid(parseFloat(e.target.value))} className="bg-transparent text-zinc-300 outline-none text-[10px] w-14 appearance-none">
-                    <option value="0">Off</option>
-                    <option value={numerator}>Bar</option>
-                    <option value="1">1/4</option>
-                    <option value="0.5">1/8</option>
-                    <option value="0.25">1/16</option>
-                </select>
-            </div>
-             <button 
-                onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} 
-                className={`p-1.5 rounded transition-all ${project.isLooping ? 'bg-studio-accent text-white' : 'text-zinc-500'}`}
-                title="Toggle Loop (L)"
-             >
-                <Repeat size={14} />
-             </button>
-         </div>
-
-         <div className="flex items-center space-x-2 shrink-0">
-             <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800 hidden sm:flex">
-                 <ZoomOut size={12} className="text-zinc-500 cursor-pointer" onClick={() => setZoom(Math.max(10, zoom * 0.8))} />
-                 <span className="text-[9px] text-zinc-400 w-8 text-center">{Math.round(zoom)}%</span>
-                 <ZoomIn size={12} className="text-zinc-500 cursor-pointer" onClick={() => setZoom(Math.min(400, zoom * 1.2))} />
-                 <button onClick={handleZoomToFit} className="ml-1 text-zinc-500 hover:text-white" title="Zoom to Fit">
-                     <Minimize size={12} />
-                 </button>
-             </div>
-             
-             {/* Instruments Toggle */}
-             <button onClick={() => setShowInstruments(!showInstruments)} className={`p-1.5 rounded transition-all flex items-center gap-1 ${showInstruments ? 'bg-studio-accent text-white' : 'bg-zinc-900 text-zinc-500 border border-zinc-800'}`} title="Backing Instruments">
-                <Music2 size={16} />
-                <span className="text-[10px] font-bold hidden sm:inline">Backing</span>
-             </button>
-         </div>
-      </div>
+      <ArrangerToolbar 
+          project={project} setProject={setProject}
+          tool={tool} setTool={setTool}
+          snapGrid={snapGrid} setSnapGrid={setSnapGrid}
+          quantizeStrength={quantizeStrength} setQuantizeStrength={setQuantizeStrength}
+          zoom={zoom} setZoom={setZoom}
+          isSidebarCollapsed={isSidebarCollapsed} setIsSidebarCollapsed={setIsSidebarCollapsed}
+          isLibraryOpen={isLibraryOpen} setIsLibraryOpen={setIsLibraryOpen}
+          showInstruments={showInstruments} setShowInstruments={setShowInstruments}
+          selectedClipIds={selectedClipIds}
+          onSplitAtPlayhead={onSplitAtPlayhead}
+          onZoomToFit={handleZoomToFit}
+          toggleTrackHeight={toggleTrackHeight}
+          numerator={numerator}
+          handleQuantize={handleQuantize}
+      />
 
       <div className="flex-1 flex overflow-hidden relative">
+        {/* Library Sidebar */}
+        {isLibraryOpen && (
+            <div className="w-56 border-r border-zinc-800 bg-studio-panel shrink-0 flex flex-col z-30">
+                <Library 
+                    variant="sidebar" 
+                    currentProjectId={project.id}
+                    onAssetsChange={refreshAssets}
+                />
+            </div>
+        )}
+
         {/* Track Headers */}
         <div className="flex-none bg-studio-panel border-r border-zinc-800 z-20 flex flex-col shadow-xl transition-all duration-300" style={{ width: currentHeaderWidth }}>
              <div className="h-8 border-b border-zinc-800 bg-zinc-800/50 flex items-center px-2 justify-between relative">
                  {!isSidebarCollapsed && <span className="text-[10px] text-zinc-500 font-bold tracking-wider">TRACKS</span>}
-                 <button 
-                    onClick={(e) => { 
-                        e.stopPropagation(); 
-                        setShowAddMenu(!showAddMenu); 
-                    }} 
-                    className="text-zinc-500 hover:text-white mx-auto" 
-                    title="Add Track"
-                 >
+                 <button onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }} className="text-zinc-500 hover:text-white mx-auto" title="Add Track">
                     <Plus size={12} />
                  </button>
 
                  {showAddMenu && (
                      <div className="absolute top-8 left-2 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 flex flex-col min-w-[140px] overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                         <button 
-                            onClick={(e) => { 
-                                e.stopPropagation(); 
-                                handleAddTrack('audio'); 
-                            }} 
-                            className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2"
-                         >
+                         <button onClick={(e) => { e.stopPropagation(); handleAddTrack('audio'); }} className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2">
                              <Mic size={14} className="text-zinc-500" /> Audio Track
                          </button>
-                         <button 
-                            onClick={(e) => { 
-                                e.stopPropagation(); 
-                                handleAddTrack('instrument'); 
-                            }} 
-                            className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 border-t border-zinc-800"
-                         >
+                         <button onClick={(e) => { e.stopPropagation(); handleAddTrack('instrument'); }} className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 border-t border-zinc-800">
                              <Piano size={14} className="text-zinc-500" /> Synth Track
                          </button>
                      </div>
@@ -499,12 +388,7 @@ const Arranger: React.FC<ArrangerProps> = ({
         </div>
 
         {/* Timeline Area */}
-        <div 
-            ref={scrollContainerRef}
-            className="flex-1 overflow-auto relative bg-zinc-950"
-            onScroll={handleScroll}
-            onWheel={handleWheel}
-        >
+        <div ref={scrollContainerRef} className="flex-1 overflow-auto relative bg-zinc-950" onScroll={handleScroll} onWheel={handleWheel}>
             {/* Empty State Overlay */}
             {project.tracks.length === 0 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center z-10 text-zinc-600 pointer-events-none">
@@ -528,7 +412,9 @@ const Arranger: React.FC<ArrangerProps> = ({
 
             <div style={{ width: totalWidth, minWidth: '100%', height: Math.max(300, project.tracks.length * trackHeight + 32) }}>
                 {/* Background Grid */}
-                <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: backgroundImage, backgroundSize: backgroundSize, top: 32 }} />
+                <div className="absolute inset-0 top-8 pointer-events-none">
+                    <ArrangerGrid pixelsPerBar={pixelsPerBar} pixelsPerTick={pixelsPerTick} height={Math.max(300, project.tracks.length * trackHeight)} width={totalWidth} />
+                </div>
 
                 {/* Ruler */}
                 <Ruler 
@@ -599,69 +485,26 @@ const Arranger: React.FC<ArrangerProps> = ({
                     <button onClick={() => setShowInstruments(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
-                    <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />
-                    <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />
+                    {project.drone && <DroneSynth config={project.drone} onChange={(cfg) => setProject(p => ({...p, drone: cfg}))} />}
+                    {project.sequencer && <StepSequencer config={project.sequencer} onChange={(cfg) => setProject(p => ({...p, sequencer: cfg}))} />}
                 </div>
             </div>
         )}
 
-        {/* Clip Context Menu */}
-        {contextMenu && (
-            <>
-                <div className="fixed inset-0 z-[90]" onClick={() => setContextMenu(null)} />
-                <div 
-                    className="fixed bg-zinc-800 border border-zinc-700 shadow-2xl rounded-lg p-1 z-[100] min-w-[160px] animate-in zoom-in-95 duration-100"
-                    style={{ top: Math.min(window.innerHeight - 200, contextMenu.y), left: Math.min(window.innerWidth - 160, contextMenu.x) }}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2" onClick={() => { const newName = prompt("Rename Clip"); if(newName && onRenameClip) onRenameClip(contextMenu.clipId, newName); setContextMenu(null); }}>
-                        <Edit2 size={12} /> Rename
-                    </button>
-                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded flex items-center gap-2" onClick={() => { const clip = project.clips.find(c => c.id === contextMenu.clipId); if (clip) { onSplit(clip.id, calculateSeekTime(contextMenu.x, false)); analytics.track('clip_action', { action: 'split', source: 'context_menu' }); } setContextMenu(null); }}>
-                        <Split size={12} /> Split at Cursor
-                    </button>
-                    <div className="h-px bg-zinc-700 my-1" />
-                    <div className="px-2 py-1">
-                        <p className="text-[9px] text-zinc-500 uppercase font-bold mb-1 ml-1">Color</p>
-                        <div className="flex flex-wrap gap-1">
-                            {CLIP_COLORS.map(c => (
-                                <button key={c} className="w-4 h-4 rounded-full border border-transparent hover:border-white" style={{ backgroundColor: c }} onClick={() => { if(onColorClip) onColorClip(contextMenu.clipId, c); setContextMenu(null); }} />
-                            ))}
-                        </div>
-                    </div>
-                    <div className="h-px bg-zinc-700 my-1" />
-                    <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-900/30 rounded flex items-center gap-2" onClick={() => { setProject(p => ({...p, clips: p.clips.filter(c => c.id !== contextMenu.clipId)})); analytics.track('clip_action', { action: 'delete', source: 'context_menu' }); setContextMenu(null); }}>
-                        <Trash2 size={12} /> Delete
-                    </button>
-                </div>
-            </>
-        )}
-
-        {/* Automation Context Menu */}
-        {autoContextMenu && (
-            <>
-                <div className="fixed inset-0 z-[90]" onClick={() => setAutoContextMenu(null)} />
-                <div 
-                    className="fixed bg-zinc-800 border border-zinc-700 shadow-2xl rounded-lg p-1 z-[100] min-w-[140px] animate-in zoom-in-95 duration-100"
-                    style={{ top: Math.min(window.innerHeight - 150, autoContextMenu.y), left: Math.min(window.innerWidth - 140, autoContextMenu.x) }}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded" onClick={() => { handleUpdateAutomationPoint(autoContextMenu.trackId, autoContextMenu.pointId, { curve: 'linear' }); setAutoContextMenu(null); }}>
-                        Set Linear
-                    </button>
-                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded" onClick={() => { handleUpdateAutomationPoint(autoContextMenu.trackId, autoContextMenu.pointId, { curve: 'exponential' }); setAutoContextMenu(null); }}>
-                        Set Exponential
-                    </button>
-                    <button className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white rounded" onClick={() => { handleUpdateAutomationPoint(autoContextMenu.trackId, autoContextMenu.pointId, { curve: 'step' }); setAutoContextMenu(null); }}>
-                        Set Step
-                    </button>
-                    <div className="h-px bg-zinc-700 my-1" />
-                    <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-900/30 rounded flex items-center gap-2" onClick={() => { handleDeleteAutomationPoint(autoContextMenu.trackId, autoContextMenu.pointId); setAutoContextMenu(null); }}>
-                        <Trash2 size={12} /> Delete Point
-                    </button>
-                </div>
-            </>
-        )}
+        <ArrangerContextMenus 
+            contextMenu={contextMenu}
+            setContextMenu={setContextMenu}
+            autoContextMenu={autoContextMenu}
+            setAutoContextMenu={setAutoContextMenu}
+            project={project}
+            setProject={setProject}
+            onRenameClip={onRenameClip}
+            onColorClip={onColorClip}
+            onSplit={onSplit}
+            calculateSeekTime={calculateSeekTime}
+            handleUpdateAutomationPoint={handleUpdateAutomationPoint}
+            handleDeleteAutomationPoint={handleDeleteAutomationPoint}
+        />
       </div>
     </div>
   );

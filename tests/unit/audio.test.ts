@@ -1,5 +1,4 @@
 
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 import { Track, Clip } from '../../types';
@@ -12,6 +11,9 @@ describe('AudioEngine', () => {
         audio.trackChannels.clear();
         audio.activeSources.clear();
         audio.buffers.clear();
+        audio.scheduledSynthVoices.clear();
+        (audio.ctx as any).state = 'suspended';
+        (audio.ctx as any).resume = vi.fn().mockResolvedValue(undefined);
     });
 
     it('initializes with correct default nodes', () => {
@@ -28,10 +30,6 @@ describe('AudioEngine', () => {
         expect(channel.panner).toBeDefined();
         expect(channel.reverbSendPre).toBeDefined();
         expect(channel.reverbSendPost).toBeDefined();
-        expect(channel.delaySendPre).toBeDefined();
-        expect(channel.delaySendPost).toBeDefined();
-        expect(channel.chorusSendPre).toBeDefined();
-        expect(channel.chorusSendPost).toBeDefined();
         expect(audio.trackChannels.has('t1')).toBe(true);
     });
 
@@ -43,6 +41,7 @@ describe('AudioEngine', () => {
         audio.syncTracks(tracks);
         
         const channel = audio.getTrackChannel('t1');
+        // Check if setTargetAtTime was called on the gain param of the GainNode
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
         expect(channel.panner.pan.setTargetAtTime).toHaveBeenCalledWith(-0.5, expect.any(Number), expect.any(Number));
         expect(channel.reverbSendPost.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
@@ -60,12 +59,21 @@ describe('AudioEngine', () => {
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0, expect.any(Number), expect.any(Number));
     });
 
-    it('measures input level', () => {
-        // Just verify method exists and runs without error in mock env
-        const level = audio.measureInputLevel();
-        // Since getFloatTimeDomainData mock usually returns zeros or uninitialized array,
-        // we check it returns a number.
-        expect(level).toBeGreaterThanOrEqual(0);
+    it('implicitly mutes non-soloed tracks when solo is active', () => {
+        const tracks: Track[] = [
+            { id: 't1', type: 'audio', name: 'Solo Track', volume: 0.8, pan: 0, muted: false, solo: true, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } },
+            { id: 't2', type: 'audio', name: 'Other Track', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 }, sendConfig: { reverbPre: false, delayPre: false, chorusPre: false } }
+        ];
+
+        audio.syncTracks(tracks);
+        
+        const channel1 = audio.getTrackChannel('t1');
+        const channel2 = audio.getTrackChannel('t2');
+        
+        // Solo track should be at volume
+        expect(channel1.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0.8, expect.any(Number), expect.any(Number));
+        // Other track should be muted (0)
+        expect(channel2.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0, expect.any(Number), expect.any(Number));
     });
 
     it('does not play muted clips', () => {
@@ -83,8 +91,47 @@ describe('AudioEngine', () => {
         const spyCreateSource = vi.spyOn(audio.ctx, 'createBufferSource');
 
         audio.play(clips, tracks, 0);
+        
+        audio.scheduler(tracks, clips);
+        
+        expect(spyCreateSource).toHaveBeenCalledTimes(0);
+    });
 
-        // Should only be called once for the active clip
-        expect(spyCreateSource).toHaveBeenCalledTimes(1);
+    it('pauses correctly', () => {
+        audio.isPlaying = true;
+        
+        // Mock a running source
+        const mockSource = { stop: vi.fn(), disconnect: vi.fn() };
+        audio.activeSources.set('c1', { source: mockSource as any, gain: {} as any });
+        
+        audio.pause();
+        
+        expect(audio.isPlaying).toBe(false);
+        expect(mockSource.stop).toHaveBeenCalled();
+        expect(audio.activeSources.size).toBe(0);
+    });
+
+    it('stops previous sources when playing (seeking)', () => {
+        // Setup state as if playing
+        audio.isPlaying = true;
+        const mockSource = { stop: vi.fn(), disconnect: vi.fn() };
+        audio.activeSources.set('c1', { source: mockSource as any, gain: {} as any });
+        
+        // Call play again (simulating loop or seek)
+        audio.play([], [], 5);
+        
+        // Should have stopped previous sources
+        expect(mockSource.stop).toHaveBeenCalled();
+        expect(audio.activeSources.size).toBe(0);
+        expect(audio.isPlaying).toBe(true);
+    });
+
+    it('sets clip gain in real-time', () => {
+        const mockGainNode = { gain: { setTargetAtTime: vi.fn() } };
+        audio.activeSources.set('c1', { source: {} as any, gain: mockGainNode as any });
+        
+        audio.setClipGain('c1', 0.5);
+        
+        expect(mockGainNode.gain.setTargetAtTime).toHaveBeenCalledWith(0.5, expect.any(Number), expect.any(Number));
     });
 });

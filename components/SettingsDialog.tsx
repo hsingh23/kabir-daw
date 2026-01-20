@@ -5,6 +5,7 @@ import { cleanupOrphanedAssets } from '../services/db';
 import { ProjectState } from '../types';
 import { X, Mic, Music, Settings, Info, Keyboard, Database, Trash2 } from 'lucide-react';
 import { useToast } from './Toast';
+import LatencyCalibrator from './LatencyCalibrator';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -128,6 +129,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
       }
   };
 
+  const handleApplyLatency = (val: number) => {
+      if (setProject) {
+          setProject((prev: ProjectState) => ({
+              ...prev,
+              recordingLatency: val
+          }));
+      }
+  };
+
   const handleInputMonitoringChange = () => {
       if (setProject) {
           setProject((prev: ProjectState) => ({
@@ -209,10 +219,17 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                                     </button>
                                 </div>
                             </div>
+                            
+                            {/* Latency Section */}
                             <div>
                                 <div className="flex justify-between text-xs text-zinc-400 mb-1"><span>Recording Latency Compensation</span><span>{project?.recordingLatency || 0} ms</span></div>
                                 <input type="range" min="0" max="500" step="1" value={project?.recordingLatency || 0} onChange={handleLatencyChange} className="w-full h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer" />
                             </div>
+                            
+                            <LatencyCalibrator 
+                                currentLatency={project?.recordingLatency || 0} 
+                                onApply={handleApplyLatency} 
+                            />
                         </div>
                     </>
                 )}
@@ -248,7 +265,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                                                 <button 
                                                     onClick={() => {
                                                         if(setProject) {
-                                                            setProject(p => ({...p, midiMappings: p.midiMappings.filter(mm => mm.id !== m.id)}));
+                                                            setProject(p => ({...p, midiMappings: p.midiMappings!.filter(mm => mm.id !== m.id)}));
                                                         }
                                                     }}
                                                     className="text-red-500 hover:text-red-400 font-bold ml-2"

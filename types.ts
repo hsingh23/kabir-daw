@@ -107,21 +107,53 @@ export interface AssetMetadata {
   fileType: string;
 }
 
+// --- NEW INSTRUMENT TYPES ---
+
+export interface SequencerTrack {
+  name: string;
+  sample: 'kick' | 'snare' | 'hihat';
+  steps: boolean[]; // 16 steps
+  volume: number;
+  muted: boolean;
+}
+
+export interface SequencerState {
+  enabled: boolean;
+  volume: number;
+  tracks: SequencerTrack[];
+}
+
+export interface DroneOscillator {
+  active: boolean;
+  type: 'sine' | 'square' | 'sawtooth' | 'triangle';
+  octave: number; // -2 to +2 relative to root
+  detune: number; // cents
+  gain: number;
+  pan: number;
+}
+
+export interface DroneState {
+  enabled: boolean;
+  volume: number;
+  note: number; // MIDI Root Note
+  oscillators: DroneOscillator[];
+}
+
 export interface TanpuraState {
   enabled: boolean;
   volume: number;
-  key: string; // "C", "C#", etc.
-  tuning: 'Pa' | 'Ma' | 'Ni'; // First string tuning relative to Sa
+  key: string;
+  tuning: 'Pa' | 'Ma' | 'Ni';
   tempo: number;
-  fineTune?: number; // Detune in cents (+/- 100)
+  fineTune?: number;
 }
 
 export interface TablaState {
   enabled: boolean;
   volume: number;
-  taal: string; // "TeenTaal", "Dadra", "Keherwa"
+  taal: string;
   bpm: number;
-  key: string; // Tuning
+  key: string;
 }
 
 export interface Marker {
@@ -167,8 +199,13 @@ export interface ProjectState {
     delay: number; // 0-1
     chorus: number; // 0-1
   };
-  tanpura: TanpuraState;
-  tabla: TablaState;
+  
+  // Instruments
+  sequencer: SequencerState;
+  drone: DroneState;
+  tanpura?: TanpuraState;
+  tabla?: TablaState;
+  
   midiMappings?: MidiMapping[]; // Saved MIDI mappings
   lastModified?: number;
 }

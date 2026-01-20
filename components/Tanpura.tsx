@@ -1,8 +1,17 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { TanpuraState } from '../types';
 import Knob from './Knob';
 import { audio } from '../services/audio';
+
+// Local definition to avoid import error
+interface TanpuraState {
+  enabled: boolean;
+  volume: number;
+  key: string;
+  tuning: 'Pa' | 'Ma' | 'Ni';
+  tempo: number;
+  fineTune?: number;
+}
 
 interface TanpuraProps {
   config: TanpuraState;
@@ -17,8 +26,9 @@ const Tanpura: React.FC<TanpuraProps> = ({ config, onChange }) => {
 
   useEffect(() => {
     const loop = () => {
+        // Disabled active string visual as audio engine support was removed
         if (config.enabled && audio.isPlaying) {
-            setActiveString(audio.currentTanpuraString);
+            setActiveString(-1); // Placeholder
         } else {
             setActiveString(-1);
         }
@@ -29,11 +39,11 @@ const Tanpura: React.FC<TanpuraProps> = ({ config, onChange }) => {
   }, [config.enabled]);
 
   return (
-    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4 shadow-lg">
+    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4 shadow-lg opacity-50 pointer-events-none grayscale">
         <div className="flex items-center justify-between border-b border-zinc-700 pb-2">
             <h3 className="text-zinc-200 font-bold tracking-wide uppercase text-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-                Tanpura Drone
+                Tanpura (Legacy)
             </h3>
             <button 
                 onClick={() => onChange({ ...config, enabled: !config.enabled })}
