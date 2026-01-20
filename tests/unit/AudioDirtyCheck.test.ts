@@ -1,5 +1,4 @@
 
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
 import { Track } from '../../types';
@@ -26,7 +25,8 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
         // Mock setTargetAtTime
         channel.gain.gain.setTargetAtTime = vi.fn();
         
-        audio.applyTrackSettings(channel, track, 0, false);
+        // This is called internally by syncTracks usually, but we test the channel update directly
+        channel.update(track, 0, false);
         
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0.8, 0, expect.any(Number));
     });
@@ -45,11 +45,11 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
         channel.panner.pan.setTargetAtTime = vi.fn();
 
         // First pass
-        audio.applyTrackSettings(channel, track, 0, false);
+        channel.update(track, 0, false);
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledTimes(1);
 
         // Second pass (identical)
-        audio.applyTrackSettings(channel, track, 1, false);
+        channel.update(track, 1, false);
         
         // Should NOT be called again
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledTimes(1);
@@ -68,11 +68,11 @@ describe('AudioEngine Optimization (Dirty Checking)', () => {
         channel.gain.gain.setTargetAtTime = vi.fn();
         channel.panner.pan.setTargetAtTime = vi.fn();
 
-        audio.applyTrackSettings(channel, track, 0, false);
+        channel.update(track, 0, false);
 
         // Modify volume only
         const updatedTrack = { ...track, volume: 0.5 };
-        audio.applyTrackSettings(channel, updatedTrack, 1, false);
+        channel.update(updatedTrack, 1, false);
 
         expect(channel.gain.gain.setTargetAtTime).toHaveBeenCalledTimes(2); // Initial + Update
         expect(channel.panner.pan.setTargetAtTime).toHaveBeenCalledTimes(1); // Initial only

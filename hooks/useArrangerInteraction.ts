@@ -37,6 +37,7 @@ export const useArrangerInteraction = ({
 }: InteractionProps) => {
     
     const isDraggingRef = useRef<boolean>(false);
+    const cachedContainerRect = useRef<DOMRect | null>(null);
 
     const [dragState, setDragState] = useState<{
         initialClips: { id: string, start: number }[]; 
@@ -79,7 +80,8 @@ export const useArrangerInteraction = ({
     const updateSelectionBox = (currentX: number, currentY: number) => {
         if (!selectionBoxRef.current || !selectionStart.current || !scrollContainerRef.current) return;
         
-        const rect = scrollContainerRef.current.getBoundingClientRect();
+        // Use cached rect if available, fallback to getBoundingClientRect (only once per drag start ideally)
+        const rect = cachedContainerRect.current || scrollContainerRef.current.getBoundingClientRect();
         const scrollLeft = scrollContainerRef.current.scrollLeft;
         const scrollTop = scrollContainerRef.current.scrollTop;
 
@@ -101,7 +103,7 @@ export const useArrangerInteraction = ({
     };
 
     const calculateSeekTime = (clientX: number, snap: boolean) => {
-        const rect = scrollContainerRef.current?.getBoundingClientRect();
+        const rect = cachedContainerRect.current || scrollContainerRef.current?.getBoundingClientRect();
         if (!rect) return 0;
         const scrollLeft = scrollContainerRef.current?.scrollLeft || 0;
         const time = Math.max(0, (clientX - rect.left + scrollLeft) / zoom); 
@@ -116,6 +118,11 @@ export const useArrangerInteraction = ({
         e.stopPropagation();
         commitTransaction(); 
         
+        // Cache rect on start
+        if (scrollContainerRef.current) {
+            cachedContainerRect.current = scrollContainerRef.current.getBoundingClientRect();
+        }
+
         isDraggingRef.current = false;
         snapTrackedRef.current = false;
 
@@ -229,6 +236,11 @@ export const useArrangerInteraction = ({
     };
 
     const handleGlobalPointerDown = (e: React.PointerEvent) => {
+        // Cache rect on start
+        if (scrollContainerRef.current) {
+            cachedContainerRect.current = scrollContainerRef.current.getBoundingClientRect();
+        }
+
         activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
         
         if (activePointers.current.size === 2) {
@@ -271,8 +283,10 @@ export const useArrangerInteraction = ({
         if (dragState || loopDrag || selectionStart.current || trackDrag) {
             isDraggingRef.current = true;
             const scrollContainer = scrollContainerRef.current;
-            if (scrollContainer) {
-                const rect = scrollContainer.getBoundingClientRect();
+            // Use cached rect for layout calculation optimization
+            const rect = cachedContainerRect.current;
+            
+            if (scrollContainer && rect) {
                 const edgeThreshold = 50; 
                 const relX = e.clientX - rect.left;
                 let scrollSpeed = 0;
@@ -362,7 +376,8 @@ export const useArrangerInteraction = ({
                         if (init) {
                             let targetTrackId = c.trackId;
                             if (c.id === dragState.clipId && scrollContainerRef.current) {
-                                  const containerRect = scrollContainerRef.current.getBoundingClientRect();
+                                  // Use cached rect
+                                  const containerRect = cachedContainerRect.current || scrollContainerRef.current.getBoundingClientRect();
                                   const relativeY = (e.clientY - containerRect.top) + scrollContainerRef.current.scrollTop - 32; 
                                   const trackIndex = Math.floor(relativeY / trackHeight);
                                   if (trackIndex >= 0 && trackIndex < project.tracks.length) {
@@ -456,6 +471,8 @@ export const useArrangerInteraction = ({
 
     const handleGlobalPointerUp = (e: React.PointerEvent) => {
         activePointers.current.delete(e.pointerId);
+        cachedContainerRect.current = null; // Clear cache on release
+
         if (activePointers.current.size < 2) {
             initialPinchDist.current = null;
         }

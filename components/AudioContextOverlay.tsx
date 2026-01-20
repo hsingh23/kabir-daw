@@ -9,7 +9,7 @@ const AudioContextOverlay: React.FC = () => {
   useEffect(() => {
     const checkState = () => {
       // If context exists and is suspended, we need user interaction
-      if (audio.ctx && audio.ctx.state === 'suspended') {
+      if (audio.isInitialized && audio.ctx.state === 'suspended') {
         setNeedsResume(true);
       } else {
         setNeedsResume(false);
@@ -19,12 +19,14 @@ const AudioContextOverlay: React.FC = () => {
     // Check immediately
     checkState();
 
-    // Listen for state changes
-    const ctx = audio.ctx;
-    ctx.addEventListener('statechange', checkState);
+    // Listen for state changes if context already exists
+    if (audio.isInitialized) {
+        audio.ctx.addEventListener('statechange', checkState);
+    }
 
     // Also poll specifically on touch start once to catch edge cases
     const unlock = () => {
+        audio.init(); // Initialize first
         if (audio.ctx.state === 'suspended') {
             audio.resumeContext().then(checkState);
         }
@@ -36,13 +38,13 @@ const AudioContextOverlay: React.FC = () => {
     const handleVisibilityChange = () => {
         if (document.hidden) {
             // Background: Suspend to save battery and stop audio
-            if (audio.ctx.state === 'running') {
+            if (audio.isInitialized && audio.ctx.state === 'running') {
                 audio.ctx.suspend().then(() => console.log('Audio suspended (background)'));
             }
         } else {
             // Foreground: Resume if we were playing or active
             // Note: We might show overlay if browser blocks resume
-            if (audio.ctx.state === 'suspended') {
+            if (audio.isInitialized && audio.ctx.state === 'suspended') {
                 setNeedsResume(true);
             }
         }
@@ -50,7 +52,7 @@ const AudioContextOverlay: React.FC = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      ctx.removeEventListener('statechange', checkState);
+      if (audio.isInitialized) audio.ctx.removeEventListener('statechange', checkState);
       window.removeEventListener('touchstart', unlock);
       window.removeEventListener('click', unlock);
       document.removeEventListener('visibilitychange', handleVisibilityChange);

@@ -67,9 +67,8 @@ const ArrangerTrack: React.FC<ArrangerTrackProps> = memo(({
                 d += ` L ${x2} ${y1} L ${x2} ${y2}`;
             } else if (p1.curve === 'exponential') {
                 // Approximate exponential curve using cubic bezier
-                // Control points for a "swoop"
                 const cx1 = x1 + (x2 - x1) * 0.5;
-                const cy1 = y1; // Keep initial value longer
+                const cy1 = y1;
                 const cx2 = x1 + (x2 - x1) * 0.5;
                 const cy2 = y2;
                 d += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
@@ -78,8 +77,6 @@ const ArrangerTrack: React.FC<ArrangerTrackProps> = memo(({
                 d += ` L ${x2} ${y2}`;
             }
         }
-        
-        // Extend to end? No, just stop at last point for now.
         return d;
     };
 
@@ -98,17 +95,15 @@ const ArrangerTrack: React.FC<ArrangerTrackProps> = memo(({
                 {clips.map(clip => {
                     const isSelected = selectedClipIds.includes(clip.id);
                     const clipGain = clip.gain ?? 1.0;
-                    
                     const isStretching = dragState?.clipId === clip.id && dragState?.mode === 'STRETCH';
                     
                     return (
                         <div 
                             key={clip.id}
-                            className={`absolute top-1 bottom-1 rounded-md overflow-hidden transition-all cursor-move group shadow-sm ${isSelected ? 'ring-2 ring-white z-10' : 'ring-1 ring-black/20 hover:ring-white/30'} ${clip.muted ? 'opacity-50 grayscale' : 'opacity-100'} ${isStretching ? 'bg-orange-600' : ''}`}
+                            className={`absolute top-1 bottom-1 transition-all cursor-move group ${isSelected ? 'z-10' : 'z-0'} ${clip.muted ? 'opacity-50 grayscale' : 'opacity-100'}`}
                             style={{ 
                                 left: timeToPixels(clip.start), 
                                 width: Math.max(2, timeToPixels(clip.duration)), 
-                                backgroundColor: isStretching ? undefined : (clip.color || track.color || '#555'),
                                 pointerEvents: showAutomation ? 'none' : 'auto'
                             }}
                             onPointerDown={(e) => {
@@ -121,39 +116,48 @@ const ArrangerTrack: React.FC<ArrangerTrackProps> = memo(({
                             }}
                             data-testid={`clip-${clip.name}`}
                         >
-                            <div className="absolute inset-0 opacity-80 pointer-events-none bg-black/20">
-                                {clip.bufferKey ? (
-                                    <Waveform 
-                                        bufferKey={clip.bufferKey} 
-                                        color="rgba(255,255,255,0.8)" 
-                                        offset={clip.offset}
-                                        duration={clip.duration}
-                                        fadeIn={clip.fadeIn}
-                                        fadeOut={clip.fadeOut}
-                                        gain={clipGain}
-                                        speed={clip.speed}
-                                    />
-                                ) : (
-                                    <MidiClipView 
-                                        notes={clip.notes}
-                                        duration={clip.duration}
-                                        color="rgba(255,255,255,0.8)"
-                                    />
-                                )}
-                            </div>
-                            
-                            <div className="absolute top-0 left-0 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-br-md pointer-events-none flex items-center gap-1 max-w-full">
-                                {clip.muted && <MicOff size={8} className="text-red-400 shrink-0" />}
-                                <span className="text-[9px] font-bold text-white shadow-black drop-shadow-md truncate block">{clip.name}</span>
+                            {/* Inner Visual Container (Clipped) */}
+                            <div 
+                                className={`absolute inset-0 rounded-md overflow-hidden shadow-sm ${isSelected ? 'ring-2 ring-white' : 'ring-1 ring-black/20 hover:ring-white/30'} ${isStretching ? 'bg-orange-600' : ''}`}
+                                style={{ backgroundColor: isStretching ? undefined : (clip.color || track.color || '#555') }}
+                            >
+                                <div className="absolute inset-0 opacity-80 pointer-events-none bg-black/20">
+                                    {clip.bufferKey ? (
+                                        <Waveform 
+                                            bufferKey={clip.bufferKey} 
+                                            color="rgba(255,255,255,0.8)" 
+                                            offset={clip.offset}
+                                            duration={clip.duration}
+                                            fadeIn={clip.fadeIn}
+                                            fadeOut={clip.fadeOut}
+                                            gain={clipGain}
+                                            speed={clip.speed}
+                                        />
+                                    ) : (
+                                        <MidiClipView 
+                                            notes={clip.notes}
+                                            duration={clip.duration}
+                                            color="rgba(255,255,255,0.8)"
+                                        />
+                                    )}
+                                </div>
+                                
+                                <div className="absolute top-0 left-0 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-br-md pointer-events-none flex items-center gap-1 max-w-full">
+                                    {clip.muted && <MicOff size={8} className="text-red-400 shrink-0" />}
+                                    <span className="text-[9px] font-bold text-white shadow-black drop-shadow-md truncate block">{clip.name}</span>
+                                </div>
                             </div>
 
+                            {/* Handles (Outside Clip visual, unclipped) */}
                             {isSelected && !showAutomation && (
                                 <>
-                                    {/* Clip Handles */}
+                                    {/* Clip Gain Handle */}
                                     {clip.bufferKey && (
                                         <>
-                                            <div className="absolute left-0 right-0 h-px bg-white/50 pointer-events-none" style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%` }} />
-                                            <div className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white/80 rounded-full shadow-md cursor-ns-resize z-30 hover:scale-125 transition-transform flex items-center justify-center group/gain"
+                                            {/* Gain Line visual inside clip */}
+                                            <div className="absolute left-0 right-0 h-px bg-white/50 pointer-events-none z-20" style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%` }} />
+                                            {/* Gain Knob */}
+                                            <div className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white/80 rounded-full shadow-md cursor-ns-resize z-50 hover:scale-125 transition-transform flex items-center justify-center group/gain"
                                                 style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%`, marginTop: '-8px' }}
                                                 onPointerDown={(e) => onClipPointerDown(e, clip, 'GAIN')}
                                                 title="Clip Gain"
@@ -162,16 +166,16 @@ const ArrangerTrack: React.FC<ArrangerTrackProps> = memo(({
                                             </div>
                                         </>
                                     )}
-                                    <div className="absolute left-0 top-0 bottom-0 w-3 bg-white/10 hover:bg-white/30 cursor-ew-resize z-20 flex items-center justify-center" onPointerDown={(e) => onClipPointerDown(e, clip, 'TRIM_START')}>
+                                    <div className="absolute left-0 top-0 bottom-0 w-3 bg-white/10 hover:bg-white/30 cursor-ew-resize z-40 flex items-center justify-center" onPointerDown={(e) => onClipPointerDown(e, clip, 'TRIM_START')}>
                                         <div className="w-0.5 h-4 bg-white/50 rounded-full" />
                                     </div>
-                                    <div className={`absolute right-0 top-0 bottom-0 w-3 ${dragState?.mode === 'STRETCH' ? 'bg-orange-500/50' : 'bg-white/10 hover:bg-white/30'} cursor-ew-resize z-20 flex items-center justify-center`} 
+                                    <div className={`absolute right-0 top-0 bottom-0 w-3 ${dragState?.mode === 'STRETCH' ? 'bg-orange-500/50' : 'bg-white/10 hover:bg-white/30'} cursor-ew-resize z-40 flex items-center justify-center`} 
                                         onPointerDown={(e) => onClipPointerDown(e, clip, e.altKey ? 'STRETCH' : 'TRIM_END')}
                                     >
                                         <div className="w-0.5 h-4 bg-white/50 rounded-full" />
                                     </div>
-                                    <div className="absolute top-0 left-0 w-4 h-4 bg-white/20 hover:bg-white/40 rounded-br cursor-ne-resize z-20" style={{ transform: `translateX(${timeToPixels(clip.fadeIn)}px)` }} onPointerDown={(e) => onClipPointerDown(e, clip, 'FADE_IN')} />
-                                    <div className="absolute top-0 right-0 w-4 h-4 bg-white/20 hover:bg-white/40 rounded-bl cursor-nw-resize z-20" style={{ transform: `translateX(-${timeToPixels(clip.fadeOut)}px)` }} onPointerDown={(e) => onClipPointerDown(e, clip, 'FADE_OUT')} />
+                                    <div className="absolute top-0 left-0 w-4 h-4 bg-white/20 hover:bg-white/40 rounded-br cursor-ne-resize z-40" style={{ transform: `translateX(${timeToPixels(clip.fadeIn)}px)` }} onPointerDown={(e) => onClipPointerDown(e, clip, 'FADE_IN')} />
+                                    <div className="absolute top-0 right-0 w-4 h-4 bg-white/20 hover:bg-white/40 rounded-bl cursor-nw-resize z-40" style={{ transform: `translateX(-${timeToPixels(clip.fadeOut)}px)` }} onPointerDown={(e) => onClipPointerDown(e, clip, 'FADE_OUT')} />
                                 </>
                             )}
                         </div>

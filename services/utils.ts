@@ -39,6 +39,23 @@ export function moveItem<T>(array: T[], fromIndex: number, toIndex: number): T[]
   return newArray;
 }
 
+// Performance: Shallow comparison to avoid JSON.stringify in render loops
+export function shallowEqual(objA: any, objB: any): boolean {
+    if (objA === objB) return true;
+    if (!objA || !objB || typeof objA !== 'object' || typeof objB !== 'object') return false;
+
+    const keysA = Object.keys(objA);
+    const keysB = Object.keys(objB);
+
+    if (keysA.length !== keysB.length) return false;
+
+    for (const key of keysA) {
+        if (objA[key] !== objB[key]) return false;
+    }
+
+    return true;
+}
+
 // Optimization: Cache distortion curves to prevent GC pressure and expensive recalculation
 const distortionCache = new Map<number, Float32Array>();
 

@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 interface KnobProps {
   label: string;
@@ -11,39 +11,51 @@ interface KnobProps {
   defaultValue?: number;
 }
 
-const Knob: React.FC<KnobProps> = ({ label, value, onChange, onChangeEnd, min = 0, max = 1, defaultValue }) => {
-  const [isDragging, setIsDragging] = useState(false);
+const Knob: React.FC<KnobProps> = ({ label, value: externalValue, onChange, onChangeEnd, min = 0, max = 1, defaultValue }) => {
+  const [localValue, setLocalValue] = useState(externalValue);
+  const isDragging = useRef(false);
   const startY = useRef<number>(0);
   const startValue = useRef<number>(0);
 
-  // Convert 0-1 value to degrees (-135 to 135)
-  const deg = (value - min) / (max - min) * 270 - 135;
+  // Sync with external updates (automation, undo/redo)
+  useEffect(() => {
+      if (!isDragging.current) {
+          setLocalValue(externalValue);
+      }
+  }, [externalValue]);
+
+  // Convert current local value to degrees (-135 to 135)
+  const deg = (localValue - min) / (max - min) * 270 - 135;
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    setIsDragging(true);
+    isDragging.current = true;
     startY.current = e.clientY;
-    startValue.current = value;
+    startValue.current = localValue;
     (e.target as Element).setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging) return;
+    if (!isDragging.current) return;
     const deltaY = startY.current - e.clientY;
     const range = max - min;
-    const sensitivity = 0.005; // Adjust sensitivity
+    const sensitivity = 0.005; 
     let newValue = startValue.current + deltaY * sensitivity * range;
     newValue = Math.max(min, Math.min(max, newValue));
-    onChange(newValue);
+    
+    setLocalValue(newValue);
+    onChange(newValue); // Transient update
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    setIsDragging(false);
+    isDragging.current = false;
     (e.target as Element).releasePointerCapture(e.pointerId);
-    if (onChangeEnd) onChangeEnd(value);
+    if (onChangeEnd) onChangeEnd(localValue);
+    else onChange(localValue);
   };
 
   const handleDoubleClick = () => {
       if (defaultValue !== undefined) {
+          setLocalValue(defaultValue);
           onChange(defaultValue);
           if (onChangeEnd) onChangeEnd(defaultValue);
       }
@@ -57,7 +69,7 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, onChangeEnd, min = 
         aria-label={label}
         aria-valuemin={min}
         aria-valuemax={max}
-        aria-valuenow={value}
+        aria-valuenow={localValue}
         className="relative w-16 h-16 rounded-full shadow-knob bg-gradient-to-br from-zinc-200 to-zinc-400 border border-zinc-600 cursor-ns-resize outline-none focus:ring-2 focus:ring-blue-500/50"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -66,13 +78,13 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, onChangeEnd, min = 
         onKeyDown={(e) => {
              const range = max - min;
              const step = e.shiftKey ? range * 0.1 : range * 0.01;
-             let newValue = value;
-             if (e.key === 'ArrowUp' || e.key === 'ArrowRight') newValue = Math.min(max, value + step);
-             if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') newValue = Math.max(min, value - step);
+             let newValue = localValue;
+             if (e.key === 'ArrowUp' || e.key === 'ArrowRight') newValue = Math.min(max, localValue + step);
+             if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') newValue = Math.max(min, localValue - step);
              
-             if (newValue !== value) {
+             if (newValue !== localValue) {
+                 setLocalValue(newValue);
                  onChange(newValue);
-                 // For keyboard, we trigger end on key up technically, but immediate tracking is ok for now or use debounce in parent
                  if (onChangeEnd) onChangeEnd(newValue);
              }
         }}
@@ -82,7 +94,7 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, onChangeEnd, min = 
         
         {/* The rotating indicator */}
         <div 
-          className="absolute inset-0 w-full h-full rounded-full"
+          className="absolute inset-0 w-full h-full rounded-full will-change-transform"
           style={{ transform: `rotate(${deg}deg)` }}
         >
           {/* Tick mark */}

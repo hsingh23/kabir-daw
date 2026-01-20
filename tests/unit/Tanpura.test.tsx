@@ -3,7 +3,16 @@ import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
 import Tanpura from '../../components/Tanpura';
-import { TanpuraState } from '../../types';
+
+// Local definition
+interface TanpuraState {
+  enabled: boolean;
+  volume: number;
+  key: string;
+  tuning: 'Pa' | 'Ma' | 'Ni';
+  tempo: number;
+  fineTune?: number;
+}
 
 describe('Tanpura Component', () => {
   const defaultConfig: TanpuraState = {
@@ -16,7 +25,7 @@ describe('Tanpura Component', () => {
 
   it('renders correctly', () => {
     const { getByText } = render(<Tanpura config={defaultConfig} onChange={() => {}} />);
-    expect(getByText('TANPURA DRONE')).toBeInTheDocument();
+    expect(getByText('Tanpura (Legacy)')).toBeInTheDocument();
     expect(getByText('Pa')).toBeInTheDocument();
     expect(getByText('C')).toBeInTheDocument();
   });

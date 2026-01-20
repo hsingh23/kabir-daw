@@ -1,5 +1,4 @@
 
-
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -56,20 +55,8 @@ const mockProject: ProjectState = {
     release: 0.25
   },
   effects: { reverb: 0, delay: 0, chorus: 0 },
-  tanpura: {
-    enabled: false,
-    volume: 0.5,
-    key: 'C',
-    tuning: 'Pa',
-    tempo: 60
-  },
-  tabla: {
-    enabled: false,
-    volume: 0.5,
-    taal: 'TeenTaal',
-    bpm: 100,
-    key: 'C'
-  }
+  sequencer: { enabled: false, volume: 0.8, tracks: [] },
+  drone: { enabled: false, volume: 0.5, note: 36, oscillators: [] }
 };
 
 describe('Arranger Integration', () => {

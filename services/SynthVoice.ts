@@ -1,3 +1,4 @@
+
 import { InstrumentConfig } from '../types';
 
 export class SynthVoice {
@@ -74,8 +75,8 @@ export class SynthVoice {
             this.env.gain.cancelScheduledValues(this.ctx.currentTime);
             this.env.gain.setValueAtTime(0, this.ctx.currentTime);
             if (this.osc) {
-                this.osc.stop();
-                this.osc.disconnect();
+                try { this.osc.stop(); } catch(e) {}
+                try { this.osc.disconnect(); } catch(e) {}
                 this.osc = null;
             }
         } catch(e) {}

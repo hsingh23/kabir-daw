@@ -1,30 +1,62 @@
 
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface FaderProps {
-  value: number; // 0 to 1
-  onChange: (val: number) => void;
-  onChangeEnd?: (val: number) => void;
+  value: number; // 0 to 1 (Global State)
+  onChange: (val: number) => void; // Called on drag (Immediate / Audio Engine)
+  onChangeEnd?: (val: number) => void; // Called on release (Commit / React State)
   height?: number;
   defaultValue?: number;
 }
 
-// Re-implementing Fader with Pointer Events for true vertical behavior across all devices
-const CustomFader: React.FC<FaderProps> = ({ value, onChange, onChangeEnd, height = 200, defaultValue }) => {
+const CustomFader: React.FC<FaderProps> = ({ value: externalValue, onChange, onChangeEnd, height = 200, defaultValue }) => {
     const trackRef = React.useRef<HTMLDivElement>(null);
+    // Local state manages the visual position immediately to avoid React render lag
+    const [localValue, setLocalValue] = useState(externalValue);
+    const isDragging = useRef(false);
+
+    // Sync local state if external state changes (e.g. undo/redo, automation) ONLY when not dragging
+    useEffect(() => {
+        if (!isDragging.current) {
+            setLocalValue(externalValue);
+        }
+    }, [externalValue]);
+
+    const calculateValue = (e: React.PointerEvent) => {
+        if (!trackRef.current) return 0;
+        const rect = trackRef.current.getBoundingClientRect();
+        const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        return 1 - (y / rect.height);
+    }
+
+    const handlePointerDown = (e: React.PointerEvent) => {
+        isDragging.current = true;
+        (e.target as Element).setPointerCapture(e.pointerId);
+        const val = calculateValue(e);
+        setLocalValue(val);
+        onChange(val); 
+    };
 
     const handlePointerMove = (e: React.PointerEvent) => {
-        if (!trackRef.current) return;
-        const rect = trackRef.current.getBoundingClientRect();
-        // Calculate value based on Y position (bottom is 0, top is 1)
-        const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-        // Invert because Y grows downwards
-        const newValue = 1 - (y / rect.height);
-        onChange(newValue);
+        if (!isDragging.current) return;
+        const val = calculateValue(e);
+        setLocalValue(val);
+        onChange(val); 
+    };
+
+    const handlePointerUp = (e: React.PointerEvent) => {
+        if (!isDragging.current) return;
+        isDragging.current = false;
+        (e.target as Element).releasePointerCapture(e.pointerId);
+        
+        // Commit final value to global state / history
+        if (onChangeEnd) onChangeEnd(localValue);
+        else onChange(localValue);
     };
 
     const handleDoubleClick = () => {
         if (defaultValue !== undefined) {
+            setLocalValue(defaultValue);
             onChange(defaultValue);
             if (onChangeEnd) onChangeEnd(defaultValue);
         }
@@ -36,33 +68,14 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, onChangeEnd, heigh
             tabIndex={0}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={Math.round(value * 100)}
+            aria-valuenow={Math.round(localValue * 100)}
             ref={trackRef}
             className="relative w-10 cursor-pointer touch-none select-none py-2 outline-none focus:ring-2 focus:ring-blue-500/50 rounded"
             style={{ height: `${height}px` }}
-            onPointerDown={(e) => {
-                (e.target as Element).setPointerCapture(e.pointerId);
-                handlePointerMove(e);
-            }}
-            onPointerMove={(e) => {
-                if (e.buttons === 1) handlePointerMove(e);
-            }}
-            onPointerUp={(e) => {
-                (e.target as Element).releasePointerCapture(e.pointerId);
-                if (onChangeEnd) onChangeEnd(value);
-            }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
             onDoubleClick={handleDoubleClick}
-            onKeyDown={(e) => {
-                const step = e.shiftKey ? 0.1 : 0.01;
-                let newValue = value;
-                if (e.key === 'ArrowUp') newValue = Math.min(1, value + step);
-                if (e.key === 'ArrowDown') newValue = Math.max(0, value - step);
-                
-                if (newValue !== value) {
-                    onChange(newValue);
-                    if (onChangeEnd) onChangeEnd(newValue);
-                }
-            }}
         >
              {/* Rail */}
              <div className="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-1.5 bg-black/40 rounded-full shadow-inner border border-white/5" />
@@ -70,7 +83,6 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, onChangeEnd, heigh
              {/* Ticks */}
              <div className="absolute top-2 bottom-2 left-0 right-0 pointer-events-none flex flex-col justify-between">
                 {[...Array(11)].map((_, i) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: visual grid only
                     <div key={i} className="flex justify-between w-full px-0.5">
                         <div className="w-1.5 h-px bg-zinc-600/50"></div>
                         <div className="w-1.5 h-px bg-zinc-600/50"></div>
@@ -80,10 +92,10 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, onChangeEnd, heigh
 
              {/* Thumb */}
              <div 
-                className="absolute left-1/2 -translate-x-1/2 w-8 h-12 bg-gradient-to-t from-zinc-400 to-zinc-200 rounded shadow-xl border-t border-white/50 border-b border-black/50 z-10 flex items-center justify-center"
+                className="absolute left-1/2 -translate-x-1/2 w-8 h-12 bg-gradient-to-t from-zinc-400 to-zinc-200 rounded shadow-xl border-t border-white/50 border-b border-black/50 z-10 flex items-center justify-center will-change-transform"
                 style={{ 
-                    bottom: `${value * 100}%`,
-                    transform: `translate(-50%, ${value * 100}%) translateY(50%)`
+                    bottom: `${localValue * 100}%`,
+                    transform: `translate(-50%, ${localValue * 100}%) translateY(50%)`
                 }}
              >
                 <div className="w-full h-0.5 bg-black/20" />

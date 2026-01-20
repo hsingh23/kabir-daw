@@ -44,8 +44,8 @@ describe('Arranger Markers', () => {
       masterEq: { low: 0, mid: 0, high: 0 },
       masterCompressor: { threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
       effects: { reverb: 0, delay: 0, chorus: 0 },
-      tanpura: { enabled: false, volume: 0, key: 'C', tuning: 'Pa', tempo: 60 },
-      tabla: { enabled: false, volume: 0, taal: 'TeenTaal', bpm: 100, key: 'C' }
+      sequencer: { enabled: false, volume: 0.8, tracks: [] },
+      drone: { enabled: false, volume: 0.5, note: 36, oscillators: [] }
     };
 
     it('adds marker on double click in ruler', () => {

@@ -1,6 +1,9 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ProjectState, Track } from '../types';
 import CustomFader from './Fader';
+import StepSequencer from './StepSequencer';
+import DroneSynth from './DroneSynth';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
@@ -8,6 +11,7 @@ import SpectrumAnalyzer from './SpectrumAnalyzer';
 import MixerStrip from './MixerStrip';
 import { Sliders, Music2, Activity, Plus, Mic, Piano } from 'lucide-react';
 import { analytics } from '../services/analytics';
+import { createTrack } from '../services/templates';
 
 interface MixerProps {
   project: ProjectState;
@@ -18,10 +22,6 @@ interface MixerProps {
   onRecord: () => void;
   onOpenMaster: () => void;
 }
-
-const CLIP_COLORS = [
-    '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#06b6d4', '#ec4899', '#71717a'
-];
 
 const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
   const [tab, setTab] = useState<'tracks' | 'instruments'>(() => {
@@ -55,19 +55,7 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
   }, [updateTrack]);
 
   const handleAddTrack = (type: 'audio' | 'instrument' = 'audio') => {
-      const newTrack: Track = {
-          id: crypto.randomUUID(),
-          type,
-          name: type === 'instrument' ? `Synth ${project.tracks.length + 1}` : `Audio ${project.tracks.length + 1}`,
-          volume: 0.8, pan: 0, muted: false, solo: false, 
-          color: CLIP_COLORS[project.tracks.length % CLIP_COLORS.length],
-          icon: type === 'instrument' ? 'keyboard' : 'music',
-          instrument: type === 'instrument' ? { type: 'synth', preset: 'sawtooth', attack: 0.05, decay: 0.1, sustain: 0.5, release: 0.2 } : undefined,
-          eq: { low: 0, mid: 0, high: 0 },
-          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
-          sends: { reverb: 0, delay: 0, chorus: 0 },
-          sendConfig: { reverbPre: false, delayPre: false, chorusPre: false }
-      };
+      const newTrack = createTrack(type, type === 'instrument' ? `Synth ${project.tracks.length + 1}` : `Audio ${project.tracks.length + 1}`);
       setProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
       analytics.track('mixer_action', { action: 'add_track' });
   };
@@ -169,9 +157,12 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
             </div>
         ) : (
             <div className="flex-1 overflow-y-auto p-6">
-                <div className="max-w-2xl mx-auto space-y-8">
-                    <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />
-                    <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />
+                <div className="max-w-3xl mx-auto space-y-8">
+                    {project.drone && <DroneSynth config={project.drone} onChange={(cfg) => setProject(p => ({...p, drone: cfg}))} />}
+                    {project.sequencer && <StepSequencer config={project.sequencer} onChange={(cfg) => setProject(p => ({...p, sequencer: cfg}))} />}
+                    {/* Restored Legacy Instruments */}
+                    {project.tanpura && <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />}
+                    {project.tabla && <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />}
                 </div>
             </div>
         )}

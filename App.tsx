@@ -57,6 +57,26 @@ const INITIAL_PROJECT: ProjectState = {
       release: 0.25
   },
   effects: { reverb: 0.2, delay: 0.1, chorus: 0.0 },
+  sequencer: {
+      enabled: false,
+      volume: 0.8,
+      tracks: [
+          { name: 'Kick', sample: 'kick', steps: new Array(16).fill(false), volume: 1, muted: false },
+          { name: 'Snare', sample: 'snare', steps: new Array(16).fill(false), volume: 1, muted: false },
+          { name: 'HiHat', sample: 'hihat', steps: new Array(16).fill(false), volume: 0.7, muted: false }
+      ]
+  },
+  drone: {
+      enabled: false,
+      volume: 0.5,
+      note: 36, // C2
+      oscillators: [
+          { active: true, type: 'sawtooth', octave: 0, detune: 0, gain: 0.5, pan: 0 },
+          { active: true, type: 'sine', octave: 1, detune: 5, gain: 0.3, pan: -0.2 },
+          { active: false, type: 'square', octave: -1, detune: -5, gain: 0.3, pan: 0.2 },
+          { active: false, type: 'triangle', octave: 0, detune: 700, gain: 0.2, pan: 0 } // +7 semitones (Fifth)
+      ]
+  },
   tanpura: {
       enabled: false,
       volume: 0.5,
@@ -89,7 +109,7 @@ const AppContent: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isCountingIn, setIsCountingIn] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [recordingStartTime, setRecordingStartTime] = useState(0); // Stores PROJECT TIME of recording start
+  const [recordingStartTime, setRecordingStartTime] = useState(0); 
   const [currentTime, setCurrentTime] = useState(0);
   const [zoom, setZoom] = useState(50); 
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -212,21 +232,26 @@ const AppContent: React.FC = () => {
     audio.clearBuffers();
     const saved = await getProject(projectId);
     if (saved) {
-        const migrated = {
-            ...INITIAL_PROJECT,
-            ...saved,
-            tracks: saved.tracks.map((t: any) => ({
-                ...t,
-                // Default type to audio for legacy projects
-                type: t.type || 'audio', 
-                eq: t.eq || { low: 0, mid: 0, high: 0 },
-                compressor: t.compressor || { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 },
-                sends: t.sends || { reverb: 0, delay: 0, chorus: 0 },
-                distortion: t.distortion || 0
-            })),
-        };
+        // Migration Logic for Legacy Instruments
+        const migratedState = { ...INITIAL_PROJECT, ...saved };
         
-        const bufferPromises = migrated.clips.map(async (clip: Clip) => {
+        // Ensure tracks are migrated with defaults if missing
+        migratedState.tracks = saved.tracks.map((t: any) => ({
+            ...t,
+            type: t.type || 'audio',
+            eq: t.eq || { low: 0, mid: 0, high: 0 },
+            compressor: t.compressor || { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 },
+            sends: t.sends || { reverb: 0, delay: 0, chorus: 0 },
+            distortion: t.distortion || 0
+        }));
+
+        // If new instrument states are missing, use defaults
+        if (!migratedState.sequencer) migratedState.sequencer = INITIAL_PROJECT.sequencer;
+        if (!migratedState.drone) migratedState.drone = INITIAL_PROJECT.drone;
+        if (!migratedState.tanpura) migratedState.tanpura = INITIAL_PROJECT.tanpura;
+        if (!migratedState.tabla) migratedState.tabla = INITIAL_PROJECT.tabla;
+
+        const bufferPromises = migratedState.clips.map(async (clip: Clip) => {
             if (clip.bufferKey) {
                 try {
                     const blob = await getAudioBlob(clip.bufferKey);
@@ -240,11 +265,11 @@ const AppContent: React.FC = () => {
         });
         
         await Promise.all(bufferPromises);
-        loadProject(migrated);
-        if (migrated.tracks.length > 0) setSelectedTrackId(migrated.tracks[0].id);
+        loadProject(migratedState);
+        if (migratedState.tracks.length > 0) setSelectedTrackId(migratedState.tracks[0].id);
         
         showToast("Project loaded successfully", 'success');
-        analytics.track('project_loaded', { projectId: migrated.id });
+        analytics.track('project_loaded', { projectId: migratedState.id });
     } else if (projectId !== 'default-project') {
         loadProject({ ...INITIAL_PROJECT, id: projectId, name: 'New Project' });
     }
@@ -307,12 +332,11 @@ const AppContent: React.FC = () => {
      }
   }, [isPlaying, currentTime, project.clips, project.tracks]);
 
+  // Recording logic same as before...
   const startActualRecording = useCallback(async () => {
         const track = project.tracks.find(t => t.id === selectedTrackId);
-        
         if (track?.type === 'audio') {
             try {
-                // Initialize input before playing to avoid sync issues if permission prompt delays
                 await audio.initInput();
             } catch (_e) {
                 console.error("Recording init failed:", _e);
@@ -322,31 +346,20 @@ const AppContent: React.FC = () => {
                 return;
             }
         }
-        
-        // Reset MIDI buffer if instrument track
         if (track?.type === 'instrument') {
             recordingNotesRef.current = [];
         }
-
         const startTime = currentTime;
-        // Start playback first
         audio.play(project.clips, project.tracks, startTime);
         setIsPlaying(true);
         setIsRecording(true);
-        
         if (track?.type === 'audio') {
-            // Start recording and get the exact AudioContext time it started
             const contextRecStart = await audio.startRecording(project.inputMonitoring);
-            
-            // Convert to Project Time for accurate clip placement
-            // ProjectTime = ContextTime - _startTime
             const preciseProjectStart = audio.getProjectTime(contextRecStart);
             setRecordingStartTime(preciseProjectStart);
         } else {
-            // For MIDI, we just use current project time
             setRecordingStartTime(startTime);
         }
-
         showToast("Recording started", 'success');
         analytics.track('recording_started');
   }, [currentTime, project.clips, project.tracks, project.inputMonitoring, selectedTrackId, showToast]);
@@ -356,7 +369,7 @@ const AppContent: React.FC = () => {
         audio.stop(); 
         let blob: Blob | undefined;
         
-        if (audio['recorder']) { // Check via property since public getter not exposed, but methods are
+        if (audio['recorder']) { 
              blob = await audio.stopRecording();
         }
         
@@ -376,8 +389,6 @@ const AppContent: React.FC = () => {
                 
                 const latencySeconds = (project.recordingLatency || 0) / 1000;
                 const rawStart = recordingStartTime;
-                
-                // Fixed Latency Calculation
                 let finalStart = rawStart - latencySeconds;
                 let finalOffset = 0;
                 let finalDuration = buffer?.duration || 0;
@@ -414,15 +425,12 @@ const AppContent: React.FC = () => {
                 showToast(e.message || "Failed to save recording", 'error');
             }
         } else if (track?.type === 'instrument') {
-            // Process captured MIDI notes
             const notes = recordingNotesRef.current;
             if (notes.length > 0) {
-                // Determine clip bounds based on notes
                 const minTime = Math.min(...notes.map(n => n.start));
                 const maxTime = Math.max(...notes.map(n => n.start + n.duration));
                 const duration = maxTime - minTime;
                 
-                // Normalize note times relative to clip start
                 const relativeNotes = notes.map(n => ({
                     ...n,
                     start: n.start - minTime
@@ -435,13 +443,13 @@ const AppContent: React.FC = () => {
                     start: minTime,
                     offset: 0,
                     duration: duration,
-                    loopLength: duration, // Set loopLength to original duration
+                    loopLength: duration, 
                     notes: relativeNotes,
                     fadeIn: 0,
                     fadeOut: 0,
                     speed: 1,
                     gain: 1.0,
-                    bufferKey: '' // Required by type but unused for MIDI
+                    bufferKey: '' 
                 };
 
                 updateProject(prev => ({
@@ -455,16 +463,15 @@ const AppContent: React.FC = () => {
             }
         }
     } else {
-        // AUTO-ARM LOGIC
+        // Auto-Arm logic
         let trackIdToRecord = selectedTrackId;
-        
         if (!trackIdToRecord) {
             if (project.tracks.length > 0) {
                 trackIdToRecord = project.tracks[0].id;
                 setSelectedTrackId(trackIdToRecord);
                 showToast(`Armed Track: ${project.tracks[0].name}`, 'info');
             } else {
-                const newTrack = createTrack("Audio 1", "#ef4444");
+                const newTrack = createTrack('audio', 'Audio 1', '#ef4444');
                 updateProject(prev => ({ ...prev, tracks: [...prev.tracks, newTrack] }));
                 trackIdToRecord = newTrack.id;
                 setSelectedTrackId(newTrack.id);
@@ -497,7 +504,7 @@ const AppContent: React.FC = () => {
     const clipA: Clip = { ...clip, duration: splitOffset, fadeOut: 0.05 };
     const clipB: Clip = { ...clip, id: crypto.randomUUID(), start: time, offset: clip.offset + splitOffset, duration: clip.duration - splitOffset, name: `${clip.name} (cut)`, fadeIn: 0.05, speed: clip.speed || 1, gain: clip.gain || 1.0 };
 
-    // Midi Split (Advanced: Should filter notes)
+    // Midi Split
     if (clip.notes) {
         const notesA = clip.notes.filter(n => n.start < splitOffset);
         const notesB = clip.notes
@@ -510,8 +517,6 @@ const AppContent: React.FC = () => {
         clipA.notes = notesA;
         clipB.notes = notesB;
         clipB.offset = 0; 
-        
-        // When splitting, we typically stop looping or reset loop length to new duration
         clipA.loopLength = clipA.duration;
         clipB.loopLength = clipB.duration;
     }
@@ -572,7 +577,6 @@ const AppContent: React.FC = () => {
           clips: prev.clips.map(c => { 
               if (selectedClipIds.includes(c.id)) { 
                   const qStart = Math.round(c.start / grid) * grid; 
-                  
                   let notes = c.notes;
                   if (notes) {
                       notes = notes.map(n => ({
@@ -581,7 +585,6 @@ const AppContent: React.FC = () => {
                           duration: Math.max(grid, Math.round(n.duration / grid) * grid)
                       }));
                   }
-                  
                   return { ...c, start: qStart, notes }; 
               } 
               return c; 
@@ -596,7 +599,7 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     audio.syncTracks(project.tracks);
-    audio.syncInstruments(project.tanpura, project.tabla);
+    audio.syncInstruments(project.sequencer, project.drone);
     audio.setMasterVolume(project.masterVolume);
     if (project.masterCompressor) {
         audio.setMasterCompressor(project.masterCompressor.threshold, project.masterCompressor.ratio, project.masterCompressor.knee, project.masterCompressor.attack, project.masterCompressor.release);

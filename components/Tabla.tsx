@@ -1,8 +1,16 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { TablaState } from '../types';
 import Knob from './Knob';
 import { audio } from '../services/audio';
+
+// Local definition
+interface TablaState {
+  enabled: boolean;
+  volume: number;
+  taal: string;
+  bpm: number;
+  key: string;
+}
 
 interface TablaProps {
   config: TablaState;
@@ -16,14 +24,14 @@ const Tabla: React.FC<TablaProps> = ({ config, onChange }) => {
   const [currentBeat, setCurrentBeat] = useState<number>(-1);
   const rafRef = useRef<number>(0);
   
-  // Get pattern from audio engine (requires ensuring audio instance is accessible)
-  const pattern = audio.getTablaPattern(config.taal);
+  // Placeholder pattern as audio support removed
+  const pattern = ['Dha', 'Dhin', 'Dhin', 'Dha']; 
 
   useEffect(() => {
       const loop = () => {
           if (config.enabled && audio.isPlaying) {
-              // audio.currentTablaBeat is a cumulative counter, we need modulo for display
-              setCurrentBeat(audio.currentTablaBeat % pattern.length);
+              // audio.currentTablaBeat removed, simulating placeholder or 0
+              setCurrentBeat(0); 
           } else {
               setCurrentBeat(-1);
           }
@@ -31,12 +39,12 @@ const Tabla: React.FC<TablaProps> = ({ config, onChange }) => {
       };
       loop();
       return () => cancelAnimationFrame(rafRef.current);
-  }, [config.enabled, config.taal, pattern.length]);
+  }, [config.enabled, config.taal]);
 
   return (
-    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4">
+    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4 opacity-50 pointer-events-none grayscale">
         <div className="flex items-center justify-between border-b border-zinc-700 pb-2">
-            <h3 className="text-zinc-200 font-bold tracking-wide uppercase text-sm">Tabla Percussion</h3>
+            <h3 className="text-zinc-200 font-bold tracking-wide uppercase text-sm">Tabla (Legacy)</h3>
             <button 
                 onClick={() => onChange({ ...config, enabled: !config.enabled })}
                 className={`p-2 rounded-full transition-colors ${config.enabled ? 'bg-studio-accent text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-500'}`}

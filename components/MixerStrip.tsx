@@ -4,6 +4,7 @@ import { Track } from '../types';
 import CustomFader from './Fader';
 import LevelMeter from './LevelMeter';
 import TrackIcon from './TrackIcon';
+import { audio } from '../services/audio';
 
 interface MixerStripProps {
     track: Track;
@@ -51,9 +52,14 @@ const MixerStrip: React.FC<MixerStripProps> = memo(({ track, updateTrack, handle
                 <div className="h-full flex gap-1 z-10 py-2">
                     <CustomFader 
                         value={track.volume} 
-                        onChange={(v) => updateTrack(track.id, { volume: v })} 
-                        onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_volume', trackId: track.id, value: v })}
-                        height={300} // Flexible based on container
+                        // Update Audio Engine Directly (Fast)
+                        onChange={(v) => audio.setTrackVolume(track.id, v)} 
+                        // Update React State on Release (Persistence)
+                        onChangeEnd={(v) => {
+                            updateTrack(track.id, { volume: v });
+                            analytics.track('mixer_action', { action: 'set_volume', trackId: track.id, value: v });
+                        }}
+                        height={300} 
                         defaultValue={0.8}
                     />
                     <LevelMeter trackId={track.id} vertical={true} />
