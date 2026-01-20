@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { audio } from '../services/audio';
 import { ProjectState } from '../types';
 import { X, Mic, Speaker, Music, Settings, Info, FileText, Activity, AlertTriangle } from 'lucide-react';
@@ -17,12 +17,66 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
   const [selectedInput, setSelectedInput] = useState<string>('');
   const [selectedOutput, setSelectedOutput] = useState<string>('');
   const [metronomeVolume, setMetronomeVolume] = useState<number>(0.5);
+  
+  // Metering
+  const meterCanvasRef = useRef<HTMLCanvasElement>(null);
+  const meterRafRef = useRef<number>(0);
 
   useEffect(() => {
     loadDevices();
     setSelectedInput(audio.selectedInputDeviceId || '');
     // Need to initialize metronome volume if available from a store, for now default
+    
+    // Initialize input meter
+    startMetering();
+
+    return () => {
+        if (meterRafRef.current) cancelAnimationFrame(meterRafRef.current);
+        // Only close input if we aren't recording (simple check: if user changes settings mid-record, audio logic prevents conflict, 
+        // but for safety we only close if not playing/recording ideally. 
+        // Current implementation of audio.closeInput allows safe closing of monitor/stream)
+        audio.closeInput(); 
+    };
   }, []);
+
+  const startMetering = async () => {
+      // Initialize with current device to start stream for meter
+      try {
+          await audio.initInput(audio.selectedInputDeviceId);
+          
+          const draw = () => {
+              const level = audio.measureInputLevel(); // 0-1
+              const canvas = meterCanvasRef.current;
+              if (canvas) {
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                      const w = canvas.width;
+                      const h = canvas.height;
+                      ctx.clearRect(0, 0, w, h);
+                      
+                      // Background
+                      ctx.fillStyle = '#18181b';
+                      ctx.fillRect(0, 0, w, h);
+                      
+                      // Level Bar
+                      const fillW = w * Math.min(1, level * 5); // Boost visual
+                      
+                      // Color based on level
+                      let color = '#22c55e';
+                      if (fillW > w * 0.9) color = '#ef4444';
+                      else if (fillW > w * 0.7) color = '#eab308';
+                      
+                      ctx.fillStyle = color;
+                      ctx.fillRect(0, 0, fillW, h);
+                  }
+              }
+              meterRafRef.current = requestAnimationFrame(draw);
+          };
+          draw();
+      } catch (e) {
+          console.error("Failed to init metering", e);
+      }
+  };
 
   const loadDevices = async () => {
       // Trigger permission prompt if needed
@@ -37,10 +91,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
       setOutputs(outputs);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleInputChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
       const id = e.target.value;
       setSelectedInput(id);
       audio.selectedInputDeviceId = id;
+      // Re-init input to switch stream for metering
+      await audio.initInput(id);
   };
 
   const handleOutputChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -121,6 +177,12 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                                     <option key={d.deviceId} value={d.deviceId}>{d.label || `Microphone ${d.deviceId.slice(0,4)}`}</option>
                                 ))}
                             </select>
+                            
+                            {/* Input Meter */}
+                            <div className="mt-2 bg-zinc-950 rounded border border-zinc-800 p-1 flex items-center gap-2">
+                                <span className="text-[10px] text-zinc-500 font-bold uppercase w-8 text-center">Lvl</span>
+                                <canvas ref={meterCanvasRef} className="flex-1 h-3 rounded bg-zinc-900" width={200} height={12} />
+                            </div>
                         </div>
 
                         <div className="space-y-2">

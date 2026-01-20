@@ -1,15 +1,17 @@
+
 import React, { useState, useRef } from 'react';
 
 interface KnobProps {
   label: string;
   value: number; // 0 to 1
   onChange: (val: number) => void;
+  onChangeEnd?: (val: number) => void;
   min?: number;
   max?: number;
   defaultValue?: number;
 }
 
-const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1, defaultValue }) => {
+const Knob: React.FC<KnobProps> = ({ label, value, onChange, onChangeEnd, min = 0, max = 1, defaultValue }) => {
   const [isDragging, setIsDragging] = useState(false);
   const startY = useRef<number>(0);
   const startValue = useRef<number>(0);
@@ -37,11 +39,13 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1, d
   const handlePointerUp = (e: React.PointerEvent) => {
     setIsDragging(false);
     (e.target as Element).releasePointerCapture(e.pointerId);
+    if (onChangeEnd) onChangeEnd(value);
   };
 
   const handleDoubleClick = () => {
       if (defaultValue !== undefined) {
           onChange(defaultValue);
+          if (onChangeEnd) onChangeEnd(defaultValue);
       }
   };
 
@@ -62,8 +66,15 @@ const Knob: React.FC<KnobProps> = ({ label, value, onChange, min = 0, max = 1, d
         onKeyDown={(e) => {
              const range = max - min;
              const step = e.shiftKey ? range * 0.1 : range * 0.01;
-             if (e.key === 'ArrowUp' || e.key === 'ArrowRight') onChange(Math.min(max, value + step));
-             if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') onChange(Math.max(min, value - step));
+             let newValue = value;
+             if (e.key === 'ArrowUp' || e.key === 'ArrowRight') newValue = Math.min(max, value + step);
+             if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') newValue = Math.max(min, value - step);
+             
+             if (newValue !== value) {
+                 onChange(newValue);
+                 // For keyboard, we trigger end on key up technically, but immediate tracking is ok for now or use debounce in parent
+                 if (onChangeEnd) onChangeEnd(newValue);
+             }
         }}
       >
         {/* Inner metal texture effect */}

@@ -92,6 +92,7 @@ describe('Arranger Integration', () => {
         selectedClipIds={[]}
         onSelectClip={onSelectClip}
         onOpenInspector={() => {}}
+        commitTransaction={() => {}}
       />
     );
 
@@ -129,6 +130,7 @@ describe('Arranger Integration', () => {
             selectedClipIds={[]}
             onSelectClip={onSelectClip}
             onOpenInspector={() => {}}
+            commitTransaction={() => {}}
         />
       );
 
@@ -164,6 +166,7 @@ describe('Arranger Integration', () => {
             selectedClipIds={[]}
             onSelectClip={() => {}}
             onOpenInspector={() => {}}
+            commitTransaction={() => {}}
         />
       );
 

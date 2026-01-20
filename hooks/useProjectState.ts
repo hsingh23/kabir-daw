@@ -7,14 +7,21 @@ export const useProjectState = (initialProject: ProjectState) => {
   const [past, setPast] = useState<ProjectState[]>([]);
   const [future, setFuture] = useState<ProjectState[]>([]);
 
+  // Update without committing to history (for high-frequency events like drag)
   const updateProject = useCallback((value: React.SetStateAction<ProjectState>) => {
       setProject(current => {
           const next = typeof value === 'function' ? (value as (prev: ProjectState) => ProjectState)(current) : value;
-          if (next !== current) {
-              setPast(prev => [...prev.slice(-19), current]);
-              setFuture([]);
-          }
           return next;
+      });
+  }, []);
+
+  // Commit current state to history. 
+  // IMPORTANT: Call this AFTER an action is complete (e.g. onPointerUp)
+  const commitTransaction = useCallback(() => {
+      setProject(current => {
+          setPast(prev => [...prev.slice(-19), current]);
+          setFuture([]);
+          return current;
       });
   }, []);
 
@@ -43,5 +50,5 @@ export const useProjectState = (initialProject: ProjectState) => {
       setFuture([]);
   }, []);
 
-  return { project, setProject, updateProject, undo, redo, past, future, loadProject };
+  return { project, setProject: updateProject, updateProject, undo, redo, past, future, loadProject, commitTransaction };
 };

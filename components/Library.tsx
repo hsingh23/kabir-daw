@@ -1,14 +1,16 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { getAllAssetsMetadata, saveAudioBlob, saveAssetMetadata, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject, saveProject } from '../services/db';
-import { AssetMetadata } from '../types';
-import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Globe, Upload, Edit2, Check, X, Copy, GripHorizontal } from 'lucide-react';
+import { AssetMetadata, ProjectState } from '../types';
+import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Globe, Upload, Edit2, Check, X, Copy, GripHorizontal, LayoutTemplate } from 'lucide-react';
 import { audio } from '../services/audio';
 import { useToast } from './Toast';
+import { TEMPLATES } from '../services/templates';
+import { analytics } from '../services/analytics';
 
 interface LibraryProps {
   onLoadProject?: (id: string) => void;
-  onCreateNewProject?: () => void;
+  onCreateNewProject?: (template?: Partial<ProjectState>) => void;
   onAddAsset?: (asset: AssetMetadata) => void;
   currentProjectId?: string;
   variant?: 'full' | 'sidebar';
@@ -18,6 +20,16 @@ const INSTRUMENTS = ['Drums', 'Bass', 'Guitar', 'Keys', 'Synth', 'Vocals', 'FX',
 const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const TYPES = ['loop', 'oneshot', 'stem', 'song'];
 
+const AssetSkeleton = () => (
+    <div className="flex items-center gap-3 p-2 border border-zinc-800/50 rounded-md animate-pulse">
+        <div className="w-8 h-8 rounded bg-zinc-800 shrink-0" />
+        <div className="flex-1 space-y-2">
+            <div className="h-3 bg-zinc-800 rounded w-3/4" />
+            <div className="h-2 bg-zinc-800 rounded w-1/2" />
+        </div>
+    </div>
+);
+
 const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, onAddAsset, currentProjectId, variant = 'full' }) => {
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'projects' | 'assets'>('assets');
@@ -25,6 +37,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
   // Projects State
   const [projects, setProjects] = useState<any[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
 
   // Assets State
   const [assets, setAssets] = useState<AssetMetadata[]>([]);
@@ -122,6 +135,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
           
           if (newIds.length > 0) {
               showToast(`Imported ${newIds.length} file(s)`, 'success');
+              analytics.track('library_import', { count: newIds.length, method: 'file_upload' });
           }
 
           if (newIds.length > 1) {
@@ -184,6 +198,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
           setShowUrlInput(false);
           await loadAssets();
           showToast("Import successful", 'success');
+          analytics.track('library_import', { method: 'url' });
       } catch (err) {
           showToast('Failed to import from URL.', 'error');
           console.error(err);
@@ -271,6 +286,15 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
       return matchSearch && matchInst && matchType;
   });
 
+  const handleCreateFromTemplate = (templateKey: string) => {
+      if (onCreateNewProject) {
+          onCreateNewProject(TEMPLATES[templateKey]);
+          setShowTemplateModal(false);
+          loadProjects();
+          analytics.track('project_created', { template: templateKey });
+      }
+  };
+
   return (
     <div className="flex flex-col h-full bg-studio-bg text-white overflow-hidden relative">
         {/* Header Tabs - Only show if full variant */}
@@ -309,7 +333,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
             <div className="flex-1 overflow-y-auto p-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
                      <button 
-                        onClick={() => { if(onCreateNewProject) onCreateNewProject(); loadProjects(); }}
+                        onClick={() => setShowTemplateModal(true)}
                         className="bg-zinc-800/30 border border-zinc-700 border-dashed rounded-lg p-6 flex flex-col items-center justify-center space-y-2 hover:bg-zinc-800/50 hover:border-zinc-500 transition-all group min-h-[140px]"
                      >
                         <div className="p-3 rounded-full bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
@@ -319,7 +343,18 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                      </button>
 
                      {loadingProjects ? (
-                         <div className="col-span-full flex justify-center py-10 text-zinc-500">Loading projects...</div>
+                         // Skeleton for projects
+                         Array.from({length: 4}).map((_, i) => (
+                             <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 flex flex-col justify-between h-[140px] animate-pulse">
+                                <div className="flex gap-3">
+                                    <div className="w-10 h-10 bg-zinc-800 rounded" />
+                                    <div className="flex-1 space-y-2">
+                                        <div className="h-4 bg-zinc-800 w-3/4 rounded" />
+                                        <div className="h-3 bg-zinc-800 w-1/2 rounded" />
+                                    </div>
+                                </div>
+                             </div>
+                         ))
                      ) : projects.length === 0 ? null : (
                          projects.map(proj => (
                             <div key={proj.id} className={`bg-zinc-800/50 border rounded-lg p-4 flex flex-col justify-between group hover:bg-zinc-800 transition-colors ${currentProjectId === proj.id ? 'border-studio-accent/50 ring-1 ring-studio-accent/20' : 'border-zinc-700'}`}>
@@ -338,7 +373,12 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                 
                                 <div className="flex items-center space-x-2 pt-2 border-t border-zinc-700/50">
                                     <button 
-                                        onClick={() => onLoadProject && onLoadProject(proj.id)}
+                                        onClick={() => {
+                                            if (onLoadProject) {
+                                                onLoadProject(proj.id);
+                                                analytics.track('project_loaded', { projectId: proj.id });
+                                            }
+                                        }}
                                         disabled={currentProjectId === proj.id}
                                         className={`flex-1 py-1.5 rounded text-xs font-bold transition-colors ${currentProjectId === proj.id ? 'bg-zinc-700/50 text-zinc-500 cursor-default' : 'bg-studio-accent text-white hover:bg-red-600'}`}
                                     >
@@ -362,6 +402,52 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                             </div>
                          ))
                      )}
+                </div>
+            </div>
+        )}
+
+        {/* Template Modal */}
+        {showTemplateModal && (
+            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+                    <div className="px-6 py-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-800/50">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <LayoutTemplate size={20} className="text-studio-accent" /> Select Template
+                        </h3>
+                        <button onClick={() => setShowTemplateModal(false)} className="text-zinc-500 hover:text-white"><X size={20} /></button>
+                    </div>
+                    
+                    <div className="p-6 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {Object.entries(TEMPLATES).map(([key, template]) => (
+                            <button 
+                                key={key}
+                                onClick={() => handleCreateFromTemplate(key)}
+                                className="flex flex-col items-start p-4 rounded-xl bg-zinc-800/50 border border-zinc-700 hover:border-studio-accent hover:bg-zinc-800 transition-all text-left group"
+                            >
+                                <div className="w-full flex justify-between items-start mb-2">
+                                    <span className="font-bold text-white text-base group-hover:text-studio-accent transition-colors">{template.name}</span>
+                                    {template.tracks && template.tracks.length > 0 ? (
+                                        <span className="text-[10px] bg-zinc-700 px-2 py-0.5 rounded-full text-zinc-300">{template.tracks.length} Tracks</span>
+                                    ) : (
+                                        <span className="text-[10px] bg-zinc-700 px-2 py-0.5 rounded-full text-zinc-300">Empty</span>
+                                    )}
+                                </div>
+                                <p className="text-xs text-zinc-500 mb-3">
+                                    {template.bpm} BPM
+                                </p>
+                                <div className="flex flex-wrap gap-1 mt-auto">
+                                    {template.tracks?.slice(0, 4).map((t, i) => (
+                                        <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400">
+                                            {t.name}
+                                        </span>
+                                    ))}
+                                    {template.tracks && template.tracks.length > 4 && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-500">+{template.tracks.length - 4}</span>
+                                    )}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
         )}
@@ -434,7 +520,9 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
 
                 <div className="flex-1 overflow-y-auto p-2 pb-24">
                     {loadingAssets ? (
-                        <div className="flex justify-center py-10 text-zinc-500 text-xs">Loading library...</div>
+                        <div className="space-y-1">
+                            {Array.from({length: 8}).map((_, i) => <AssetSkeleton key={i} />)}
+                        </div>
                     ) : filteredAssets.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-12 text-zinc-600 space-y-2">
                             <AlertCircle size={32} />
@@ -453,6 +541,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                         e.dataTransfer.effectAllowed = 'copy';
                                         // Visual feedback styling
                                         e.currentTarget.classList.add('opacity-50');
+                                        analytics.track('clip_action', { action: 'drag_start', assetId: asset.id });
                                     }}
                                     onDragEnd={(e) => {
                                         e.currentTarget.classList.remove('opacity-50');
@@ -485,7 +574,10 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                     <div className="flex items-center gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                                         {onAddAsset && (
                                             <button 
-                                                onClick={() => onAddAsset(asset)}
+                                                onClick={() => {
+                                                    onAddAsset(asset);
+                                                    analytics.track('clip_action', { action: 'add_from_library', assetId: asset.id });
+                                                }}
                                                 className="p-1.5 rounded hover:bg-green-900/30 text-zinc-500 hover:text-green-400"
                                                 title="Add to Project"
                                             >

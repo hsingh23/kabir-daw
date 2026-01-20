@@ -20,6 +20,7 @@ interface UseKeyboardShortcutsProps {
     handleSplit: (clipId: string, time: number) => void;
     onSplitAtPlayhead: () => void;
     setShowShortcuts: (show: boolean) => void;
+    onSeek: (time: number) => void;
 }
 
 export const useKeyboardShortcuts = ({
@@ -39,7 +40,8 @@ export const useKeyboardShortcuts = ({
     clipboard,
     handleSplit,
     onSplitAtPlayhead,
-    setShowShortcuts
+    setShowShortcuts,
+    onSeek
 }: UseKeyboardShortcutsProps) => {
 
     useEffect(() => {
@@ -75,6 +77,24 @@ export const useKeyboardShortcuts = ({
             // Loop Toggle (L)
             if (e.key === 'l') {
                 setProject(prev => ({ ...prev, isLooping: !prev.isLooping }));
+                return;
+            }
+
+            // Set Loop to Selection (P)
+            if (e.key === 'p') {
+                if (selectedClipIds.length > 0) {
+                    const clips = project.clips.filter(c => selectedClipIds.includes(c.id));
+                    if (clips.length > 0) {
+                        const start = Math.min(...clips.map(c => c.start));
+                        const end = Math.max(...clips.map(c => c.start + c.duration));
+                        setProject(prev => ({ 
+                            ...prev, 
+                            loopStart: start, 
+                            loopEnd: end,
+                            isLooping: true 
+                        }));
+                    }
+                }
                 return;
             }
   
@@ -226,8 +246,13 @@ export const useKeyboardShortcuts = ({
                   setSelectedClipIds([]);
               }
             }
+
+            if (e.key === 'Home') {
+                e.preventDefault();
+                onSeek(0);
+            }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, setProject, clipboard, currentTime, selectedTrackId, handleSplit, onSplitAtPlayhead, setSelectedClipIds, setSelectedTrackId, setClipboard, setShowShortcuts]); 
+    }, [project, isRecording, togglePlay, undo, redo, selectedClipIds, handleRecordToggle, setProject, clipboard, currentTime, selectedTrackId, handleSplit, onSplitAtPlayhead, setSelectedClipIds, setSelectedTrackId, setClipboard, setShowShortcuts, onSeek]); 
 }

@@ -1,14 +1,16 @@
+
 import React from 'react';
 
 interface FaderProps {
   value: number; // 0 to 1
   onChange: (val: number) => void;
+  onChangeEnd?: (val: number) => void;
   height?: number;
   defaultValue?: number;
 }
 
 // Re-implementing Fader with Pointer Events for true vertical behavior across all devices
-const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defaultValue }) => {
+const CustomFader: React.FC<FaderProps> = ({ value, onChange, onChangeEnd, height = 200, defaultValue }) => {
     const trackRef = React.useRef<HTMLDivElement>(null);
 
     const handlePointerMove = (e: React.PointerEvent) => {
@@ -24,6 +26,7 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defa
     const handleDoubleClick = () => {
         if (defaultValue !== undefined) {
             onChange(defaultValue);
+            if (onChangeEnd) onChangeEnd(defaultValue);
         }
     };
 
@@ -44,12 +47,21 @@ const CustomFader: React.FC<FaderProps> = ({ value, onChange, height = 200, defa
             onPointerMove={(e) => {
                 if (e.buttons === 1) handlePointerMove(e);
             }}
-            onPointerUp={(e) => (e.target as Element).releasePointerCapture(e.pointerId)}
+            onPointerUp={(e) => {
+                (e.target as Element).releasePointerCapture(e.pointerId);
+                if (onChangeEnd) onChangeEnd(value);
+            }}
             onDoubleClick={handleDoubleClick}
             onKeyDown={(e) => {
                 const step = e.shiftKey ? 0.1 : 0.01;
-                if (e.key === 'ArrowUp') onChange(Math.min(1, value + step));
-                if (e.key === 'ArrowDown') onChange(Math.max(0, value - step));
+                let newValue = value;
+                if (e.key === 'ArrowUp') newValue = Math.min(1, value + step);
+                if (e.key === 'ArrowDown') newValue = Math.max(0, value - step);
+                
+                if (newValue !== value) {
+                    onChange(newValue);
+                    if (onChangeEnd) onChangeEnd(newValue);
+                }
             }}
         >
              {/* Rail */}

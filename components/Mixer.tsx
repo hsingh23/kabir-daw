@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { ProjectState } from '../types';
+import { ProjectState, Track } from '../types';
 import CustomFader from './Fader';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
 import SpectrumAnalyzer from './SpectrumAnalyzer';
-import { Play, Pause, Square, Circle, Sliders, Music2, Activity } from 'lucide-react';
+import { Play, Pause, Square, Circle, Sliders, Music2, Activity, Plus } from 'lucide-react';
+import { analytics } from '../services/analytics';
 
 interface MixerProps {
   project: ProjectState;
@@ -17,6 +18,10 @@ interface MixerProps {
   onRecord: () => void;
   onOpenMaster: () => void;
 }
+
+const CLIP_COLORS = [
+    '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#06b6d4', '#ec4899', '#71717a'
+];
 
 const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPause, onStop, onRecord, onOpenMaster }) => {
   // Initialize tab from URL or default to 'tracks'
@@ -47,7 +52,21 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
       const newName = prompt('Rename Track', currentName);
       if (newName) {
           updateTrack(trackId, { name: newName });
+          analytics.track('mixer_action', { action: 'rename_track', trackId });
       }
+  };
+
+  const handleAddTrack = () => {
+      const newTrack: Track = {
+          id: crypto.randomUUID(),
+          name: `Track ${project.tracks.length + 1}`,
+          volume: 0.8, pan: 0, muted: false, solo: false, color: CLIP_COLORS[project.tracks.length % CLIP_COLORS.length],
+          eq: { low: 0, mid: 0, high: 0 },
+          compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
+          sends: { reverb: 0, delay: 0, chorus: 0 }
+      };
+      setProject(prev => ({...prev, tracks: [...prev.tracks, newTrack]}));
+      analytics.track('mixer_action', { action: 'add_track' });
   };
 
   return (
@@ -130,11 +149,17 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                         {/* Mute/Solo Buttons */}
                         <div className="flex space-x-1">
                             <button 
-                                onClick={() => updateTrack(track.id, { muted: !track.muted })}
+                                onClick={() => {
+                                    updateTrack(track.id, { muted: !track.muted });
+                                    analytics.track('mixer_action', { action: 'toggle_mute', trackId: track.id, value: !track.muted });
+                                }}
                                 className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${track.muted ? 'bg-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                             >M</button>
                             <button 
-                                onClick={() => updateTrack(track.id, { solo: !track.solo })}
+                                onClick={() => {
+                                    updateTrack(track.id, { solo: !track.solo });
+                                    analytics.track('mixer_action', { action: 'toggle_solo', trackId: track.id, value: !track.solo });
+                                }}
                                 className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${track.solo ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                             >S</button>
                         </div>
@@ -143,6 +168,7 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                             <CustomFader 
                                 value={track.volume} 
                                 onChange={(v) => updateTrack(track.id, { volume: v })} 
+                                onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_volume', trackId: track.id, value: v })}
                                 height={200}
                                 defaultValue={0.8}
                             />
@@ -154,6 +180,15 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                         </div>
                     </div>
                 ))}
+
+                {/* Add Track Button */}
+                <button 
+                    onClick={handleAddTrack}
+                    className="flex flex-col items-center justify-center space-y-3 p-2 h-[280px] w-12 bg-zinc-900/30 rounded-lg border border-zinc-800/50 hover:bg-zinc-800 transition-colors text-zinc-600 hover:text-white"
+                    title="Add Track"
+                >
+                    <Plus size={24} />
+                </button>
 
                 <div className="w-px h-[280px] bg-zinc-800 mx-2" />
 
@@ -172,6 +207,7 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                         <CustomFader 
                             value={project.masterVolume} 
                             onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
+                            onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_master_volume', value: v })}
                             height={200}
                             defaultValue={1.0}
                         />

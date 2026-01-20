@@ -9,9 +9,10 @@ interface WaveformProps {
   duration?: number; // Duration to render (seconds)
   fadeIn?: number; // Fade in time (seconds)
   fadeOut?: number; // Fade out time (seconds)
+  gain?: number; // Clip gain for visual scaling
 }
 
-const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, duration, fadeIn = 0, fadeOut = 0 }) => {
+const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, duration, fadeIn = 0, fadeOut = 0, gain = 1.0 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const resizeTimeoutRef = useRef<number>(0);
@@ -23,8 +24,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
       if (!canvas || !container) return;
       
       const buffer = audio.buffers.get(bufferKey);
-      if (!buffer) return;
-
       const rect = container.getBoundingClientRect();
       if (rect.width === 0) return;
 
@@ -40,6 +39,35 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.scale(dpr, dpr);
       }
 
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      // --- ERROR STATE: Missing Buffer ---
+      if (!buffer) {
+          // Draw "Missing Media" Pattern (Diagonal Stripes)
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'; // Red-500 low opacity
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          const spacing = 10;
+          for (let x = -rect.height; x < rect.width; x += spacing) {
+              ctx.moveTo(x, 0);
+              ctx.lineTo(x + rect.height, rect.height);
+          }
+          ctx.stroke();
+          
+          // Error Border
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(0, 0, rect.width, rect.height);
+          
+          // Optional text label if wide enough
+          if (rect.width > 50) {
+              ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+              ctx.font = 'bold 10px sans-serif';
+              ctx.fillText('FILE ERROR', 4, rect.height - 4);
+          }
+          return;
+      }
+
       const bufferDuration = buffer.duration;
       const renderDuration = duration || bufferDuration;
       
@@ -50,8 +78,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
 
       // Clamp offset
       const startOffset = Math.max(0, Math.min(offset, bufferDuration));
-      
-      ctx.clearRect(0, 0, rect.width, rect.height);
       
       // Fill Style
       ctx.fillStyle = color;
@@ -83,19 +109,18 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
       if (sampleCount <= 0) return;
 
       // Draw Loop
-      // We iterate pixels (x) and find the max value in the corresponding time slice of data
       const step = sampleCount / rect.width;
 
       for (let i = 0; i < rect.width; i++) {
         // Fade Logic
         const timeInClip = (i / rect.width) * renderDuration;
-        let gain = 1.0;
+        let fadeGain = 1.0;
         if (timeInClip < fadeIn) {
-            gain = timeInClip / fadeIn;
+            fadeGain = timeInClip / fadeIn;
         } else if (timeInClip > renderDuration - fadeOut) {
-            gain = (renderDuration - timeInClip) / fadeOut;
+            fadeGain = (renderDuration - timeInClip) / fadeOut;
         }
-        gain = Math.max(0, Math.min(1, gain));
+        const effectiveGain = Math.max(0, Math.min(1, fadeGain)) * gain;
 
         const dataIdx = Math.floor(startIndex + (i * step));
         const nextDataIdx = Math.floor(startIndex + ((i + 1) * step));
@@ -103,7 +128,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
         
         // Find max in the bin
         const bound = Math.min(endIndex, nextDataIdx);
-        // optimization: if step is huge, don't iterate all, just take stride
         const stride = Math.max(1, Math.floor((bound - dataIdx) / 10));
 
         for (let j = dataIdx; j < bound; j+=stride) {
@@ -111,13 +135,11 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
             if (val > max) max = val;
         }
         
-        // If step < 1 (zoomed in extremely), we might miss data if we just floor.
-        // But for visualization, picking nearest neighbor or max is fine.
         if (bound <= dataIdx) {
              max = Math.abs(dataSource[dataIdx] || 0);
         }
 
-        const drawnHeight = max * amp * 0.95 * gain;
+        const drawnHeight = max * amp * 0.95 * effectiveGain;
         const yTop = mid - drawnHeight;
         
         if (i === 0) ctx.moveTo(i, yTop);
@@ -127,10 +149,10 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
       // Draw bottom half mirrored
       for (let i = rect.width - 1; i >= 0; i--) {
         const timeInClip = (i / rect.width) * renderDuration;
-        let gain = 1.0;
-        if (timeInClip < fadeIn) gain = timeInClip / fadeIn;
-        else if (timeInClip > renderDuration - fadeOut) gain = (renderDuration - timeInClip) / fadeOut;
-        gain = Math.max(0, Math.min(1, gain));
+        let fadeGain = 1.0;
+        if (timeInClip < fadeIn) fadeGain = timeInClip / fadeIn;
+        else if (timeInClip > renderDuration - fadeOut) fadeGain = (renderDuration - timeInClip) / fadeOut;
+        const effectiveGain = Math.max(0, Math.min(1, fadeGain)) * gain;
 
         const dataIdx = Math.floor(startIndex + (i * step));
         const nextDataIdx = Math.floor(startIndex + ((i + 1) * step));
@@ -146,7 +168,7 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
              max = Math.abs(dataSource[dataIdx] || 0);
         }
 
-        const drawnHeight = max * amp * 0.95 * gain;
+        const drawnHeight = max * amp * 0.95 * effectiveGain;
         ctx.lineTo(i, mid + drawnHeight);
       }
 
@@ -157,7 +179,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
     draw();
     
     const resizeObserver = new ResizeObserver(() => {
-        // Debounce resize
         if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
         resizeTimeoutRef.current = window.setTimeout(draw, 100);
     });
@@ -170,7 +191,7 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
         resizeObserver.disconnect();
         if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
     };
-  }, [bufferKey, color, offset, duration, fadeIn, fadeOut]);
+  }, [bufferKey, color, offset, duration, fadeIn, fadeOut, gain]);
 
   return (
       <div ref={containerRef} className="w-full h-full pointer-events-none">

@@ -63,7 +63,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-12 bg-studio-panel z-[100] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
+    <div className="fixed inset-x-0 bottom-0 top-14 bg-studio-panel z-[150] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
       
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-zinc-700 bg-zinc-800">
@@ -80,12 +80,12 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                  <p className="text-xs text-zinc-400 uppercase tracking-widest">Channel Strip</p>
              </div>
         </div>
-        <button onClick={onClose} className="p-2 rounded-full bg-zinc-700 hover:bg-zinc-600">
+        <button onClick={onClose} className="p-2 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-colors">
             <X size={20} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-20">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 pb-20">
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Color Picker */}
@@ -271,7 +271,7 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
           </div>
 
           {/* Actions */}
-          <div className="pt-8 border-t border-zinc-700 grid grid-cols-2 gap-4">
+          <div className="pt-8 border-t border-zinc-700 grid grid-cols-2 gap-4 pb-12">
               {onDuplicateTrack && (
                   <button 
                       onClick={() => onDuplicateTrack(track.id)}
