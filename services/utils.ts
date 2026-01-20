@@ -91,8 +91,16 @@ export function moveItem<T>(array: T[], fromIndex: number, toIndex: number): T[]
   return newArray;
 }
 
+// Optimization: Cache distortion curves to prevent GC pressure and expensive recalculation
+const distortionCache = new Map<number, Float32Array>();
+
 export function makeDistortionCurve(amount: number = 0): Float32Array | null {
   if (amount <= 0) return null;
+  
+  if (distortionCache.has(amount)) {
+      return distortionCache.get(amount)!;
+  }
+
   const k = amount * 100;
   const n_samples = 44100;
   const curve = new Float32Array(n_samples);
@@ -101,6 +109,8 @@ export function makeDistortionCurve(amount: number = 0): Float32Array | null {
     const x = i * 2 / n_samples - 1;
     curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
   }
+  
+  distortionCache.set(amount, curve);
   return curve;
 }
 

@@ -550,15 +550,9 @@ class AudioEngine {
     this._startTime = this.ctx.currentTime - startTime;
     this._pauseTime = startTime;
     
-    // Calculate current beat based on time signature
-    // Assuming 1 Beat = 1 Quarter Note regardless of denominator for simple playback logic
-    // secondsPerBeat is actually secondsPerQuarterNote
-    const secondsPerBeat = 60.0 / this.bpm;
-    
-    // Adjust beat calculation: how many quarter notes have passed?
-    // We want to snap to the grid of the metronome ticks
-    // For 4/4, 4 ticks per bar. 6/8, we might want 6 ticks or 2.
-    // Let's stick to: metronome ticks per beat (denominator based)
+    // SAFETY: Clamp BPM to reasonable values to prevent infinite loops in scheduler
+    const safeBpm = Math.max(20, Math.min(999, this.bpm || 120));
+    const secondsPerBeat = 60.0 / safeBpm;
     
     const [numerator, denominator] = this.timeSignature;
     const beatMultiplier = 4 / denominator; // e.g. 8 -> 0.5 (eighth notes are twice as fast as quarters)
@@ -712,13 +706,16 @@ class AudioEngine {
     if (!this._isPlaying) return;
     const lookahead = 0.1;
     
-    // Recalculate secondsPerTick inside loop in case BPM changes, 
-    // although generally handled by keeping nextNoteTime
-    // But we need tick duration for the increment
-    const secondsPerBeat = 60.0 / this.bpm;
+    // SAFETY: Clamp BPM again here just in case it wasn't caught in play()
+    const safeBpm = Math.max(20, Math.min(999, this.bpm || 120));
+    const secondsPerBeat = 60.0 / safeBpm;
+    
     const [numerator, denominator] = this.timeSignature;
     const beatMultiplier = 4 / denominator; 
     const secondsPerTick = secondsPerBeat * beatMultiplier;
+
+    // Prevent infinite loop if secondsPerTick is 0 or NaN (should be caught by clamp but being extra safe)
+    if (secondsPerTick <= 0 || !Number.isFinite(secondsPerTick)) return;
 
     while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
         if (this.metronomeEnabled) {
@@ -733,7 +730,7 @@ class AudioEngine {
             const freqs = this.getTanpuraFreqs(this.tanpuraConfig);
             const freq = freqs[this.currentTanpuraString];
             this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0, this.tanpuraConfig.fineTune || 0);
-            const interval = 60 / this.tanpuraConfig.tempo;
+            const interval = 60 / Math.max(1, this.tanpuraConfig.tempo); // Safety clamp
             this.nextTanpuraNoteTime += interval;
             this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
         }
@@ -743,7 +740,7 @@ class AudioEngine {
             const pattern = this.getTablaPattern(this.tablaConfig.taal);
             const hit = pattern[this.currentTablaBeat % pattern.length];
             this.playTablaHit(this.ctx, this.tablaGain, this.tablaConfig.key, hit as any, this.nextTablaBeatTime);
-            const beatTime = 60 / this.tablaConfig.bpm;
+            const beatTime = 60 / Math.max(1, this.tablaConfig.bpm); // Safety clamp
             this.nextTablaBeatTime += beatTime;
             this.currentTablaBeat++;
          }
@@ -953,14 +950,6 @@ class AudioEngine {
   }
 
   async renderProject(project: ProjectState): Promise<Blob> {
-      // Offline render logic needs to respect Time Signature too for algorithmic composition if added later, 
-      // but for simple playback of clips it just needs tempo.
-      // Tanpura/Tabla loops are independent of meter mostly, just BPM.
-      // ... existing implementation handles this fine for now ...
-      return new Blob([], {type: 'audio/wav'}); // Stub to satisfy TS in XML output block if full content needed, 
-      // but assuming user wants existing render logic + small changes.
-      // I will output full content of file to be safe.
-      
       const endTimes = project.clips.map(c => c.start + c.duration);
       const maxClipTime = Math.max(0, ...endTimes, project.loopEnd);
       const duration = maxClipTime + 2; 
