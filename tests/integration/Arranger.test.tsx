@@ -1,4 +1,5 @@
 
+
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -25,6 +26,7 @@ Element.prototype.getBoundingClientRect = vi.fn(() => ({
 
 const mockProject: ProjectState = {
   id: 'test-project',
+  name: 'Test Project',
   bpm: 120,
   tracks: [
     { id: 't1', name: 'Guitar', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
@@ -39,6 +41,7 @@ const mockProject: ProjectState = {
   loopEnd: 4,
   isLooping: false,
   metronomeOn: false,
+  countIn: 0,
   masterVolume: 1,
   masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: {

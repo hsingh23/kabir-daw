@@ -1,0 +1,92 @@
+
+
+import { render, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import ExportDialog from '../../components/ExportDialog';
+import { ProjectState } from '../../types';
+
+describe('ExportDialog Component', () => {
+  const mockProject: ProjectState = {
+      id: 'p1',
+      name: 'Test Project',
+      bpm: 120,
+      tracks: [
+          { id: 't1', name: 'Track 1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }
+      ],
+      clips: [],
+      markers: [],
+      loopStart: 0,
+      loopEnd: 4,
+      isLooping: false,
+      metronomeOn: false,
+      countIn: 0,
+      masterVolume: 1,
+      masterEq: {low:0,mid:0,high:0},
+      masterCompressor: {threshold:-20,ratio:4},
+      effects: {reverb:0,delay:0,chorus:0},
+      tanpura: {enabled:false,volume:0,key:'C',tuning:'Pa',tempo:60},
+      tabla: {enabled:false,volume:0,taal:'TeenTaal',bpm:100,key:'C'}
+  };
+
+  it('renders correctly', () => {
+    const { getByText } = render(
+        <ExportDialog 
+            onClose={() => {}} 
+            onExport={() => {}} 
+            isExporting={false} 
+            project={mockProject} 
+        />
+    );
+    expect(getByText('Export Project')).toBeInTheDocument();
+    expect(getByText('Master Mix')).toBeInTheDocument();
+    expect(getByText('Track Stems')).toBeInTheDocument();
+  });
+
+  it('calls export with master option by default', () => {
+      const onExport = vi.fn();
+      const { getByText } = render(
+        <ExportDialog 
+            onClose={() => {}} 
+            onExport={onExport} 
+            isExporting={false} 
+            project={mockProject} 
+        />
+      );
+
+      fireEvent.click(getByText('Export Audio'));
+      expect(onExport).toHaveBeenCalledWith({ type: 'master' });
+  });
+
+  it('calls export with stems option when selected', () => {
+      const onExport = vi.fn();
+      const { getByText } = render(
+        <ExportDialog 
+            onClose={() => {}} 
+            onExport={onExport} 
+            isExporting={false} 
+            project={mockProject} 
+        />
+      );
+
+      // Select Stems option (clicking the button text container)
+      fireEvent.click(getByText('Track Stems'));
+      
+      fireEvent.click(getByText('Export Audio'));
+      expect(onExport).toHaveBeenCalledWith({ type: 'stems' });
+  });
+
+  it('disables buttons when exporting', () => {
+      const { getByText } = render(
+        <ExportDialog 
+            onClose={() => {}} 
+            onExport={() => {}} 
+            isExporting={true} 
+            project={mockProject} 
+        />
+      );
+
+      expect(getByText('Rendering...')).toBeInTheDocument();
+      expect(getByText('Rendering...')).toBeDisabled();
+      expect(getByText('Cancel')).toBeDisabled();
+  });
+});

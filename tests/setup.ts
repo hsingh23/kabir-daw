@@ -18,6 +18,7 @@ class AudioContextMock {
   get currentTime() { return 0; }
   get sampleRate() { return 44100; }
   get state() { return 'suspended'; }
+  setSinkId(id: string) { return Promise.resolve(); }
 }
 
 class OfflineAudioContextMock extends AudioContextMock {

@@ -8,9 +8,11 @@ export interface Clip {
   duration: number; // Duration of the clip
   bufferKey: string; // IDB key for the audio buffer
   color?: string;
+  muted?: boolean; // Whether the clip is muted
   fadeIn: number; // Duration of fade in seconds
   fadeOut: number; // Duration of fade out seconds
   speed?: number; // Playback speed (1.0 is normal)
+  gain?: number; // Volume gain (1.0 is nominal)
 }
 
 export interface Track {
@@ -61,6 +63,7 @@ export interface TanpuraState {
   key: string; // "C", "C#", etc.
   tuning: 'Pa' | 'Ma' | 'Ni'; // First string tuning relative to Sa
   tempo: number;
+  fineTune?: number; // Detune in cents (+/- 100)
 }
 
 export interface TablaState {
@@ -80,6 +83,7 @@ export interface Marker {
 
 export interface ProjectState {
   id: string;
+  name: string;
   bpm: number;
   tracks: Track[];
   clips: Clip[];
@@ -88,6 +92,8 @@ export interface ProjectState {
   loopEnd: number;
   isLooping: boolean;
   metronomeOn: boolean;
+  metronomeSound?: 'beep' | 'click' | 'hihat';
+  countIn: number; // 0, 1, 2, 4 bars
   masterVolume: number;
   masterEq: {
       low: number; // -12 to 12 dB
@@ -97,6 +103,9 @@ export interface ProjectState {
   masterCompressor: {
       threshold: number; // -60 to 0 dB
       ratio: number; // 1 to 20
+      knee?: number; // 0 to 40
+      attack?: number; // 0 to 1
+      release?: number; // 0 to 1
   };
   effects: {
     reverb: number; // 0-1

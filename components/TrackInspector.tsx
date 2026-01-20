@@ -3,14 +3,28 @@ import React from 'react';
 import { Track } from '../types';
 import Knob from './Knob';
 import CustomFader from './Fader';
-import { X, Mic, Music, Drum, Guitar, Keyboard, Trash2, Zap } from 'lucide-react';
+import VisualEQ from './VisualEQ';
+import { X, Mic, Music, Drum, Guitar, Keyboard, Trash2, Zap, Palette, Copy } from 'lucide-react';
 
 interface TrackInspectorProps {
   track: Track;
   updateTrack: (id: string, updates: Partial<Track>) => void;
   onDeleteTrack?: (id: string) => void;
+  onDuplicateTrack?: (id: string) => void;
   onClose: () => void;
 }
+
+const TRACK_COLORS = [
+    '#ef4444', // Red
+    '#f97316', // Orange
+    '#eab308', // Yellow
+    '#22c55e', // Green
+    '#06b6d4', // Cyan
+    '#3b82f6', // Blue
+    '#a855f7', // Purple
+    '#ec4899', // Pink
+    '#71717a', // Zinc
+];
 
 const TrackIcon = ({ name, color, size = 24 }: { name: string, color: string, size?: number }) => {
     const n = name.toLowerCase();
@@ -21,7 +35,7 @@ const TrackIcon = ({ name, color, size = 24 }: { name: string, color: string, si
     return <Music size={size} style={{ color }} />;
 };
 
-const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onDeleteTrack, onClose }) => {
+const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onDeleteTrack, onDuplicateTrack, onClose }) => {
   
   const updateEQ = (band: 'low' | 'mid' | 'high', value: number) => {
       updateTrack(track.id, {
@@ -66,7 +80,11 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                 <TrackIcon name={track.name} color={track.color} />
              </div>
              <div>
-                 <h2 className="text-lg font-bold text-white">{track.name}</h2>
+                 <input 
+                    value={track.name}
+                    onChange={(e) => updateTrack(track.id, { name: e.target.value })}
+                    className="bg-transparent text-lg font-bold text-white outline-none w-full placeholder-zinc-500 focus:text-studio-accent"
+                 />
                  <p className="text-xs text-zinc-400 uppercase tracking-widest">Channel Strip</p>
              </div>
         </div>
@@ -77,19 +95,50 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-20">
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* EQ Section */}
+          {/* Color Picker */}
+          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                <h3 className="text-xs font-bold text-zinc-500 uppercase mb-3 tracking-wider flex items-center">
+                    <Palette size={12} className="mr-2" /> Track Color
+                </h3>
+                <div className="flex flex-wrap gap-3">
+                    {TRACK_COLORS.map(color => (
+                        <button
+                            key={color}
+                            onClick={() => updateTrack(track.id, { color })}
+                            className={`w-6 h-6 rounded-full border-2 transition-all ${track.color === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:border-zinc-500'}`}
+                            style={{ backgroundColor: color }}
+                            title={color}
+                        />
+                    ))}
+                </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4">
+              {/* EQ Section (Now Full Width) */}
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
                   <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
                       <span className="w-2 h-2 rounded-full bg-blue-500 mr-2"></span>
                       EQ
                   </h3>
+                  
+                  {/* Visualizer */}
+                  <div className="mb-4">
+                      <VisualEQ 
+                        low={track.eq.low}
+                        mid={track.eq.mid}
+                        high={track.eq.high}
+                        onChangeLow={(v) => updateEQ('low', v)}
+                        onChangeMid={(v) => updateEQ('mid', v)}
+                        onChangeHigh={(v) => updateEQ('high', v)}
+                      />
+                  </div>
+
                   <div className="flex justify-around items-center">
                       <Knob 
-                        label="High" 
-                        value={(track.eq.high + 12) / 24} // map -12..12 to 0..1
+                        label="Low" 
+                        value={(track.eq.low + 12) / 24} // map -12..12 to 0..1
                         min={0} max={1}
-                        onChange={(v) => updateEQ('high', (v * 24) - 12)} 
+                        onChange={(v) => updateEQ('low', (v * 24) - 12)} 
                       />
                       <Knob 
                         label="Mid" 
@@ -98,14 +147,16 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                         onChange={(v) => updateEQ('mid', (v * 24) - 12)} 
                       />
                       <Knob 
-                        label="Low" 
-                        value={(track.eq.low + 12) / 24} 
+                        label="High" 
+                        value={(track.eq.high + 12) / 24} 
                         min={0} max={1}
-                        onChange={(v) => updateEQ('low', (v * 24) - 12)} 
+                        onChange={(v) => updateEQ('high', (v * 24) - 12)} 
                       />
                   </div>
               </div>
+          </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
               {/* Dynamics Section */}
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50 relative">
                   <div className="flex items-center justify-between mb-4">
@@ -200,18 +251,28 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                 >Solo</button>
           </div>
 
-          {/* Destructive Actions */}
-          {onDeleteTrack && (
-            <div className="pt-8 border-t border-zinc-700">
-                <button 
-                    onClick={() => onDeleteTrack(track.id)}
-                    className="w-full py-3 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 flex items-center justify-center space-x-2 transition-colors"
-                >
-                    <Trash2 size={16} />
-                    <span className="font-bold text-sm">Delete Track</span>
-                </button>
-            </div>
-          )}
+          {/* Actions */}
+          <div className="pt-8 border-t border-zinc-700 grid grid-cols-2 gap-4">
+              {onDuplicateTrack && (
+                  <button 
+                      onClick={() => onDuplicateTrack(track.id)}
+                      className="py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-sm flex items-center justify-center space-x-2 transition-colors border border-zinc-700"
+                  >
+                      <Copy size={16} />
+                      <span>Duplicate</span>
+                  </button>
+              )}
+              
+              {onDeleteTrack && (
+                  <button 
+                      onClick={() => onDeleteTrack(track.id)}
+                      className="py-3 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 flex items-center justify-center space-x-2 transition-colors"
+                  >
+                      <Trash2 size={16} />
+                      <span>Delete</span>
+                  </button>
+              )}
+          </div>
 
       </div>
     </div>
