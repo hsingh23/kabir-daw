@@ -331,14 +331,6 @@ const AppContent: React.FC = () => {
                 trackIdToRecord = newTrack.id;
                 setSelectedTrackId(newTrack.id);
                 showToast("Created and Armed new Audio Track", 'info');
-                // Give React a cycle to update state before starting? 
-                // Actually, since we use `updateProject`, we can't guarantee `selectedTrackId` is updated in this closure
-                // But we can proceed assuming the next render will catch up, or refactor to use a ref for immediate access.
-                // For safety in this function scope, we use the local variable `trackIdToRecord` if we needed to pass it down, 
-                // but `stopRecording` uses `selectedTrackId` from state. 
-                // This is a race condition risk. 
-                // FIX: We need `selectedTrackId` to be correct when stopping. 
-                // Since `handleRecordToggle` (stop) runs in a new closure later, the state *should* be updated.
             }
         } else {
              const t = project.tracks.find(t => t.id === trackIdToRecord);

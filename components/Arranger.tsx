@@ -8,7 +8,7 @@ import TrackLane from './TrackLane';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import { useArrangerInteraction } from '../hooks/useArrangerInteraction';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, Minimize, Plus, MicOff, Edit2, Layers, AlignStartVertical, X } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, Minimize, Plus, MicOff, Edit2, Layers, AlignStartVertical, X, Split } from 'lucide-react';
 import { formatBars, formatTime } from '../services/utils';
 import { analytics } from '../services/analytics';
 

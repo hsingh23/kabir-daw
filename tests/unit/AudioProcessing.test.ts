@@ -1,5 +1,5 @@
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { audio } from '../../services/audio';
 
 // We need to override the global mock for AudioContext specifically for these tests
