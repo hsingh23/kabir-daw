@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { ProjectState } from '../types';
-import Knob from './Knob';
 import CustomFader from './Fader';
 import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
-import { Play, Pause, Square, Circle, Sliders, Music2 } from 'lucide-react';
+import SpectrumAnalyzer from './SpectrumAnalyzer';
+import { Play, Pause, Square, Circle, Sliders, Music2, Activity } from 'lucide-react';
 
 interface MixerProps {
   project: ProjectState;
@@ -15,9 +15,10 @@ interface MixerProps {
   onPlayPause: () => void;
   onStop: () => void;
   onRecord: () => void;
+  onOpenMaster: () => void;
 }
 
-const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPause, onStop, onRecord }) => {
+const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPause, onStop, onRecord, onOpenMaster }) => {
   // Initialize tab from URL or default to 'tracks'
   const [tab, setTab] = useState<'tracks' | 'instruments'>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -42,105 +43,21 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
     }));
   };
 
-  const updateCompressor = (updates: Partial<typeof project.masterCompressor>) => {
-      setProject(prev => ({
-          ...prev,
-          masterCompressor: { ...prev.masterCompressor, ...updates }
-      }));
-  };
-
-  const updateMasterEq = (band: 'low' | 'mid' | 'high', value: number) => {
-      setProject(prev => ({
-          ...prev,
-          masterEq: {
-              ...prev.masterEq,
-              [band]: value
-          }
-      }));
-  };
-
   return (
     <div className="flex flex-col h-full bg-studio-bg overflow-y-auto no-scrollbar pb-24">
       
-      {/* Top Effects Section */}
-      <div className="p-6 bg-gradient-to-b from-zinc-800 to-studio-bg border-b border-zinc-700 shadow-xl z-20">
-        <div className="flex justify-around items-center max-w-2xl mx-auto flex-wrap gap-4">
-           {/* Reverb/Delay/Chorus Group */}
-           <div className="flex space-x-2 md:space-x-4">
-               <Knob 
-                label="Reverb" 
-                value={project.effects.reverb} 
-                onChange={(v) => setProject(p => ({...p, effects: {...p.effects, reverb: v}}))} 
-                defaultValue={0.2}
-               />
-               <Knob 
-                label="Delay" 
-                value={project.effects.delay} 
-                onChange={(v) => setProject(p => ({...p, effects: {...p.effects, delay: v}}))} 
-                defaultValue={0.1}
-               />
-           </div>
-
-           <div className="w-px h-10 bg-zinc-700 hidden md:block" />
-
-           {/* Dynamics Group */}
-           <div className="flex space-x-2 md:space-x-4 bg-black/20 p-2 rounded-xl">
-               <Knob 
-                label="Compress" 
-                value={(project.masterCompressor.threshold + 60) / 60} // Map -60..0 to 0..1
-                onChange={(v) => updateCompressor({ threshold: (v * 60) - 60 })} 
-                defaultValue={0.6} // -24dB
-               />
-               <Knob 
-                label="Ratio" 
-                value={(project.masterCompressor.ratio - 1) / 19} // Map 1..20 to 0..1
-                onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} 
-                defaultValue={0.57} // ~12
-               />
-           </div>
-
-           <div className="w-px h-10 bg-zinc-700 hidden md:block" />
-
-           {/* Master EQ Group */}
-           <div className="flex space-x-2">
-                <Knob 
-                    label="High" 
-                    value={(project.masterEq.high + 12) / 24} // -12 to 12
-                    onChange={(v) => updateMasterEq('high', (v * 24) - 12)}
-                    defaultValue={0.5}
-                />
-                 <Knob 
-                    label="Mid" 
-                    value={(project.masterEq.mid + 12) / 24} 
-                    onChange={(v) => updateMasterEq('mid', (v * 24) - 12)}
-                    defaultValue={0.5}
-                />
-                 <Knob 
-                    label="Low" 
-                    value={(project.masterEq.low + 12) / 24} 
-                    onChange={(v) => updateMasterEq('low', (v * 24) - 12)}
-                    defaultValue={0.5}
-                />
-           </div>
-
-           <div className="w-px h-10 bg-zinc-700 hidden md:block" />
-
-           {/* Master Section */}
-           <div className="flex space-x-2 h-16 items-center">
-             <LevelMeter vertical={true} />
-             <Knob 
-              label="Master" 
-              value={project.masterVolume} 
-              onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
-              defaultValue={1.0}
-             />
-           </div>
-        </div>
-      </div>
-
       {/* Main Display / Transport */}
-      <div className="py-8 text-center space-y-4 bg-studio-bg relative">
-          <h2 className="text-2xl font-light text-zinc-200 tracking-widest uppercase">Studio Mix</h2>
+      <div className="py-6 px-6 text-center space-y-6 bg-gradient-to-b from-zinc-800 to-studio-bg border-b border-zinc-700 shadow-xl z-20">
+          <div className="flex items-center justify-between max-w-md mx-auto">
+              <h2 className="text-xl font-light text-zinc-400 tracking-widest uppercase hidden sm:block">Studio Mix</h2>
+              <div className="flex-1 mx-4 h-24 relative">
+                  <SpectrumAnalyzer height={96} color="#ef4444" />
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-50">
+                      {/* Grid lines overlay */}
+                      <div className="w-full h-px bg-white/10" />
+                  </div>
+              </div>
+          </div>
           
           <div className="flex items-center justify-center space-x-8">
               <button 
@@ -170,13 +87,13 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
       </div>
 
       {/* Tabs */}
-      <div className="flex justify-center mb-6">
+      <div className="flex justify-center my-6 shrink-0">
           <div className="bg-zinc-900 rounded-full p-1 flex space-x-1 border border-zinc-800">
               <button 
                 onClick={() => setTab('tracks')} 
                 className={`px-6 py-2 rounded-full text-xs font-bold transition-all flex items-center space-x-2 ${tab === 'tracks' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                  <Sliders size={14} /> <span>Faders</span>
+                  <Sliders size={14} /> <span>Console</span>
               </button>
               <button 
                 onClick={() => setTab('instruments')} 
@@ -190,20 +107,22 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
       {/* Content Section */}
       <div className="flex-1 px-4 overflow-x-auto pb-8">
         {tab === 'tracks' ? (
-            <div className="flex space-x-4 min-w-max px-4 justify-center">
+            <div className="flex space-x-4 min-w-max px-4 justify-center items-start">
+                
+                {/* Tracks */}
                 {project.tracks.map(track => (
                     <div key={track.id} className="flex flex-col items-center space-y-3 group p-2 bg-zinc-900/50 rounded-lg border border-zinc-800/50">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center">{track.name}</span>
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center" title={track.name}>{track.name}</span>
                         
                         {/* Mute/Solo Buttons */}
                         <div className="flex space-x-1">
                             <button 
                                 onClick={() => updateTrack(track.id, { muted: !track.muted })}
-                                className={`w-6 h-6 rounded text-[10px] font-bold ${track.muted ? 'bg-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
+                                className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${track.muted ? 'bg-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                             >M</button>
                             <button 
                                 onClick={() => updateTrack(track.id, { solo: !track.solo })}
-                                className={`w-6 h-6 rounded text-[10px] font-bold ${track.solo ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : 'bg-zinc-800 text-zinc-400'}`}
+                                className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${track.solo ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                             >S</button>
                         </div>
 
@@ -222,6 +141,37 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
                         </div>
                     </div>
                 ))}
+
+                <div className="w-px h-[280px] bg-zinc-800 mx-2" />
+
+                {/* Master Strip */}
+                <div className="flex flex-col items-center space-y-3 group p-2 bg-zinc-950 rounded-lg border border-zinc-800 shadow-xl">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider w-16 text-center">Master</span>
+                    
+                    <button 
+                        onClick={onOpenMaster}
+                        className="w-full py-1.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700 transition-colors flex items-center justify-center gap-1"
+                    >
+                        <Activity size={10} /> FX
+                    </button>
+
+                    <div className="flex space-x-2 h-[200px]">
+                        <CustomFader 
+                            value={project.masterVolume} 
+                            onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
+                            height={200}
+                            defaultValue={1.0}
+                        />
+                        <LevelMeter vertical={true} />
+                    </div>
+                    
+                    <div className="w-full flex justify-center">
+                        <div className="w-8 h-8 rounded shadow-md bg-zinc-800 flex items-center justify-center text-red-500 font-bold text-[9px]">
+                            M
+                        </div>
+                    </div>
+                </div>
+
             </div>
         ) : (
             <div className="max-w-md mx-auto space-y-6">

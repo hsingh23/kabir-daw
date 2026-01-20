@@ -1,4 +1,5 @@
 
+
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -15,6 +16,7 @@ vi.mock('../../services/audio', () => ({
 
 const mockProject: ProjectState = {
   id: 'test',
+  name: 'Test Project',
   bpm: 120,
   tracks: [
     { id: 't1', name: 'Track 1', volume: 0.8, pan: 0, muted: false, solo: false, color: '#000', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
@@ -26,6 +28,7 @@ const mockProject: ProjectState = {
   loopEnd: 4,
   isLooping: false,
   metronomeOn: false,
+  countIn: 0,
   masterVolume: 1,
   masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: { threshold: -24, ratio: 12 },
@@ -44,6 +47,7 @@ describe('Mixer Component', () => {
         onPlayPause={() => {}} 
         onStop={() => {}} 
         onRecord={() => {}} 
+        onOpenMaster={() => {}}
       />
     );
 
@@ -61,6 +65,7 @@ describe('Mixer Component', () => {
         onPlayPause={() => {}} 
         onStop={() => {}} 
         onRecord={() => {}} 
+        onOpenMaster={() => {}}
       />
     );
     
@@ -82,6 +87,7 @@ describe('Mixer Component', () => {
           onPlayPause={() => {}} 
           onStop={() => {}} 
           onRecord={() => {}} 
+          onOpenMaster={() => {}}
         />
       );
 

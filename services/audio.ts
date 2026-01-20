@@ -64,6 +64,7 @@ class AudioEngine {
   // Metronome State
   public bpm: number = 120;
   public metronomeEnabled: boolean = false;
+  public metronomeSound: 'beep' | 'click' | 'hihat' = 'beep';
   private nextNoteTime: number = 0;
   private currentBeat: number = 0;
 
@@ -71,9 +72,9 @@ class AudioEngine {
   private tanpuraGain: GainNode;
   private tablaGain: GainNode;
   private nextTanpuraNoteTime: number = 0;
-  private currentTanpuraString: number = 0; // 0-3
+  public currentTanpuraString: number = 0; // 0-3 (Public for UI)
   private nextTablaBeatTime: number = 0;
-  private currentTablaBeat: number = 0;
+  public currentTablaBeat: number = 0; // Public for UI
   
   // Cache current settings
   private tanpuraConfig: TanpuraState | null = null;
@@ -83,6 +84,10 @@ class AudioEngine {
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: BlobPart[] = [];
   private recordingMimeType: string = 'audio/webm';
+  public selectedInputDeviceId: string | undefined;
+  
+  // Shared noise buffer for percussion
+  private noiseBuffer: AudioBuffer | null = null;
 
   constructor() {
     this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -141,6 +146,7 @@ class AudioEngine {
 
     this.setupRouting();
     this.loadImpulseResponse();
+    this.createNoiseBuffer();
   }
 
   async resumeContext() {
@@ -200,6 +206,15 @@ class AudioEngine {
     this.tablaGain.connect(this.masterGain);
     this.tablaGain.connect(this.reverbInput);
   }
+  
+  createNoiseBuffer() {
+      const bufferSize = this.ctx.sampleRate * 2.0;
+      this.noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = this.noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+      }
+  }
 
   async loadImpulseResponse() {
     const sampleRate = this.ctx.sampleRate;
@@ -228,6 +243,49 @@ class AudioEngine {
         console.error("Error decoding audio data:", e);
         throw new Error("Failed to decode audio. The file format may not be supported.");
     }
+  }
+
+  processAudioBuffer(key: string, type: 'reverse' | 'normalize'): AudioBuffer {
+      const original = this.buffers.get(key);
+      if (!original) throw new Error("Buffer not found");
+
+      const ctx = this.ctx;
+      const channels = original.numberOfChannels;
+      const newBuffer = ctx.createBuffer(channels, original.length, original.sampleRate);
+
+      if (type === 'reverse') {
+          for (let i = 0; i < channels; i++) {
+              const input = original.getChannelData(i);
+              const output = newBuffer.getChannelData(i);
+              // Manual reverse copy to ensure new array
+              for(let j=0; j<input.length; j++) {
+                  output[j] = input[input.length - 1 - j];
+              }
+          }
+      } else if (type === 'normalize') {
+          let maxPeak = 0;
+          for (let i = 0; i < channels; i++) {
+              const data = original.getChannelData(i);
+              for (let j = 0; j < data.length; j++) {
+                  const val = Math.abs(data[j]);
+                  if (val > maxPeak) maxPeak = val;
+              }
+          }
+          const gain = maxPeak > 0 ? 1 / maxPeak : 1;
+          for (let i = 0; i < channels; i++) {
+              const input = original.getChannelData(i);
+              const output = newBuffer.getChannelData(i);
+              for (let j = 0; j < input.length; j++) {
+                  output[j] = input[j] * gain;
+              }
+          }
+      } else {
+          // Clone if unknown type (fallback)
+           for (let i = 0; i < channels; i++) {
+              newBuffer.copyToChannel(original.getChannelData(i), i);
+           }
+      }
+      return newBuffer;
   }
 
   getTrackChannel(trackId: string): TrackChannel {
@@ -394,6 +452,8 @@ class AudioEngine {
     this.syncTracks(tracks);
 
     clips.forEach(clip => {
+      if (clip.muted) return;
+      
       const buffer = this.buffers.get(clip.bufferKey);
       if (!buffer) return;
 
@@ -438,36 +498,32 @@ class AudioEngine {
     // Fade Logic
     const clipFadeIn = clip.fadeIn || 0;
     const clipFadeOut = clip.fadeOut || 0;
+    const clipGain = clip.gain ?? 1.0;
     const clipTotalDuration = clip.duration;
 
-    let startGain = 1;
+    let startGain = clipGain;
     if (elapsedClipTime < clipFadeIn) {
-        startGain = elapsedClipTime / clipFadeIn;
+        startGain = (elapsedClipTime / clipFadeIn) * clipGain;
     } else if (elapsedClipTime > clipTotalDuration - clipFadeOut) {
         const timeRemaining = clipTotalDuration - elapsedClipTime;
-        startGain = timeRemaining / clipFadeOut;
+        startGain = (timeRemaining / clipFadeOut) * clipGain;
     }
     
     envelope.gain.setValueAtTime(startGain, when);
 
     if (elapsedClipTime < clipFadeIn) {
         const timeUntilFull = clipFadeIn - elapsedClipTime;
-        envelope.gain.linearRampToValueAtTime(1, when + timeUntilFull);
+        envelope.gain.linearRampToValueAtTime(clipGain, when + timeUntilFull);
     }
 
     const timeUntilFadeOut = (clipTotalDuration - clipFadeOut) - elapsedClipTime;
     if (timeUntilFadeOut > 0) {
-        envelope.gain.setValueAtTime(1, when + timeUntilFadeOut);
+        envelope.gain.setValueAtTime(clipGain, when + timeUntilFadeOut);
         envelope.gain.linearRampToValueAtTime(0, when + timeUntilFadeOut + clipFadeOut);
     } else {
         const timeRemaining = playDuration;
         envelope.gain.linearRampToValueAtTime(0, when + timeRemaining);
     }
-    
-    // Calculate if we need to loop
-    // Timeline duration needed: playDuration
-    // Buffer duration consumed: playDuration * speed
-    // Buffer available from offset: buffer.duration - (offset % buffer.duration)
     
     // Normalize offset to buffer length to be safe
     const bufferOffset = offset % buffer.duration;
@@ -480,8 +536,6 @@ class AudioEngine {
     }
 
     source.start(when, bufferOffset, playDuration);
-    // Explicitly schedule stop to ensure it doesn't loop infinitely if duration is short
-    // MDN says duration param does this, but for safety with loops:
     source.stop(when + playDuration);
 
     if (ctx === this.ctx) {
@@ -511,9 +565,12 @@ class AudioEngine {
       this.masterHigh.gain.setTargetAtTime(high, this.ctx.currentTime, 0.1);
   }
 
-  setMasterCompressor(threshold: number, ratio: number) {
+  setMasterCompressor(threshold: number, ratio: number, knee?: number, attack?: number, release?: number) {
       this.compressor.threshold.setTargetAtTime(threshold, this.ctx.currentTime, 0.1);
       this.compressor.ratio.setTargetAtTime(ratio, this.ctx.currentTime, 0.1);
+      if (knee !== undefined) this.compressor.knee.setTargetAtTime(knee, this.ctx.currentTime, 0.1);
+      if (attack !== undefined) this.compressor.attack.setTargetAtTime(attack, this.ctx.currentTime, 0.1);
+      if (release !== undefined) this.compressor.release.setTargetAtTime(release, this.ctx.currentTime, 0.1);
   }
 
   setMetronomeVolume(val: number) {
@@ -540,7 +597,9 @@ class AudioEngine {
   get isPlaying() {
       return this._isPlaying;
   }
-
+  
+  // ... rest of file (metering, etc) same as before ...
+  
   // --- Metering ---
   private getRMS(analyser: AnalyserNode) {
     const data = new Float32Array(analyser.fftSize);
@@ -576,12 +635,12 @@ class AudioEngine {
         this.currentBeat++;
     }
 
-    // Procedural Instrument Scheduling (Simple)
+    // Procedural Instrument Scheduling
     if (this.tanpuraConfig?.enabled) {
         while (this.nextTanpuraNoteTime < this.ctx.currentTime + lookahead) {
             const freqs = this.getTanpuraFreqs(this.tanpuraConfig);
             const freq = freqs[this.currentTanpuraString];
-            this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0); // 2s sustain
+            this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0, this.tanpuraConfig.fineTune || 0);
             
             const interval = 60 / this.tanpuraConfig.tempo;
             this.nextTanpuraNoteTime += interval;
@@ -602,46 +661,112 @@ class AudioEngine {
     }
   }
 
+  // ... (rest of methods: scheduleClick, playCountIn, devices, recording, instruments, renderProject) ...
+  // Re-inserting missing methods for completeness as partial update isn't safe for full class replacement if not careful
+  
   scheduleClick(beatNumber: number, time: number) {
-    const osc = this.ctx.createOscillator();
-    const env = this.ctx.createGain();
-
-    osc.frequency.value = beatNumber % 4 === 0 ? 1000 : 800;
-    
-    env.gain.value = 1;
-    env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-
-    osc.connect(env);
-    env.connect(this.metronomeGain);
-
-    osc.start(time);
-    osc.stop(time + 0.05);
+    if (this.metronomeSound === 'click') {
+        const osc = this.ctx.createOscillator();
+        const env = this.ctx.createGain();
+        osc.frequency.setValueAtTime(beatNumber % 4 === 0 ? 1200 : 800, time);
+        osc.type = 'square';
+        env.gain.setValueAtTime(0.3, time);
+        env.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 2000;
+        osc.connect(filter);
+        filter.connect(env);
+        env.connect(this.metronomeGain);
+        osc.start(time);
+        osc.stop(time + 0.1);
+    } else if (this.metronomeSound === 'hihat') {
+        if (!this.noiseBuffer) return;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const env = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 8000;
+        env.gain.setValueAtTime(beatNumber % 4 === 0 ? 0.4 : 0.2, time);
+        env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+        src.connect(filter);
+        filter.connect(env);
+        env.connect(this.metronomeGain);
+        src.start(time);
+        src.stop(time + 0.05);
+    } else {
+        const osc = this.ctx.createOscillator();
+        const env = this.ctx.createGain();
+        osc.frequency.value = beatNumber % 4 === 0 ? 1000 : 800;
+        env.gain.value = 1;
+        env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+        osc.connect(env);
+        env.connect(this.metronomeGain);
+        osc.start(time);
+        osc.stop(time + 0.05);
+    }
   }
 
-  // --- Recording ---
+  async playCountIn(bars: number, bpm: number): Promise<void> {
+      await this.resumeContext();
+      const secondsPerBeat = 60 / bpm;
+      const beatsToPlay = bars * 4;
+      const now = this.ctx.currentTime;
+      for (let i = 0; i < beatsToPlay; i++) {
+          this.scheduleClick(i, now + (i * secondsPerBeat));
+      }
+      return new Promise(resolve => {
+          setTimeout(resolve, beatsToPlay * secondsPerBeat * 1000);
+      });
+  }
+
+  async getAudioDevices(): Promise<{ inputs: MediaDeviceInfo[], outputs: MediaDeviceInfo[] }> {
+      try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const inputs = devices.filter(d => d.kind === 'audioinput');
+          const outputs = devices.filter(d => d.kind === 'audiooutput');
+          return { inputs, outputs };
+      } catch (e) {
+          console.error("Error enumerating devices:", e);
+          return { inputs: [], outputs: [] };
+      }
+  }
+
+  async setOutputDevice(deviceId: string) {
+      if (this.ctx && typeof (this.ctx as any).setSinkId === 'function') {
+          try {
+              await (this.ctx as any).setSinkId(deviceId);
+          } catch (e) {
+              console.error("Failed to set output device:", e);
+          }
+      }
+  }
 
   async startRecording() {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Determine supported MIME type (fixes Safari recording issues)
+      const constraints: MediaStreamConstraints = {
+          audio: this.selectedInputDeviceId ? { 
+              deviceId: { exact: this.selectedInputDeviceId },
+              echoCancellation: false, autoGainControl: false, noiseSuppression: false
+          } : {
+              echoCancellation: false, autoGainControl: false, noiseSuppression: false
+          }
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       const types = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav'];
       const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
-      
       this.recordingMimeType = mimeType;
       this.mediaRecorder = new MediaRecorder(stream, { mimeType });
       this.recordedChunks = [];
-      
       this.mediaRecorder.ondataavailable = (e) => {
           if (e.data.size > 0) this.recordedChunks.push(e.data);
       };
-      
       this.mediaRecorder.start();
   }
 
   async stopRecording(): Promise<Blob | undefined> {
       return new Promise((resolve) => {
           if (!this.mediaRecorder) return resolve(undefined);
-          
           this.mediaRecorder.onstop = () => {
               const blob = new Blob(this.recordedChunks, { type: this.recordingMimeType });
               this.recordedChunks = [];
@@ -651,7 +776,6 @@ class AudioEngine {
               }
               resolve(blob);
           };
-          
           if (this.mediaRecorder.state !== 'inactive') {
             this.mediaRecorder.stop();
           } else {
@@ -660,74 +784,94 @@ class AudioEngine {
       });
   }
 
-
-  // --- Synthesis for Instruments (Refactored for Reusability) ---
-
-  playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+  playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number, detuneCents: number = 0) {
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.value = freq;
+      osc1.detune.value = detuneCents;
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.value = freq * 1.0015;
+      osc2.detune.value = detuneCents + 5; 
       const filter = ctx.createBiquadFilter();
-
-      osc.type = 'sawtooth';
-      osc.frequency.value = freq;
-
       filter.type = 'lowpass';
       filter.frequency.value = 2000;
       filter.Q.value = 1;
-
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 4; 
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 300; 
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+      lfo.start(time);
+      lfo.stop(time + duration);
+      const gain = ctx.createGain();
       gain.gain.setValueAtTime(0, time);
-      gain.gain.linearRampToValueAtTime(0.3, time + 0.5); 
+      gain.gain.linearRampToValueAtTime(0.25, time + 0.1); 
       gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-
-      osc.connect(filter);
+      osc1.connect(filter);
+      osc2.connect(filter);
       filter.connect(gain);
       gain.connect(destination);
-
-      osc.start(time);
-      osc.stop(time + duration);
+      osc1.start(time);
+      osc1.stop(time + duration);
+      osc2.start(time);
+      osc2.stop(time + duration);
   }
 
-  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, hit: 'dha' | 'dhin' | 'tin' | 'na' | 'ge' | 'ka', time: number) {
+  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, hit: string, time: number) {
     const baseFreq = NOTE_FREQS[key] || 261.63;
-    
-    // Low Drum (Bayan)
     if (['dha', 'dhin', 'ge', 'ghe'].includes(hit)) {
         const osc = ctx.createOscillator();
-        const env = ctx.createGain();
+        const gain = ctx.createGain();
         osc.frequency.setValueAtTime(baseFreq / 2, time);
-        osc.frequency.exponentialRampToValueAtTime(baseFreq / 2 * 0.8, time + 0.3);
-        env.gain.setValueAtTime(0.8, time);
-        env.gain.exponentialRampToValueAtTime(0.01, time + 0.4);
-        osc.connect(env);
-        env.connect(destination);
+        osc.frequency.linearRampToValueAtTime((baseFreq / 2) * 1.15, time + 0.05);
+        osc.frequency.linearRampToValueAtTime(baseFreq / 2, time + 0.35);
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.9, time + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.5);
+        osc.connect(gain);
+        gain.connect(destination);
         osc.start(time);
-        osc.stop(time + 0.4);
+        osc.stop(time + 0.5);
     }
-
-    // High Drum (Dayan) - Resonant
     if (['dha', 'dhin', 'tin', 'na'].includes(hit)) {
-        const osc = ctx.createOscillator();
-        const env = ctx.createGain();
-        const isMuted = hit === 'dhin'; // simplified
-        
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(baseFreq, time);
-        
-        env.gain.setValueAtTime(0.6, time);
-        env.gain.exponentialRampToValueAtTime(0.01, time + (isMuted ? 0.2 : 0.6));
-        
-        osc.connect(env);
-        env.connect(destination);
-        osc.start(time);
-        osc.stop(time + (isMuted ? 0.2 : 0.6));
+        const carrier = ctx.createOscillator();
+        const modulator = ctx.createOscillator();
+        const modGain = ctx.createGain();
+        const gain = ctx.createGain();
+        carrier.frequency.setValueAtTime(baseFreq, time);
+        modulator.frequency.setValueAtTime(baseFreq * 1.48, time); 
+        const modIndex = 250;
+        modGain.gain.setValueAtTime(modIndex, time);
+        modGain.gain.exponentialRampToValueAtTime(1, time + 0.1); 
+        modulator.connect(modGain);
+        modGain.connect(carrier.frequency);
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.6, time + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.6);
+        carrier.connect(gain);
+        gain.connect(destination);
+        carrier.start(time);
+        carrier.stop(time + 0.6);
+        modulator.start(time);
+        modulator.stop(time + 0.6);
     }
-    
-    // Slap (Ka)
-    if (hit === 'ka' || hit === 'na') {
-        const osc = ctx.createOscillator(); // noise approximation
-        // Web Audio noise is usually buffer, assume simple high freq osc for now or nothing
-        const noise = ctx.createBufferSource();
-        // Skip noise generation for brevity/performance in simple synth, usually requires noise buffer
+    if (['ka', 'ke', 'kat', 'na'].includes(hit)) { 
+        if (this.noiseBuffer) {
+            const noise = ctx.createBufferSource();
+            noise.buffer = this.noiseBuffer;
+            const filter = ctx.createBiquadFilter();
+            filter.type = 'highpass';
+            filter.frequency.value = 1500;
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(hit === 'na' ? 0.3 : 0.5, time);
+            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(destination);
+            noise.start(time);
+        }
     }
   }
 
@@ -741,7 +885,7 @@ class AudioEngine {
       return [firstStringFreq, sa, sa, lowerSa];
   }
 
-  getTablaPattern(taal: string): string[] {
+  public getTablaPattern(taal: string): string[] {
       const patterns: Record<string, string[]> = {
              'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
              'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
@@ -751,40 +895,35 @@ class AudioEngine {
   }
 
   async renderProject(project: ProjectState): Promise<Blob> {
-      // 1. Calculate Total Duration
       const endTimes = project.clips.map(c => c.start + c.duration);
       const maxClipTime = Math.max(0, ...endTimes, project.loopEnd);
-      const duration = maxClipTime + 2; // Tail
-      
+      const duration = maxClipTime + 2; 
       const offlineCtx = new OfflineAudioContext(2, duration * this.ctx.sampleRate, this.ctx.sampleRate);
-
-      // 2. Reconstruct Graph in Offline Context
       const masterGain = offlineCtx.createGain();
       masterGain.gain.value = project.masterVolume;
-      
-      // Master EQ
       const masterLow = offlineCtx.createBiquadFilter(); masterLow.type = 'lowshelf'; masterLow.frequency.value = 200;
       const masterMid = offlineCtx.createBiquadFilter(); masterMid.type = 'peaking'; masterMid.frequency.value = 1000;
       const masterHigh = offlineCtx.createBiquadFilter(); masterHigh.type = 'highshelf'; masterHigh.frequency.value = 3000;
-      
       if (project.masterEq) {
           masterLow.gain.value = project.masterEq.low;
           masterMid.gain.value = project.masterEq.mid;
           masterHigh.gain.value = project.masterEq.high;
       }
-
       const compressor = offlineCtx.createDynamicsCompressor();
       if (project.masterCompressor) {
           compressor.threshold.value = project.masterCompressor.threshold;
           compressor.ratio.value = project.masterCompressor.ratio;
+          compressor.knee.value = project.masterCompressor.knee || 10;
+          compressor.attack.value = project.masterCompressor.attack || 0.05;
+          compressor.release.value = project.masterCompressor.release || 0.25;
       }
-      
       masterGain.connect(masterLow);
       masterLow.connect(masterMid);
       masterMid.connect(masterHigh);
       masterHigh.connect(compressor);
       compressor.connect(offlineCtx.destination);
       
+      // ... (Rest of rendering logic for Reverb, Delay, Clips, Instruments - keeping unchanged)
       // Reverb
       const reverbNode = offlineCtx.createConvolver();
       if (this.reverbNode.buffer) reverbNode.buffer = this.reverbNode.buffer;
@@ -870,6 +1009,7 @@ class AudioEngine {
 
       // Schedule Clips
       for (const clip of project.clips) {
+          if (clip.muted) continue;
           const buffer = this.buffers.get(clip.bufferKey);
           const dest = trackMap.get(clip.trackId);
           if (buffer && dest) {
@@ -891,7 +1031,7 @@ class AudioEngine {
           let time = 0;
           let sIdx = 0;
           while (time < duration) {
-              this.playTanpuraNote(offlineCtx, tanpuraGain, freqs[sIdx], time, interval * 4);
+              this.playTanpuraNote(offlineCtx, tanpuraGain, freqs[sIdx], time, interval * 4, project.tanpura.fineTune || 0);
               time += interval;
               sIdx = (sIdx + 1) % 4;
           }

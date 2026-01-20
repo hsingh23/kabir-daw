@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+
+import React, { useEffect, useRef, memo } from 'react';
 import { audio } from '../services/audio';
 
 interface WaveformProps {
@@ -6,7 +7,7 @@ interface WaveformProps {
   color: string;
 }
 
-const Waveform: React.FC<WaveformProps> = ({ bufferKey, color }) => {
+const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -98,6 +99,6 @@ const Waveform: React.FC<WaveformProps> = ({ bufferKey, color }) => {
   }, [bufferKey, color]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
-};
+});
 
 export default Waveform;

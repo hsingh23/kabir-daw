@@ -1,7 +1,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { audio } from '../../services/audio';
-import { Track } from '../../types';
+import { Track, Clip } from '../../types';
 
 describe('AudioEngine', () => {
     
@@ -10,6 +10,7 @@ describe('AudioEngine', () => {
         // Reset tracks
         audio.trackChannels.clear();
         audio.activeSources.clear();
+        audio.buffers.clear();
     });
 
     it('initializes with correct default nodes', () => {
@@ -70,6 +71,26 @@ describe('AudioEngine', () => {
         expect(c1.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0.8, expect.any(Number), expect.any(Number));
         // Other track gets muted (0)
         expect(c2.gain.gain.setTargetAtTime).toHaveBeenCalledWith(0, expect.any(Number), expect.any(Number));
+    });
+
+    it('does not play muted clips', () => {
+        // Setup mock buffer
+        audio.buffers.set('k1', { duration: 5, sampleRate: 44100, numberOfChannels: 1, getChannelData: () => new Float32Array(100) } as any);
+        
+        const clips: Clip[] = [
+            { id: 'c1', trackId: 't1', name: 'Muted Clip', muted: true, start: 0, duration: 4, offset: 0, bufferKey: 'k1', fadeIn: 0, fadeOut: 0 },
+            { id: 'c2', trackId: 't1', name: 'Active Clip', muted: false, start: 5, duration: 4, offset: 0, bufferKey: 'k1', fadeIn: 0, fadeOut: 0 }
+        ];
+        
+        const tracks: Track[] = [{ id: 't1', name: 'T1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }];
+
+        // Spy on scheduleSource or createBufferSource
+        const spyCreateSource = vi.spyOn(audio.ctx, 'createBufferSource');
+
+        audio.play(clips, tracks, 0);
+
+        // Should only be called once for the active clip
+        expect(spyCreateSource).toHaveBeenCalledTimes(1);
     });
 
     it('stops all sources when stop is called', () => {

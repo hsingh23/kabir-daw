@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { getAllAssetsMetadata, saveAudioBlob, saveAssetMetadata, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject } from '../services/db';
+import { getAllAssetsMetadata, saveAudioBlob, saveAssetMetadata, deleteAudioBlob, getAudioBlob, getAllProjects, deleteProject, saveProject } from '../services/db';
 import { AssetMetadata } from '../types';
-import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Tag, Globe, Upload, Edit2, Check, X, Filter, Layers, Music } from 'lucide-react';
+import { Trash2, Play, Pause, AlertCircle, FileAudio, FolderOpen, Plus, FileMusic, Search, Tag, Globe, Upload, Edit2, Check, X, Filter, Layers, Music, Copy } from 'lucide-react';
 import { audio } from '../services/audio';
 
 interface LibraryProps {
@@ -202,6 +202,17 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
       }
   };
 
+  const handleDuplicateProject = async (project: any) => {
+      const newId = crypto.randomUUID();
+      const newProject = { 
+          ...project, 
+          id: newId, 
+          name: `${project.name} (Copy)`,
+      };
+      await saveProject(newProject);
+      loadProjects();
+  };
+
   const handlePreview = async (asset: AssetMetadata) => {
     audio.resumeContext(); 
     
@@ -290,7 +301,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                             <FileMusic size={20} className="text-zinc-400" />
                                         </div>
                                         <div className="overflow-hidden">
-                                            <h3 className="text-sm font-bold text-zinc-200 truncate">{proj.id === 'default-project' ? 'Demo Project' : `Project ${proj.id.slice(0,4)}...`}</h3>
+                                            <h3 className="text-sm font-bold text-zinc-200 truncate">{proj.name || (proj.id === 'default-project' ? 'Demo Project' : `Project ${proj.id.slice(0,4)}...`)}</h3>
                                             <p className="text-[10px] text-zinc-500">{proj.tracks.length} Tracks • {proj.bpm} BPM</p>
                                         </div>
                                     </div>
@@ -304,6 +315,13 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
                                         className={`flex-1 py-1.5 rounded text-xs font-bold transition-colors ${currentProjectId === proj.id ? 'bg-zinc-700/50 text-zinc-500 cursor-default' : 'bg-studio-accent text-white hover:bg-red-600'}`}
                                     >
                                         {currentProjectId === proj.id ? 'Loaded' : 'Open'}
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDuplicateProject(proj)}
+                                        className="p-1.5 rounded hover:bg-zinc-700 text-zinc-500 hover:text-white transition-colors"
+                                        title="Duplicate Project"
+                                    >
+                                        <Copy size={16} />
                                     </button>
                                     <button 
                                         onClick={() => handleDeleteProject(proj.id)}
