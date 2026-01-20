@@ -14,25 +14,23 @@ import TimeDisplay from './components/TimeDisplay';
 import TempoControl from './components/TempoControl';
 import StatusIndicator from './components/StatusIndicator';
 import HeaderInputMeter from './components/HeaderInputMeter';
-import { ToastProvider, useToast } from './components/Toast'; // Import Toast
+import AudioContextOverlay from './components/AudioContextOverlay'; // Import Overlay
+import { ToastProvider, useToast } from './components/Toast';
 import { audio } from './services/audio';
 import { saveAudioBlob, saveProject, getProject, getAudioBlob } from './services/db';
 import { moveItem, audioBufferToWav } from './services/utils';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useProjectState } from './hooks/useProjectState';
-import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download, Play, Pause, Square, Circle, Settings, Activity, ArrowRightLeft, Keyboard, ArrowRight } from 'lucide-react';
+import { TEMPLATES } from './services/templates';
+import { analytics } from './services/analytics';
+import { Mic, Music, LayoutGrid, Upload, Plus, Undo2, Redo2, Download, Play, Pause, Square, Circle, Settings, Activity, ArrowRightLeft, Keyboard, ArrowRight, VolumeX } from 'lucide-react';
 
 const INITIAL_PROJECT: ProjectState = {
   id: 'default-project',
   name: 'New Project',
   notes: '',
   bpm: 120,
-  tracks: [
-    { id: '1', name: 'Drums', volume: 0.8, pan: 0, muted: false, solo: false, color: '#ef4444', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
-    { id: '2', name: 'Bass', volume: 0.7, pan: 0, muted: false, solo: false, color: '#3b82f6', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -15, ratio: 3, attack: 0.01, release: 0.1 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
-    { id: '3', name: 'Synth', volume: 0.6, pan: 0, muted: false, solo: false, color: '#a855f7', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -18, ratio: 2.5, attack: 0.05, release: 0.2 }, sends: { reverb: 0, delay: 0.2, chorus: 0.3 } },
-    { id: '4', name: 'Vocals', volume: 0.9, pan: 0, muted: false, solo: false, color: '#eab308', eq: { low: 0, mid: 0, high: 0 }, compressor: { enabled: false, threshold: -22, ratio: 3, attack: 0.02, release: 0.2 }, sends: { reverb: 0.3, delay: 0.1, chorus: 0 } },
-  ],
+  tracks: TEMPLATES['Basic Band'].tracks || [],
   clips: [],
   markers: [],
   loopStart: 0,
@@ -78,7 +76,7 @@ const AppContent: React.FC = () => {
       return (params.get('view') as 'mixer' | 'arranger' | 'library') || 'mixer';
   });
 
-  const { project, updateProject, setProject, undo, redo, past, future, loadProject } = useProjectState(INITIAL_PROJECT);
+  const { project, updateProject, setProject, undo, redo, past, future, loadProject, commitTransaction } = useProjectState(INITIAL_PROJECT);
   const [clipboard, setClipboard] = useState<Clip[]>([]); 
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -203,6 +201,7 @@ const AppContent: React.FC = () => {
         // Set project AFTER buffers are ready
         loadProject(migrated);
         showToast("Project loaded successfully", 'success');
+        analytics.track('project_loaded', { projectId: migrated.id });
         
     } else if (projectId !== 'default-project') {
         // If loading a new ID that doesn't exist, init it
@@ -210,12 +209,20 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const createNewProject = useCallback(async () => {
+  const createNewProject = useCallback(async (template: Partial<ProjectState> = {}) => {
       const newId = crypto.randomUUID();
-      const newProject = { ...INITIAL_PROJECT, id: newId, name: 'Untitled Project' };
+      const newProject: ProjectState = { 
+          ...INITIAL_PROJECT, 
+          ...template,
+          id: newId, 
+          name: template.name || 'Untitled Project',
+          tracks: template.tracks || INITIAL_PROJECT.tracks,
+          bpm: template.bpm || INITIAL_PROJECT.bpm
+      };
       await saveProject(newProject);
       await loadProjectState(newId);
-      showToast("Created new project", 'info');
+      showToast(`Created new project: ${newProject.name}`, 'info');
+      analytics.track('project_created', { template: template.name || 'Empty' });
   }, [loadProject, showToast]);
 
   const updateTrack = useCallback((id: string, updates: Partial<Track>) => {
@@ -241,8 +248,10 @@ const AppContent: React.FC = () => {
               audio.pause();
               // Update currentTime one last time when stopping for seek accuracy
               setCurrentTime(audio.getCurrentTime());
+              analytics.track('transport_stop');
               return false;
           } else {
+              analytics.track('transport_play');
               return true;
           }
       });
@@ -265,6 +274,7 @@ const AppContent: React.FC = () => {
             setIsPlaying(true);
             setIsRecording(true);
             showToast("Recording started", 'success');
+            analytics.track('recording_started');
         } catch (_e) {
             showToast("Could not start recording. Check microphone permissions.", 'error');
         }
@@ -319,6 +329,7 @@ const AppContent: React.FC = () => {
             }));
             setSelectedClipIds([newClip.id]);
             showToast("Recording saved", 'success');
+            analytics.track('clip_action', { action: 'record_complete', duration: finalDuration });
         }
     } else {
         if (!selectedTrackId) {
@@ -368,6 +379,7 @@ const AppContent: React.FC = () => {
         clips: prev.clips.map(c => c.id === clipId ? clipA : c).concat(clipB)
     }));
     setSelectedClipIds([clipB.id]);
+    analytics.track('arranger_clip_split');
   }, [project.clips, updateProject]);
 
   const handleSplitAtPlayhead = useCallback(() => {
@@ -427,6 +439,22 @@ const AppContent: React.FC = () => {
 
   }, [project.tracks, project.clips, updateProject, inspectorTrackId, showToast]);
 
+  const clearSolo = useCallback(() => {
+      updateProject(prev => ({
+          ...prev,
+          tracks: prev.tracks.map(t => ({ ...t, solo: false }))
+      }));
+      showToast("Solo cleared", 'info');
+  }, [updateProject, showToast]);
+
+  const handleSeek = useCallback((time: number) => {
+    if (isRecording) return;
+    setCurrentTime(time);
+    if (isPlaying) {
+      audio.play(project.clips, project.tracks, time);
+    }
+  }, [isRecording, isPlaying, project.clips, project.tracks]);
+
   // Use the extracted keyboard shortcuts hook
   useKeyboardShortcuts({
       project,
@@ -445,7 +473,8 @@ const AppContent: React.FC = () => {
       setClipboard,
       handleSplit,
       onSplitAtPlayhead: handleSplitAtPlayhead,
-      setShowShortcuts
+      setShowShortcuts,
+      onSeek: handleSeek
   });
 
   useEffect(() => {
@@ -517,15 +546,8 @@ const AppContent: React.FC = () => {
     audio.stop();
     setIsPlaying(false);
     setCurrentTime(project.isLooping ? project.loopStart : 0);
+    analytics.track('transport_stop');
   }, [isRecording, handleRecordToggle, project.isLooping, project.loopStart]);
-
-  const handleSeek = useCallback((time: number) => {
-    if (isRecording) return;
-    setCurrentTime(time);
-    if (isPlaying) {
-      audio.play(project.clips, project.tracks, time);
-    }
-  }, [isRecording, isPlaying, project.clips, project.tracks]);
 
   const handleExport = useCallback(async (options: { type: 'master' | 'stems' }) => {
       if (project.clips.length === 0) {
@@ -533,6 +555,7 @@ const AppContent: React.FC = () => {
           return;
       }
       setIsExporting(true);
+      analytics.track('export_started', { type: options.type });
       if (isPlaying) stop();
       
       try {
@@ -570,6 +593,7 @@ const AppContent: React.FC = () => {
               }
               showToast("Stems exported!", 'success');
           }
+          analytics.track('export_completed');
       } catch (e) {
           console.error("Export failed", e);
           showToast("Export failed. See console.", 'error');
@@ -593,6 +617,7 @@ const AppContent: React.FC = () => {
               clips: prev.clips.map(c => c.id === clipId ? { ...c, bufferKey: newKey, name: `${c.name} (${type})` } : c)
           }));
           showToast(`Audio ${type}d`, 'success');
+          analytics.track('clip_action', { action: type });
       } catch (e) {
           console.error("Processing failed", e);
           showToast("Audio processing failed.", 'error');
@@ -628,8 +653,12 @@ const AppContent: React.FC = () => {
         showToast(`Added ${asset.name} to track`, 'success');
   };
 
+  const hasSolo = project.tracks.some(t => t.solo);
+
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className={`flex flex-col h-screen overflow-hidden transition-all duration-300 ${isRecording ? 'ring-4 ring-red-500/50' : ''}`}>
+      <AudioContextOverlay />
+      
       {/* Header */}
       <div className="flex items-center justify-between h-14 bg-studio-panel border-b border-zinc-800 px-4 shrink-0 z-50">
           <div className="flex items-center gap-4">
@@ -676,6 +705,17 @@ const AppContent: React.FC = () => {
                   >
                       <Circle size={14} fill="currentColor" />
                   </button>
+                  
+                  {/* Clear Solo Button */}
+                  {hasSolo && (
+                      <button 
+                          onClick={clearSolo}
+                          className="w-10 h-10 rounded-full bg-yellow-500/20 text-yellow-500 border border-yellow-500/50 flex items-center justify-center animate-pulse hover:bg-yellow-500 hover:text-black transition-colors"
+                          title="Clear Solo"
+                      >
+                          <VolumeX size={14} />
+                      </button>
+                  )}
                   
                   {/* Visual Feedback for Input */}
                   {(isRecording || project.inputMonitoring) && (
@@ -774,6 +814,7 @@ const AppContent: React.FC = () => {
                     onRenameTrack={(id, name) => updateTrack(id, { name })}
                     autoScroll={autoScroll}
                     onDropAsset={handleDropAsset}
+                    commitTransaction={commitTransaction}
                   />
               )}
               {/* Mobile Only Library View */}

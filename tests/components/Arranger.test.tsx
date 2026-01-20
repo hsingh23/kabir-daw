@@ -1,5 +1,4 @@
 
-
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -72,6 +71,7 @@ describe('Arranger Component Interaction', () => {
                 selectedClipIds={[]}
                 onSelectClip={() => {}}
                 onOpenInspector={() => {}}
+                commitTransaction={() => {}}
             />
         );
 
@@ -106,12 +106,47 @@ describe('Arranger Component Interaction', () => {
                 selectedClipIds={[]}
                 onSelectClip={() => {}}
                 onOpenInspector={() => {}}
+                commitTransaction={() => {}}
             />
         );
 
-        // Check for loop handles (css classes based query or structure)
-        // We added .cursor-ew-resize for handles
         const handles = container.querySelectorAll('.cursor-ew-resize');
         expect(handles.length).toBeGreaterThan(0); // Should have left and right handles
+    });
+
+    it('displays Zero State when no tracks exist', () => {
+        const emptyProject = { ...mockProject, tracks: [] };
+        const setProject = vi.fn();
+
+        const { getByText } = render(
+            <Arranger
+                project={emptyProject}
+                setProject={setProject}
+                currentTime={0}
+                isPlaying={false}
+                isRecording={false}
+                onPlayPause={() => {}}
+                onStop={() => {}}
+                onRecord={() => {}}
+                onSeek={() => {}}
+                onSplit={() => {}}
+                zoom={50}
+                setZoom={() => {}}
+                selectedTrackId={null}
+                onSelectTrack={() => {}}
+                selectedClipIds={[]}
+                onSelectClip={() => {}}
+                onOpenInspector={() => {}}
+                commitTransaction={() => {}}
+            />
+        );
+
+        expect(getByText('No Tracks Created')).toBeInTheDocument();
+        
+        // Check CTA action
+        const addBtn = getByText('Add First Track');
+        fireEvent.click(addBtn);
+        
+        expect(setProject).toHaveBeenCalled();
     });
 });

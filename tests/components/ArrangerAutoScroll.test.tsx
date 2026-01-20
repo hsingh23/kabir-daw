@@ -38,7 +38,7 @@ describe('Arranger Auto-Scroll', () => {
 
     it('starts scrolling when dragging near right edge', () => {
         const { getByText, getByRole } = render(
-            <Arranger project={mockProject} setProject={() => {}} currentTime={0} isPlaying={false} isRecording={false} onPlayPause={()=>{}} onStop={()=>{}} onRecord={()=>{}} onSeek={()=>{}} onSplit={()=>{}} zoom={50} setZoom={()=>{}} selectedTrackId={null} onSelectTrack={()=>{}} selectedClipIds={[]} onSelectClip={()=>{}} onOpenInspector={()=>{}} />
+            <Arranger project={mockProject} setProject={() => {}} currentTime={0} isPlaying={false} isRecording={false} onPlayPause={()=>{}} onStop={()=>{}} onRecord={()=>{}} onSeek={()=>{}} onSplit={()=>{}} zoom={50} setZoom={()=>{}} selectedTrackId={null} onSelectTrack={()=>{}} selectedClipIds={[]} onSelectClip={()=>{}} onOpenInspector={()=>{}} commitTransaction={()=>{}} />
         );
 
         const clip = getByText('Clip').closest('div[style*="absolute"]');
@@ -65,7 +65,7 @@ describe('Arranger Auto-Scroll', () => {
 
     it('stops scrolling on pointer up', () => {
         const { getByText, getByRole } = render(
-            <Arranger project={mockProject} setProject={() => {}} currentTime={0} isPlaying={false} isRecording={false} onPlayPause={()=>{}} onStop={()=>{}} onRecord={()=>{}} onSeek={()=>{}} onSplit={()=>{}} zoom={50} setZoom={()=>{}} selectedTrackId={null} onSelectTrack={()=>{}} selectedClipIds={[]} onSelectClip={()=>{}} onOpenInspector={()=>{}} />
+            <Arranger project={mockProject} setProject={() => {}} currentTime={0} isPlaying={false} isRecording={false} onPlayPause={()=>{}} onStop={()=>{}} onRecord={()=>{}} onSeek={()=>{}} onSplit={()=>{}} zoom={50} setZoom={()=>{}} selectedTrackId={null} onSelectTrack={()=>{}} selectedClipIds={[]} onSelectClip={()=>{}} onOpenInspector={()=>{}} commitTransaction={()=>{}} />
         );
 
         const clip = getByText('Clip').closest('div[style*="absolute"]');

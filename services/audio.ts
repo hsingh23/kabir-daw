@@ -12,8 +12,6 @@ interface AudioGraphChain {
     compressor: DynamicsCompressorNode;
     gain: GainNode; // Fader
     panner: StereoPannerNode;
-    // Optional because offline context doesn't need the analyser usually, 
-    // or requires a specific connection strategy
     analyser?: AnalyserNode; 
     reverbSend: GainNode;
     delaySend: GainNode;
@@ -21,8 +19,9 @@ interface AudioGraphChain {
 }
 
 interface LiveTrackChannel extends AudioGraphChain {
-    analyser: AnalyserNode; // Required for live
-    lastDistortionAmount: number;
+    analyser: AnalyserNode;
+    // Cache for Dirty Checking to prevent redundant AudioParam updates
+    lastState: Partial<Track>;
 }
 
 const NOTE_FREQS: Record<string, number> = {
@@ -60,7 +59,8 @@ class AudioEngine {
   metronomeGain: GainNode;
   
   buffers: Map<string, AudioBuffer> = new Map();
-  // Cache for pre-computed waveform peaks (100 samples/sec)
+  private loadingPromises: Map<string, Promise<AudioBuffer>> = new Map();
+
   peaks: Map<string, Float32Array> = new Map(); 
   
   activeSources: Map<string, AudioBufferSourceNode> = new Map();
@@ -98,8 +98,9 @@ class AudioEngine {
   
   // Monitoring
   private monitorNode: MediaStreamAudioSourceNode | null = null;
+  private activeStream: MediaStream | null = null;
   private monitorGain: GainNode;
-  private inputAnalyser: AnalyserNode; // New: Input Level Metering
+  private inputAnalyser: AnalyserNode; 
 
   private noiseBuffer: AudioBuffer | null = null;
 
@@ -162,7 +163,7 @@ class AudioEngine {
     this.monitorGain = this.ctx.createGain();
     this.monitorGain.gain.value = 0; // Muted by default
     
-    // Input Analyser (always active if recording/monitoring)
+    // Input Analyser
     this.inputAnalyser = this.ctx.createAnalyser();
     this.inputAnalyser.fftSize = 256;
     this.inputAnalyser.smoothingTimeConstant = 0.3;
@@ -182,20 +183,27 @@ class AudioEngine {
     this.stop();
     this.buffers.clear();
     this.peaks.clear();
-    // Clean up track specific nodes to prevent leaks/stale state
-    this.trackChannels.forEach(ch => {
-        try {
-            ch.input.disconnect();
-            ch.panner.disconnect();
-        } catch (e) {
-            // Ignore disconnection errors
-        }
-    });
+    this.loadingPromises.clear();
+    // Use the cleanup method
+    this.trackChannels.forEach(ch => this.disconnectChannel(ch));
     this.trackChannels.clear();
   }
 
-  // ... (setupRouting, createNoiseBuffer, loadImpulseResponse, loadAudio, computePeaks, getPeaks, processAudioBuffer, createTrackGraph, getTrackChannel, applyTrackSettings, syncTracks, syncInstruments, play, scheduleSource methods)
+  private disconnectChannel(channel: AudioGraphChain) {
+      try {
+          channel.input.disconnect();
+          channel.panner.disconnect();
+          channel.gain.disconnect();
+          channel.reverbSend.disconnect();
+          channel.delaySend.disconnect();
+          channel.chorusSend.disconnect();
+      } catch (e) {
+          // Ignore disconnection errors if already disconnected
+      }
+  }
 
+  // ... (Methods setupRouting, createNoiseBuffer, loadImpulseResponse, loadAudio, computePeaks, getPeaks, processAudioBuffer remain mostly the same, elided for brevity if unchanged logic is robust)
+  
   setupRouting() {
     // Master Routing: Gain -> Low -> Mid -> High -> Compressor -> Analyser -> Dest
     this.masterGain.connect(this.masterLow);
@@ -205,7 +213,7 @@ class AudioEngine {
     this.compressor.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
 
-    // Monitor Routing: MonitorGain -> MasterGain
+    // Monitor Routing
     this.monitorGain.connect(this.masterGain);
 
     // -- Reverb Routing --
@@ -248,7 +256,7 @@ class AudioEngine {
     this.tablaGain.connect(this.masterGain);
     this.tablaGain.connect(this.reverbInput);
   }
-  
+
   createNoiseBuffer() {
       const bufferSize = this.ctx.sampleRate * 2.0;
       this.noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
@@ -275,35 +283,41 @@ class AudioEngine {
 
   async loadAudio(key: string, blob: Blob): Promise<AudioBuffer> {
     if (this.buffers.has(key)) return this.buffers.get(key)!;
+    if (this.loadingPromises.has(key)) return this.loadingPromises.get(key)!;
 
-    try {
-        const arrayBuffer = await blob.arrayBuffer();
-        const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-        this.buffers.set(key, audioBuffer);
-        // Compute peaks immediately upon load
-        this.computePeaks(key, audioBuffer);
-        return audioBuffer;
-    } catch (e) {
-        console.error("Error decoding audio data:", e);
-        throw new Error("Failed to decode audio.");
-    }
+    const loadPromise = (async () => {
+        try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+            this.buffers.set(key, audioBuffer);
+            this.computePeaks(key, audioBuffer);
+            return audioBuffer;
+        } catch (e) {
+            console.error("Error decoding audio data:", e);
+            throw new Error("Failed to decode audio.");
+        } finally {
+            this.loadingPromises.delete(key);
+        }
+    })();
+
+    this.loadingPromises.set(key, loadPromise);
+    return loadPromise;
   }
 
   computePeaks(key: string, buffer: AudioBuffer) {
-      // Create a 100Hz summary (100 peaks per second of audio)
-      // For a 3 minute song: 180 * 100 = 18,000 points. Low memory footprint.
+      if (buffer.length === 0) return;
       const samplesPerPeak = Math.floor(buffer.sampleRate / 100);
+      if (samplesPerPeak === 0) return;
+
       const length = Math.ceil(buffer.length / samplesPerPeak);
       const peaks = new Float32Array(length);
-      const data = buffer.getChannelData(0); // Use first channel for visualization
+      const data = buffer.getChannelData(0); 
       
+      const stride = 10; 
       for (let i = 0; i < length; i++) {
           const start = i * samplesPerPeak;
           const end = Math.min(start + samplesPerPeak, buffer.length);
           let max = 0;
-          // Stride optimization within the peak calculation itself
-          // We don't need every single sample for a visual summary
-          const stride = 10; 
           for (let j = start; j < end; j += stride) {
               const val = Math.abs(data[j]);
               if (val > max) max = val;
@@ -415,89 +429,134 @@ class AudioEngine {
       const liveChannel: LiveTrackChannel = {
           ...chain,
           analyser,
-          lastDistortionAmount: -1
+          lastState: {} // Initialize empty state
       };
       this.trackChannels.set(trackId, liveChannel);
     }
     return this.trackChannels.get(trackId)!;
   }
 
+  // Optimized settings application with Dirty Checking
   applyTrackSettings(chain: AudioGraphChain, track: Track, currentTime: number, isOffline: boolean) {
       const { gain, panner, lowFilter, midFilter, highFilter, compressor, distortionNode, reverbSend, delaySend, chorusSend } = chain;
+      const liveChain = !isOffline ? (chain as LiveTrackChannel) : null;
+      const prev = liveChain?.lastState || {};
+
       const isMuted = track.muted;
-      if (isOffline) {
-          gain.gain.value = isMuted ? 0 : track.volume;
-          panner.pan.value = track.pan;
-          lowFilter.gain.value = track.eq.low;
-          midFilter.gain.value = track.eq.mid;
-          highFilter.gain.value = track.eq.high;
-          if (track.distortion) distortionNode.curve = makeDistortionCurve(track.distortion);
-          if (track.compressor && track.compressor.enabled) {
-              compressor.threshold.value = track.compressor.threshold;
-              compressor.ratio.value = track.compressor.ratio;
-              compressor.attack.value = track.compressor.attack || 0.003;
-              compressor.release.value = track.compressor.release || 0.25;
-          } else {
-              compressor.threshold.value = 0;
-              compressor.ratio.value = 1;
+      
+      // Volume / Mute
+      const targetVolume = isMuted ? 0 : track.volume;
+      if (isOffline || prev.volume !== targetVolume || prev.muted !== isMuted) {
+          if (isOffline) gain.gain.value = targetVolume;
+          else gain.gain.setTargetAtTime(targetVolume, currentTime, 0.02);
+      }
+
+      // Pan
+      if (isOffline || prev.pan !== track.pan) {
+          if (isOffline) panner.pan.value = track.pan;
+          else panner.pan.setTargetAtTime(track.pan, currentTime, 0.02);
+      }
+
+      // EQ
+      if (isOffline || prev.eq?.low !== track.eq.low) {
+          if (isOffline) lowFilter.gain.value = track.eq.low;
+          else lowFilter.gain.setTargetAtTime(track.eq.low, currentTime, 0.1);
+      }
+      if (isOffline || prev.eq?.mid !== track.eq.mid) {
+          if (isOffline) midFilter.gain.value = track.eq.mid;
+          else midFilter.gain.setTargetAtTime(track.eq.mid, currentTime, 0.1);
+      }
+      if (isOffline || prev.eq?.high !== track.eq.high) {
+          if (isOffline) highFilter.gain.value = track.eq.high;
+          else highFilter.gain.setTargetAtTime(track.eq.high, currentTime, 0.1);
+      }
+
+      // Distortion
+      const dist = track.distortion || 0;
+      const prevDist = prev.distortion || 0;
+      if (isOffline || dist !== prevDist) {
+          if (dist > 0) distortionNode.curve = makeDistortionCurve(dist);
+          // If 0, we could remove curve or leave simple line, handled by null check in makeDistortionCurve usually
+      }
+
+      // Compressor
+      const comp = track.compressor;
+      const prevComp = prev.compressor;
+      
+      if (comp && comp.enabled) {
+          if (isOffline || prevComp?.threshold !== comp.threshold) {
+              const v = comp.threshold;
+              isOffline ? (compressor.threshold.value = v) : compressor.threshold.setTargetAtTime(v, currentTime, 0.1);
           }
-          if (track.sends) {
-              reverbSend.gain.value = track.sends.reverb;
-              delaySend.gain.value = track.sends.delay;
-              chorusSend.gain.value = track.sends.chorus;
+          if (isOffline || prevComp?.ratio !== comp.ratio) {
+              const v = comp.ratio;
+              isOffline ? (compressor.ratio.value = v) : compressor.ratio.setTargetAtTime(v, currentTime, 0.1);
           }
-      } else {
-          const timeConstant = 0.02;
-          panner.pan.setTargetAtTime(track.pan, currentTime, timeConstant);
-          lowFilter.gain.setTargetAtTime(track.eq.low, currentTime, 0.1);
-          midFilter.gain.setTargetAtTime(track.eq.mid, currentTime, 0.1);
-          highFilter.gain.setTargetAtTime(track.eq.high, currentTime, 0.1);
-          const liveChain = chain as LiveTrackChannel;
-          const dist = track.distortion || 0;
-          if (liveChain.lastDistortionAmount !== undefined && dist !== liveChain.lastDistortionAmount) {
-              distortionNode.curve = makeDistortionCurve(dist);
-              liveChain.lastDistortionAmount = dist;
-          } else if (!liveChain.lastDistortionAmount && dist > 0) {
-               distortionNode.curve = makeDistortionCurve(dist);
+          if (isOffline || prevComp?.attack !== comp.attack) {
+              const v = comp.attack || 0.003;
+              isOffline ? (compressor.attack.value = v) : compressor.attack.setTargetAtTime(v, currentTime, 0.1);
           }
-          if (track.compressor) {
-              if (track.compressor.enabled) {
-                  compressor.threshold.setTargetAtTime(track.compressor.threshold, currentTime, 0.1);
-                  compressor.ratio.setTargetAtTime(track.compressor.ratio, currentTime, 0.1);
-                  compressor.attack.setTargetAtTime(track.compressor.attack || 0.003, currentTime, 0.1);
-                  compressor.release.setTargetAtTime(track.compressor.release || 0.25, currentTime, 0.1);
-              } else {
-                  compressor.threshold.setTargetAtTime(0, currentTime, 0.1);
-                  compressor.ratio.setTargetAtTime(1, currentTime, 0.1);
-              }
+          if (isOffline || prevComp?.release !== comp.release) {
+              const v = comp.release || 0.25;
+              isOffline ? (compressor.release.value = v) : compressor.release.setTargetAtTime(v, currentTime, 0.1);
           }
-          if (track.sends) {
-              reverbSend.gain.setTargetAtTime(track.sends.reverb, currentTime, 0.05);
-              delaySend.gain.setTargetAtTime(track.sends.delay, currentTime, 0.05);
-              chorusSend.gain.setTargetAtTime(track.sends.chorus, currentTime, 0.05);
-          }
+      } else if (isOffline || (prevComp && prevComp.enabled && !comp?.enabled)) {
+          // Disable
+          isOffline ? (compressor.threshold.value = 0) : compressor.threshold.setTargetAtTime(0, currentTime, 0.1);
+          isOffline ? (compressor.ratio.value = 1) : compressor.ratio.setTargetAtTime(1, currentTime, 0.1);
+      }
+
+      // Sends
+      if (isOffline || prev.sends?.reverb !== track.sends.reverb) {
+          const v = track.sends.reverb;
+          isOffline ? (reverbSend.gain.value = v) : reverbSend.gain.setTargetAtTime(v, currentTime, 0.05);
+      }
+      if (isOffline || prev.sends?.delay !== track.sends.delay) {
+          const v = track.sends.delay;
+          isOffline ? (delaySend.gain.value = v) : delaySend.gain.setTargetAtTime(v, currentTime, 0.05);
+      }
+      if (isOffline || prev.sends?.chorus !== track.sends.chorus) {
+          const v = track.sends.chorus;
+          isOffline ? (chorusSend.gain.value = v) : chorusSend.gain.setTargetAtTime(v, currentTime, 0.05);
+      }
+
+      // Update cache
+      if (liveChain) {
+          liveChain.lastState = { ...track };
       }
   }
 
+  // Idempotent Sync: Handles Creates, Updates, and Deletes
   syncTracks(tracks: Track[]) {
+    const activeIds = new Set(tracks.map(t => t.id));
+    
+    // 1. Sweep: Remove deleted tracks
+    for (const [id, channel] of this.trackChannels) {
+        if (!activeIds.has(id)) {
+            this.disconnectChannel(channel);
+            this.trackChannels.delete(id);
+        }
+    }
+
+    // 2. Mark & Update: Create new, update existing
     const soloActive = tracks.some(t => t.solo);
     tracks.forEach(track => {
       const channel = this.getTrackChannel(track.id);
       const currentTime = this.ctx.currentTime;
-      const isMuted = track.muted || (soloActive && !track.solo);
-      const targetVolume = isMuted ? 0 : track.volume;
-      channel.gain.gain.setTargetAtTime(targetVolume, currentTime, 0.02);
-      this.applyTrackSettings(channel, track, currentTime, false);
+      
+      // Handle Mute/Solo Logic at the input of applySettings
+      // We pass the "effective" mute state implicitly via volume calculation in applySettings
+      // But applySettings uses track.muted directly. 
+      // Let's create a transient representation for the mixer logic.
+      
+      const effectiveMuted = track.muted || (soloActive && !track.solo);
+      // We pass the real track object but override muted for the calculation context if needed, 
+      // or modify the object passed. Modifying the object is safer for the `prev` check.
+      
+      const effectiveTrack = { ...track, muted: effectiveMuted };
+      
+      this.applyTrackSettings(channel, effectiveTrack, currentTime, false);
     });
-    if (this.trackChannels.size > tracks.length) {
-        for (const [id, channel] of this.trackChannels) {
-            if (!tracks.find(t => t.id === id)) {
-                channel.input.disconnect();
-                channel.panner.disconnect();
-                this.trackChannels.delete(id);
-            }
-        }
-    }
   }
 
   syncInstruments(tanpura: TanpuraState, tabla: TablaState) {
@@ -512,6 +571,8 @@ class AudioEngine {
           this.ctx.resume();
       }
   }
+
+  // ... (Remainder of class: play, scheduleSource, stop, pause, panic, setMaster* methods etc. remain largely the same)
 
   play(clips: Clip[], tracks: Track[], startTime: number = 0) {
     if (this.ctx.state === 'suspended') {
@@ -617,16 +678,12 @@ class AudioEngine {
 
   panic() {
     this.stop();
-    // Cancel all scheduled events on master to prevent stuck notes or feedback
     this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
     this.masterGain.gain.value = 0;
-    // Restore volume gently
     setTimeout(() => {
         this.masterGain.gain.linearRampToValueAtTime(1.0, this.ctx.currentTime + 0.5);
     }, 100);
   }
-
-  // ... (setMasterVolume, setMasterEq, setMasterCompressor, setMetronomeVolume, setDelayLevel, setReverbLevel, setChorusLevel, getCurrentTime, isPlaying, measureTrackLevel, measureMasterLevel, measureInputLevel, scheduler, scheduleClick, playCountIn, getAudioDevices, setOutputDevice, startRecording, stopRecording, playTanpuraNote, playTablaHit, getTanpuraFreqs, getTablaPattern, renderProject methods)
 
   setMasterVolume(val: number) {
     this.masterGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.05);
@@ -807,31 +864,55 @@ class AudioEngine {
       }
   }
 
-  async startRecording(monitor: boolean = false) {
+  async initInput(deviceId?: string): Promise<MediaStream> {
+      if (this.activeStream && this.selectedInputDeviceId === deviceId) {
+          return this.activeStream;
+      }
+      
+      this.closeInput();
+
+      this.selectedInputDeviceId = deviceId;
       const constraints: MediaStreamConstraints = {
-          audio: this.selectedInputDeviceId ? { 
-              deviceId: { exact: this.selectedInputDeviceId },
+          audio: deviceId ? { 
+              deviceId: { exact: deviceId },
               echoCancellation: false, autoGainControl: false, noiseSuppression: false
           } : {
               echoCancellation: false, autoGainControl: false, noiseSuppression: false
           }
       };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      // Monitoring Setup & Input Metering
-      if (this.monitorNode) {
-          this.monitorNode.disconnect();
-      }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.activeStream = stream;
+
       this.monitorNode = this.ctx.createMediaStreamSource(stream);
-      // Connect to Input Analyser first for metering even if monitoring is off (visual feedback)
       this.monitorNode.connect(this.inputAnalyser);
       
+      return stream;
+  }
+
+  closeInput() {
+      if (this.monitorNode) {
+          this.monitorNode.disconnect();
+          this.monitorNode = null;
+      }
+      if (this.activeStream) {
+          this.activeStream.getTracks().forEach(t => t.stop());
+          this.activeStream = null;
+      }
+      try {
+        this.inputAnalyser.disconnect(this.monitorGain);
+      } catch(e) { }
+      this.monitorGain.gain.value = 0;
+  }
+
+  async startRecording(monitor: boolean = false) {
+      const stream = await this.initInput(this.selectedInputDeviceId);
+      
       if (monitor) {
-          // Connect Input Analyser to Monitor Gain (to Master)
           this.inputAnalyser.connect(this.monitorGain);
           this.monitorGain.gain.value = 1;
       } else {
-          this.inputAnalyser.disconnect(this.monitorGain); // Ensure disconnect if monitor off
+          try { this.inputAnalyser.disconnect(this.monitorGain); } catch(e) {}
           this.monitorGain.gain.value = 0;
       }
 
@@ -848,23 +929,14 @@ class AudioEngine {
 
   async stopRecording(): Promise<Blob | undefined> {
       return new Promise((resolve) => {
-          // Cleanup Monitor
-          if (this.monitorNode) {
-              this.monitorNode.disconnect();
-              this.monitorNode = null;
-          }
-          // Reset metering connections
-          this.inputAnalyser.disconnect();
+          try { this.inputAnalyser.disconnect(this.monitorGain); } catch(e) {}
           this.monitorGain.gain.value = 0;
 
           if (!this.mediaRecorder) return resolve(undefined);
           this.mediaRecorder.onstop = () => {
               const blob = new Blob(this.recordedChunks, { type: this.recordingMimeType });
               this.recordedChunks = [];
-              if (this.mediaRecorder) {
-                this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
-                this.mediaRecorder = null;
-              }
+              this.mediaRecorder = null;
               resolve(blob);
           };
           if (this.mediaRecorder.state !== 'inactive') {

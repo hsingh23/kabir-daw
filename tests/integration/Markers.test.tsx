@@ -1,5 +1,4 @@
 
-
 import { render } from '@testing-library/react';
 import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi } from 'vitest';
@@ -68,6 +67,7 @@ describe('Arranger Markers', () => {
                 selectedClipIds={[]}
                 onSelectClip={() => {}}
                 onOpenInspector={() => {}}
+                commitTransaction={() => {}}
             />
         );
 
@@ -116,6 +116,7 @@ describe('Arranger Markers', () => {
                 selectedClipIds={[]}
                 onSelectClip={() => {}}
                 onOpenInspector={() => {}}
+                commitTransaction={() => {}}
             />
         );
 

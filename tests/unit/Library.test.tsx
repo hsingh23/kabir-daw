@@ -20,26 +20,45 @@ vi.mock('../../services/audio', () => ({
     },
     loadAudio: vi.fn(),
     stop: vi.fn(),
+    resumeContext: vi.fn()
   }
 }));
 
 describe('Library Component', () => {
-  it('loads and displays assets', async () => {
-    (db.getAllAssetKeys as any).mockResolvedValue(['kick.wav', 'snare.wav']);
+  it('displays skeleton loading state initially', async () => {
+    // Mock slow DB response
+    (db.getAllAssetKeys as any).mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(['kick.wav']), 100)));
+    (db.getAllAssetsMetadata as any).mockImplementation(() => new Promise(resolve => setTimeout(() => resolve([]), 100)));
     
-    const { getByText, queryByText } = render(<Library />);
+    const { getByText, container } = render(<Library />);
     
     // Switch to assets tab to trigger load
     const assetsTab = getByText('Assets');
     assetsTab.click();
     
-    // Check loading state
-    expect(getByText('Loading library...')).toBeInTheDocument();
+    // Check for skeleton elements (animate-pulse class is key identifier for skeleton)
+    expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
+    
+    // Wait for load to finish
+    await waitFor(() => {
+        expect(db.getAllAssetsMetadata).toHaveBeenCalled();
+    });
+  });
+
+  it('loads and displays assets after loading', async () => {
+    (db.getAllAssetKeys as any).mockResolvedValue(['kick.wav']);
+    (db.getAllAssetsMetadata as any).mockResolvedValue([
+        { id: '1', name: 'kick.wav', type: 'oneshot', tags: [], dateAdded: 0, instrument: 'Drums' }
+    ]);
+    
+    const { getByText, container } = render(<Library />);
+    
+    // Switch to assets tab
+    getByText('Assets').click();
     
     await waitFor(() => {
-        expect(queryByText('Loading library...')).not.toBeInTheDocument();
+        expect(container.querySelector('.animate-pulse')).not.toBeInTheDocument();
         expect(getByText('kick.wav')).toBeInTheDocument();
-        expect(getByText('snare.wav')).toBeInTheDocument();
     });
   });
 });

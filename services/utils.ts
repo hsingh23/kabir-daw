@@ -104,6 +104,23 @@ export function makeDistortionCurve(amount: number = 0): Float32Array | null {
   return curve;
 }
 
+export const formatBars = (time: number, bpm: number): string => {
+    const secondsPerBeat = 60 / bpm;
+    if (secondsPerBeat <= 0) return "1:1:1";
+    const totalBeats = time / secondsPerBeat;
+    const bar = Math.floor(totalBeats / 4) + 1;
+    const beat = Math.floor(totalBeats % 4) + 1;
+    const sixteenth = Math.floor((totalBeats % 1) * 4) + 1;
+    return `${bar}:${beat}:${sixteenth}`;
+};
+
+export const formatTime = (time: number): string => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    const millis = Math.floor((time % 1) * 10);
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${millis}`;
+};
+
 // EQ Constants matching AudioEngine
 export const EQ_FREQS = {
     low: 320,
