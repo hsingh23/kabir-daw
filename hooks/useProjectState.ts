@@ -15,12 +15,20 @@ export const useProjectState = (initialProject: ProjectState) => {
       });
   }, []);
 
-  // Commit current state to history. 
+  // Commit current state to history with deep clone to prevent mutation bugs
   // IMPORTANT: Call this AFTER an action is complete (e.g. onPointerUp)
   const commitTransaction = useCallback(() => {
       setProject(current => {
-          setPast(prev => [...prev.slice(-19), current]);
-          setFuture([]);
+          try {
+              // Deep clone the current state before pushing to history
+              const snapshot = structuredClone(current);
+              setPast(prev => [...prev.slice(-19), snapshot]);
+              setFuture([]);
+          } catch (e) {
+              console.error("Failed to clone state for history", e);
+              // Fallback if structuredClone fails (unlikely in modern envs)
+              setPast(prev => [...prev.slice(-19), JSON.parse(JSON.stringify(current))]);
+          }
           return current;
       });
   }, []);

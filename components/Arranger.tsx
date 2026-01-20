@@ -1,7 +1,8 @@
 
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { ProjectState, ToolMode, Track, AssetMetadata } from '../types';
 import Waveform from './Waveform';
+import MidiClipView from './MidiClipView';
 import Playhead from './Playhead'; 
 import Ruler from './Ruler'; 
 import TrackLane from './TrackLane'; 
@@ -42,14 +43,6 @@ interface ArrangerProps {
   commitTransaction: () => void;
 }
 
-const SNAP_OPTIONS = [
-    { label: 'Off', value: 0 },
-    { label: 'Bar', value: 4 },
-    { label: '1/4', value: 1 },
-    { label: '1/8', value: 0.5 },
-    { label: '1/16', value: 0.25 },
-];
-
 const CLIP_COLORS = [
     '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#06b6d4', '#ec4899', '#71717a'
 ];
@@ -77,6 +70,11 @@ const Arranger: React.FC<ArrangerProps> = ({
   // Instrument Drawer State
   const [showInstruments, setShowInstruments] = useState(false);
   
+  // Virtualization State
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const lastScrollLeft = useRef(0);
+  const [containerWidth, setContainerWidth] = useState(1000); 
+
   const secondsPerBeat = 60 / project.bpm;
   const [numerator, denominator] = project.timeSignature || [4, 4];
   const beatsPerBar = numerator;
@@ -101,16 +99,28 @@ const Arranger: React.FC<ArrangerProps> = ({
       snapLineRef, selectionBoxRef, snapLabelRef, commitTransaction
   });
 
+  // Calculate visible range for virtualization
+  const visibleStartTime = Math.max(0, scrollLeft / zoom);
+  const visibleEndTime = (scrollLeft + containerWidth) / zoom;
+  // Buffer: Render extra 2 screens worth or fixed time to ensure smooth scrolling
+  const renderStartTime = Math.max(0, visibleStartTime - 5); 
+  const renderEndTime = visibleEndTime + 5;
+
   const clipsByTrack = useMemo(() => {
       const map = new Map<string, any[]>();
       project.tracks.forEach(t => map.set(t.id, []));
       project.clips.forEach(c => {
+          // Filter invisible clips
+          const clipEnd = c.start + c.duration;
+          if (clipEnd < renderStartTime || c.start > renderEndTime) {
+              return;
+          }
           if (map.has(c.trackId)) {
               map.get(c.trackId)?.push(c);
           }
       });
       return map;
-  }, [project.clips, project.tracks]);
+  }, [project.clips, project.tracks, renderStartTime, renderEndTime]);
 
   React.useEffect(() => {
     const handleResize = () => {
@@ -124,6 +134,10 @@ const Arranger: React.FC<ArrangerProps> = ({
         } else {
             setHeaderWidth(220);
             setIsCompactHeader(false);
+        }
+        
+        if (scrollContainerRef.current) {
+            setContainerWidth(scrollContainerRef.current.clientWidth);
         }
     };
     handleResize();
@@ -189,6 +203,7 @@ const Arranger: React.FC<ArrangerProps> = ({
   const handleAddTrack = () => {
       const newTrack: Track = {
           id: crypto.randomUUID(),
+          type: 'audio',
           name: `Track ${project.tracks.length + 1}`,
           volume: 0.8, pan: 0, muted: false, solo: false, color: CLIP_COLORS[project.tracks.length % CLIP_COLORS.length],
           eq: { low: 0, mid: 0, high: 0 },
@@ -196,6 +211,23 @@ const Arranger: React.FC<ArrangerProps> = ({
           sends: { reverb: 0, delay: 0, chorus: 0 }
       };
       setProject(p => ({...p, tracks: [...p.tracks, newTrack]}));
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+      const left = e.currentTarget.scrollLeft;
+      
+      // Throttle virtualization state update
+      // Only update state if scrolled more than a threshold (e.g. 100px)
+      if (Math.abs(left - lastScrollLeft.current) > 100) {
+          setScrollLeft(left);
+          lastScrollLeft.current = left;
+      }
+      
+      // Sync track headers immediately
+      if (trackHeaderRef.current) {
+          const el = trackHeaderRef.current.querySelector('div[style*="translateY"]');
+          if (el) (el as HTMLElement).style.transform = `translateY(-${e.currentTarget.scrollTop || 0}px)`;
+      }
   };
 
   const { backgroundImage, backgroundSize } = useMemo(() => {
@@ -301,7 +333,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                     <Plus size={12} />
                  </button>
              </div> 
-             <div className="flex-1 overflow-hidden relative">
+             <div className="flex-1 overflow-hidden relative" ref={trackHeaderRef}>
                  <div style={{ transform: `translateY(-${scrollContainerRef.current?.scrollTop || 0}px)` }}>
                     {project.tracks.map((track, idx) => (
                         <TrackLane 
@@ -325,12 +357,7 @@ const Arranger: React.FC<ArrangerProps> = ({
         <div 
             ref={scrollContainerRef}
             className="flex-1 overflow-auto relative bg-zinc-950"
-            onScroll={() => {
-                if (trackHeaderRef.current) {
-                    const el = trackHeaderRef.current.querySelector('div[style*="translateY"]');
-                    if (el) (el as HTMLElement).style.transform = `translateY(-${scrollContainerRef.current?.scrollTop || 0}px)`;
-                }
-            }}
+            onScroll={handleScroll}
             onWheel={handleWheel}
         >
             {/* Empty State Overlay */}
@@ -420,15 +447,23 @@ const Arranger: React.FC<ArrangerProps> = ({
                                         }}
                                       >
                                           <div className="absolute inset-0 opacity-80 pointer-events-none bg-black/20">
-                                               <Waveform 
-                                                    bufferKey={clip.bufferKey} 
-                                                    color="rgba(255,255,255,0.8)" 
-                                                    offset={clip.offset}
-                                                    duration={clip.duration}
-                                                    fadeIn={clip.fadeIn}
-                                                    fadeOut={clip.fadeOut}
-                                                    gain={clipGain}
-                                               />
+                                               {clip.bufferKey ? (
+                                                   <Waveform 
+                                                        bufferKey={clip.bufferKey} 
+                                                        color="rgba(255,255,255,0.8)" 
+                                                        offset={clip.offset}
+                                                        duration={clip.duration}
+                                                        fadeIn={clip.fadeIn}
+                                                        fadeOut={clip.fadeOut}
+                                                        gain={clipGain}
+                                                   />
+                                               ) : (
+                                                   <MidiClipView 
+                                                        notes={clip.notes}
+                                                        duration={clip.duration}
+                                                        color="rgba(255,255,255,0.8)"
+                                                   />
+                                               )}
                                           </div>
                                           
                                           <div className="absolute top-0 left-0 bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-br-md pointer-events-none flex items-center gap-1">
@@ -438,15 +473,19 @@ const Arranger: React.FC<ArrangerProps> = ({
 
                                           {isSelected && (
                                               <>
-                                                {/* Gain Overlay & Knob */}
-                                                <div className="absolute left-0 right-0 h-px bg-white/50 pointer-events-none" style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%` }} />
-                                                <div className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white/80 rounded-full shadow-md cursor-ns-resize z-30 hover:scale-125 transition-transform flex items-center justify-center group/gain"
-                                                    style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%`, marginTop: '-8px' }}
-                                                    onPointerDown={(e) => handleClipPointerDown(e, clip, 'GAIN')}
-                                                >
-                                                    <div className="w-1.5 h-1.5 bg-black/50 rounded-full" />
-                                                    <div className="absolute -top-6 bg-black/80 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover/gain:opacity-100 whitespace-nowrap pointer-events-none">{clipGain.toFixed(2)}x</div>
-                                                </div>
+                                                {/* Gain Overlay & Knob (Only for audio clips) */}
+                                                {clip.bufferKey && (
+                                                    <>
+                                                        <div className="absolute left-0 right-0 h-px bg-white/50 pointer-events-none" style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%` }} />
+                                                        <div className="absolute left-1/2 -translate-x-1/2 w-4 h-4 bg-white/80 rounded-full shadow-md cursor-ns-resize z-30 hover:scale-125 transition-transform flex items-center justify-center group/gain"
+                                                            style={{ top: `${Math.max(0, Math.min(100, (1 - (clipGain / 2.0)) * 100))}%`, marginTop: '-8px' }}
+                                                            onPointerDown={(e) => handleClipPointerDown(e, clip, 'GAIN')}
+                                                        >
+                                                            <div className="w-1.5 h-1.5 bg-black/50 rounded-full" />
+                                                            <div className="absolute -top-6 bg-black/80 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover/gain:opacity-100 whitespace-nowrap pointer-events-none">{clipGain.toFixed(2)}x</div>
+                                                        </div>
+                                                    </>
+                                                )}
 
                                                 {/* Resize Handles */}
                                                 <div className="absolute left-0 top-0 bottom-0 w-3 bg-white/10 hover:bg-white/30 cursor-ew-resize z-20 flex items-center justify-center" onPointerDown={(e) => handleClipPointerDown(e, clip, 'TRIM_START')}>

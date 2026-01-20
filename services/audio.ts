@@ -1,5 +1,5 @@
 
-import { Clip, Track, ProjectState, TanpuraState, TablaState } from '../types';
+import { Clip, Track, ProjectState, TanpuraState, TablaState, InstrumentConfig } from '../types';
 import { audioBufferToWav, makeDistortionCurve } from './utils';
 
 // Standardized Interface for both Live and Offline contexts
@@ -22,12 +22,124 @@ interface LiveTrackChannel extends AudioGraphChain {
     analyser: AnalyserNode;
     // Cache for Dirty Checking to prevent redundant AudioParam updates
     lastState: Partial<Track>;
+    // Synth Voices for Live Input (MIDI Keyboard)
+    activeVoices: Map<number, SynthVoice>; // MIDI Note -> Voice
+}
+
+class SynthVoice {
+    osc: OscillatorNode;
+    env: GainNode;
+    ctx: BaseAudioContext;
+    config: InstrumentConfig;
+    isStopped: boolean = false;
+    
+    // Updated constructor to take explicit startTime and BaseAudioContext
+    constructor(ctx: BaseAudioContext, destination: AudioNode, freq: number, config: InstrumentConfig, velocity: number = 127, startTime: number) {
+        this.ctx = ctx;
+        this.config = config;
+        
+        // Velocity Scaling (0-1)
+        const velGain = Math.pow(velocity / 127, 1.5);
+
+        this.osc = ctx.createOscillator();
+        this.osc.type = config.preset;
+        this.osc.frequency.value = freq;
+        
+        this.env = ctx.createGain();
+        this.env.gain.value = 0;
+        
+        this.osc.connect(this.env);
+        this.env.connect(destination);
+        
+        const { attack, decay, sustain } = this.config;
+        const now = startTime;
+        
+        this.osc.start(now);
+        
+        // Attack
+        this.env.gain.cancelScheduledValues(now);
+        this.env.gain.setValueAtTime(0, now);
+        this.env.gain.linearRampToValueAtTime(velGain, now + Math.max(0.005, attack)); 
+        // Decay to Sustain
+        this.env.gain.exponentialRampToValueAtTime(Math.max(0.001, sustain * velGain), now + attack + decay);
+    }
+
+    triggerRelease(releaseTime?: number) {
+        if (this.isStopped) return;
+        const now = releaseTime ?? this.ctx.currentTime;
+        const { release } = this.config;
+        
+        // Cancel any future scheduled values
+        try {
+            this.env.gain.cancelScheduledValues(now);
+            
+            // Ramp to 0
+            this.env.gain.setTargetAtTime(0, now, release / 3);
+            
+            const stopTime = now + release + 0.1;
+            this.osc.stop(stopTime);
+            
+            // Cleanup schedule only if running in real-time context
+            if (this.ctx instanceof AudioContext) {
+                setTimeout(() => this.disconnect(), (release + 0.2) * 1000);
+            }
+        } catch(e) {
+            // Context might be closed
+        }
+    }
+    
+    stopNow() {
+        if (this.isStopped) return;
+        try {
+            this.env.gain.cancelScheduledValues(this.ctx.currentTime);
+            this.env.gain.setValueAtTime(0, this.ctx.currentTime);
+            this.osc.stop();
+            this.disconnect();
+        } catch(e) {}
+    }
+
+    disconnect() {
+        if (this.isStopped) return;
+        this.isStopped = true;
+        try {
+            this.osc.disconnect();
+            this.env.disconnect();
+        } catch (e) {
+            console.warn("Error disconnecting SynthVoice", e);
+        }
+    }
 }
 
 const NOTE_FREQS: Record<string, number> = {
   'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.63, 'F': 349.23,
   'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88
 };
+
+function midiToFreq(note: number) {
+    return 440 * Math.pow(2, (note - 69) / 12);
+}
+
+// Inline Worker for Peak Generation to avoid main thread blocking
+const PEAK_WORKER_CODE = `
+self.onmessage = function(e) {
+  const { channelData, samplesPerPeak } = e.data;
+  const length = Math.ceil(channelData.length / samplesPerPeak);
+  const peaks = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const start = i * samplesPerPeak;
+    const end = Math.min(start + samplesPerPeak, channelData.length);
+    let max = 0;
+    // Stride optimization: don't check every sample for zoomed out view
+    const stride = 10; 
+    for (let j = start; j < end; j += stride) {
+      const val = Math.abs(channelData[j]);
+      if (val > max) max = val;
+    }
+    peaks[i] = max;
+  }
+  self.postMessage(peaks);
+};
+`;
 
 class AudioEngine {
   ctx: AudioContext;
@@ -64,8 +176,9 @@ class AudioEngine {
   peaks: Map<string, Float32Array> = new Map(); 
   
   activeSources: Map<string, AudioBufferSourceNode> = new Map();
+  // Track scheduled synth voices for playback to stop them
+  scheduledSynthVoices: Set<SynthVoice> = new Set();
   
-  // Persistent nodes for each track: ID -> Channel Strip
   trackChannels: Map<string, LiveTrackChannel> = new Map();
 
   private _isPlaying: boolean = false;
@@ -104,6 +217,7 @@ class AudioEngine {
   private inputAnalyser: AnalyserNode; 
 
   private noiseBuffer: AudioBuffer | null = null;
+  private peakWorker: Worker | null = null;
 
   constructor() {
     this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -172,6 +286,20 @@ class AudioEngine {
     this.setupRouting();
     this.loadImpulseResponse();
     this.createNoiseBuffer();
+    this.initPeakWorker();
+  }
+
+  initPeakWorker() {
+      if (typeof Blob !== 'undefined' && typeof Worker !== 'undefined') {
+          const blob = new Blob([PEAK_WORKER_CODE], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          this.peakWorker = new Worker(url);
+          this.peakWorker.onmessage = (e) => {
+              // We need a mechanism to map result back to key. 
+              // For simplicity in this single-worker implementation, we can't easily map back without ID.
+              // Updating computePeaks to async pattern is cleaner.
+          };
+      }
   }
 
   async resumeContext() {
@@ -185,7 +313,6 @@ class AudioEngine {
     this.buffers.clear();
     this.peaks.clear();
     this.loadingPromises.clear();
-    // Use the cleanup method
     this.trackChannels.forEach(ch => this.disconnectChannel(ch));
     this.trackChannels.clear();
   }
@@ -204,7 +331,6 @@ class AudioEngine {
   }
 
   setupRouting() {
-    // Master Routing: Gain -> Low -> Mid -> High -> Compressor -> Analyser -> Dest
     this.masterGain.connect(this.masterLow);
     this.masterLow.connect(this.masterMid);
     this.masterMid.connect(this.masterHigh);
@@ -212,15 +338,12 @@ class AudioEngine {
     this.compressor.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
 
-    // Monitor Routing
     this.monitorGain.connect(this.masterGain);
 
-    // -- Reverb Routing --
     this.reverbInput.connect(this.reverbNode);
     this.reverbNode.connect(this.reverbReturn);
     this.reverbReturn.connect(this.masterGain);
 
-    // -- Delay Routing --
     this.delayNode.delayTime.value = 0.4;
     this.delayReturn.gain.value = 0.0; 
     this.delayInput.connect(this.delayNode);
@@ -232,7 +355,6 @@ class AudioEngine {
     this.delayNode.connect(this.delayReturn);
     this.delayReturn.connect(this.masterGain);
 
-    // -- Chorus Routing --
     this.chorusDelay.delayTime.value = 0.03; 
     this.chorusLFO.type = 'sine';
     this.chorusLFO.frequency.value = 1.5; 
@@ -280,7 +402,6 @@ class AudioEngine {
     this.reverbNode.buffer = impulse;
   }
 
-  // ... (loadAudio, computePeaks, getPeaks, processAudioBuffer omitted for brevity)
   async loadAudio(key: string, blob: Blob): Promise<AudioBuffer> {
     if (this.buffers.has(key)) return this.buffers.get(key)!;
     if (this.loadingPromises.has(key)) return this.loadingPromises.get(key)!;
@@ -307,24 +428,34 @@ class AudioEngine {
   computePeaks(key: string, buffer: AudioBuffer) {
       if (buffer.length === 0) return;
       const samplesPerPeak = Math.floor(buffer.sampleRate / 100);
-      if (samplesPerPeak === 0) return;
-
-      const length = Math.ceil(buffer.length / samplesPerPeak);
-      const peaks = new Float32Array(length);
-      const data = buffer.getChannelData(0); 
       
-      const stride = 10; 
-      for (let i = 0; i < length; i++) {
-          const start = i * samplesPerPeak;
-          const end = Math.min(start + samplesPerPeak, buffer.length);
-          let max = 0;
-          for (let j = start; j < end; j += stride) {
-              const val = Math.abs(data[j]);
-              if (val > max) max = val;
+      if (this.peakWorker) {
+          const channelData = buffer.getChannelData(0);
+          // Post message to worker
+          const listener = (e: MessageEvent) => {
+              this.peaks.set(key, e.data);
+              this.peakWorker?.removeEventListener('message', listener);
+          };
+          this.peakWorker.addEventListener('message', listener);
+          this.peakWorker.postMessage({ channelData, samplesPerPeak });
+      } else {
+          // Fallback sync computation (if worker fails or testing env)
+          const length = Math.ceil(buffer.length / samplesPerPeak);
+          const peaks = new Float32Array(length);
+          const data = buffer.getChannelData(0); 
+          const stride = 10; 
+          for (let i = 0; i < length; i++) {
+              const start = i * samplesPerPeak;
+              const end = Math.min(start + samplesPerPeak, buffer.length);
+              let max = 0;
+              for (let j = start; j < end; j += stride) {
+                  const val = Math.abs(data[j]);
+                  if (val > max) max = val;
+              }
+              peaks[i] = max;
           }
-          peaks[i] = max;
+          this.peaks.set(key, peaks);
       }
-      this.peaks.set(key, peaks);
   }
 
   getPeaks(key: string): Float32Array | undefined {
@@ -429,15 +560,63 @@ class AudioEngine {
       const liveChannel: LiveTrackChannel = {
           ...chain,
           analyser,
-          lastState: {} // Initialize empty state
+          lastState: {},
+          activeVoices: new Map()
       };
       this.trackChannels.set(trackId, liveChannel);
     }
     return this.trackChannels.get(trackId)!;
   }
 
-  // ... (applyTrackSettings, syncTracks, syncInstruments, etc. omitted if unchanged)
-  
+  triggerNoteAttack(trackId: string, note: number, config: InstrumentConfig, velocity: number = 127) {
+      const channel = this.getTrackChannel(trackId);
+      
+      // Polyphony Limit (Voice Stealing)
+      if (channel.activeVoices.size >= 16) {
+          const oldestNote = channel.activeVoices.keys().next().value;
+          if (oldestNote !== undefined) {
+              const oldVoice = channel.activeVoices.get(oldestNote);
+              oldVoice?.triggerRelease();
+              channel.activeVoices.delete(oldestNote);
+          }
+      }
+
+      // Stop existing voice for same note
+      if (channel.activeVoices.has(note)) {
+          channel.activeVoices.get(note)?.triggerRelease();
+      }
+      
+      const freq = midiToFreq(note);
+      // Pass currentTime specifically
+      const voice = new SynthVoice(this.ctx, channel.input, freq, config, velocity, this.ctx.currentTime);
+      channel.activeVoices.set(note, voice);
+  }
+
+  triggerNoteRelease(trackId: string, note: number) {
+      const channel = this.getTrackChannel(trackId);
+      if (channel.activeVoices.has(note)) {
+          const voice = channel.activeVoices.get(note)!;
+          voice.triggerRelease();
+          // Clean up map entry immediately (voice cleans itself up via onended)
+          channel.activeVoices.delete(note);
+      }
+  }
+
+  scheduleNote(trackId: string, note: number, startTime: number, duration: number, config: InstrumentConfig, velocity: number = 127) {
+      const channel = this.getTrackChannel(trackId);
+      const freq = midiToFreq(note);
+      // NOTE: scheduleNote creates a voice that self-terminates after duration
+      const voice = new SynthVoice(this.ctx, channel.input, freq, config, velocity, startTime);
+      voice.triggerRelease(startTime + duration);
+      
+      // Track it to stop it if transport stops
+      this.scheduledSynthVoices.add(voice);
+      // Clean up reference on stop if it happens naturally
+      setTimeout(() => {
+          this.scheduledSynthVoices.delete(voice);
+      }, (duration + config.release + 1) * 1000); 
+  }
+
   applyTrackSettings(chain: AudioGraphChain, track: Track, currentTime: number, isOffline: boolean) {
       const { gain, panner, lowFilter, midFilter, highFilter, compressor, distortionNode, reverbSend, delaySend, chorusSend } = chain;
       const liveChain = !isOffline ? (chain as LiveTrackChannel) : null;
@@ -550,12 +729,11 @@ class AudioEngine {
     this._startTime = this.ctx.currentTime - startTime;
     this._pauseTime = startTime;
     
-    // SAFETY: Clamp BPM to reasonable values to prevent infinite loops in scheduler
     const safeBpm = Math.max(20, Math.min(999, this.bpm || 120));
     const secondsPerBeat = 60.0 / safeBpm;
     
     const [numerator, denominator] = this.timeSignature;
-    const beatMultiplier = 4 / denominator; // e.g. 8 -> 0.5 (eighth notes are twice as fast as quarters)
+    const beatMultiplier = 4 / denominator; 
     const secondsPerTick = secondsPerBeat * beatMultiplier;
 
     this.currentBeat = Math.ceil(startTime / secondsPerTick);
@@ -567,27 +745,30 @@ class AudioEngine {
     this.nextTablaBeatTime = this.ctx.currentTime + 0.1;
     this.currentTablaBeat = 0;
     this.syncTracks(tracks);
+    
     clips.forEach(clip => {
       if (clip.muted) return;
-      const buffer = this.buffers.get(clip.bufferKey);
-      if (!buffer) return;
-      const channel = this.getTrackChannel(clip.trackId);
-      const when = this.ctx.currentTime + (clip.start - startTime);
-      const offset = clip.offset;
-      const duration = clip.duration;
-      if (when < this.ctx.currentTime) {
-         const startDiff = startTime - clip.start;
-         if (startDiff >= 0 && startDiff < duration) {
-            this.scheduleSource(buffer, this.ctx.currentTime, offset + startDiff, duration - startDiff, channel.input, clip, startDiff);
-         }
-      } else {
-         this.scheduleSource(buffer, when, offset, duration, channel.input, clip, 0);
+      if (clip.bufferKey) {
+          // Audio Clip
+          const buffer = this.buffers.get(clip.bufferKey);
+          if (!buffer) return;
+          const channel = this.getTrackChannel(clip.trackId);
+          const when = this.ctx.currentTime + (clip.start - startTime);
+          const offset = clip.offset;
+          const duration = clip.duration;
+          if (when < this.ctx.currentTime) {
+             const startDiff = startTime - clip.start;
+             if (startDiff >= 0 && startDiff < duration) {
+                this.scheduleSource(buffer, this.ctx.currentTime, offset + startDiff, duration - startDiff, channel.input, clip, startDiff);
+             }
+          } else {
+             this.scheduleSource(buffer, when, offset, duration, channel.input, clip, 0);
+          }
       }
+      // MIDI clips are handled in scheduler
     });
   }
 
-  // scheduleSource, stop, pause, panic, setMaster* omitted for brevity (unchanged)
-  
   scheduleSource(buffer: AudioBuffer, when: number, offset: number, playDuration: number, destination: AudioNode, clip: Clip, elapsedClipTime: number, ctx: BaseAudioContext = this.ctx) {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -645,6 +826,15 @@ class AudioEngine {
       try { source.stop(); } catch(_e) {}
     });
     this.activeSources.clear();
+    
+    // Stop scheduled synth voices
+    this.scheduledSynthVoices.forEach(voice => voice.stopNow());
+    this.scheduledSynthVoices.clear();
+
+    this.trackChannels.forEach(ch => {
+        ch.activeVoices.forEach(v => v.triggerRelease());
+        ch.activeVoices.clear();
+    });
     this._isPlaying = false;
   }
 
@@ -702,19 +892,16 @@ class AudioEngine {
   measureMasterLevel(): number { return this.getRMS(this.masterAnalyser); }
   measureInputLevel(): number { return this.getRMS(this.inputAnalyser); }
 
-  scheduler() {
+  scheduler(projectTracks?: Track[], projectClips?: Clip[]) {
     if (!this._isPlaying) return;
-    const lookahead = 0.1;
+    const lookahead = 0.15; // Increased slightly for note stability
     
-    // SAFETY: Clamp BPM again here just in case it wasn't caught in play()
     const safeBpm = Math.max(20, Math.min(999, this.bpm || 120));
     const secondsPerBeat = 60.0 / safeBpm;
-    
     const [numerator, denominator] = this.timeSignature;
     const beatMultiplier = 4 / denominator; 
     const secondsPerTick = secondsPerBeat * beatMultiplier;
 
-    // Prevent infinite loop if secondsPerTick is 0 or NaN (should be caught by clamp but being extra safe)
     if (secondsPerTick <= 0 || !Number.isFinite(secondsPerTick)) return;
 
     while (this.nextNoteTime < this.ctx.currentTime + lookahead) {
@@ -725,12 +912,13 @@ class AudioEngine {
         this.currentBeat++;
     }
     
+    // Tanpura & Tabla logic
     if (this.tanpuraConfig?.enabled) {
         while (this.nextTanpuraNoteTime < this.ctx.currentTime + lookahead) {
             const freqs = this.getTanpuraFreqs(this.tanpuraConfig);
             const freq = freqs[this.currentTanpuraString];
             this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0, this.tanpuraConfig.fineTune || 0);
-            const interval = 60 / Math.max(1, this.tanpuraConfig.tempo); // Safety clamp
+            const interval = 60 / Math.max(1, this.tanpuraConfig.tempo);
             this.nextTanpuraNoteTime += interval;
             this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
         }
@@ -740,286 +928,379 @@ class AudioEngine {
             const pattern = this.getTablaPattern(this.tablaConfig.taal);
             const hit = pattern[this.currentTablaBeat % pattern.length];
             this.playTablaHit(this.ctx, this.tablaGain, this.tablaConfig.key, hit as any, this.nextTablaBeatTime);
-            const beatTime = 60 / Math.max(1, this.tablaConfig.bpm); // Safety clamp
+            const beatTime = 60 / Math.max(1, this.tablaConfig.bpm);
             this.nextTablaBeatTime += beatTime;
             this.currentTablaBeat++;
          }
     }
-  }
 
-  scheduleClick(beatNumber: number, time: number) {
-    const [numerator] = this.timeSignature;
-    const isDownbeat = beatNumber % numerator === 0;
-    
-    // Frequency: High for downbeat, low for others
-    const freq = isDownbeat ? 1200 : 800;
+    // Schedule MIDI Notes from Clips
+    if (projectTracks && projectClips) {
+        try {
+            const now = this.ctx.currentTime;
+            const schedulerWindowStart = now - this._startTime; // Project time
+            const schedulerWindowEnd = schedulerWindowStart + lookahead;
 
-    if (this.metronomeSound === 'click') {
-        const osc = this.ctx.createOscillator();
-        const env = this.ctx.createGain();
-        osc.frequency.setValueAtTime(freq, time);
-        osc.type = 'square';
-        env.gain.setValueAtTime(0.3, time);
-        env.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 2000;
-        osc.connect(filter);
-        filter.connect(env);
-        env.connect(this.metronomeGain);
-        osc.start(time);
-        osc.stop(time + 0.1);
-    } else if (this.metronomeSound === 'hihat') {
-        if (!this.noiseBuffer) return;
-        const src = this.ctx.createBufferSource();
-        src.buffer = this.noiseBuffer;
-        const env = this.ctx.createGain();
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.value = 8000;
-        // Accent volume
-        const vol = isDownbeat ? 0.5 : 0.2;
-        env.gain.setValueAtTime(vol, time);
-        env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-        src.connect(filter);
-        filter.connect(env);
-        env.connect(this.metronomeGain);
-        src.start(time);
-        src.stop(time + 0.05);
-    } else {
-        // Beep
-        const osc = this.ctx.createOscillator();
-        const env = this.ctx.createGain();
-        osc.frequency.value = isDownbeat ? 1000 : 800;
-        env.gain.value = 1;
-        env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-        osc.connect(env);
-        env.connect(this.metronomeGain);
-        osc.start(time);
-        osc.stop(time + 0.05);
-    }
-  }
+            projectClips.forEach(clip => {
+                if (clip.muted || !clip.notes) return;
+                const track = projectTracks.find(t => t.id === clip.trackId);
+                if (!track || track.type !== 'instrument' || !track.instrument) return;
 
-  // ... (playCountIn, getAudioDevices, setOutputDevice, initInput, closeInput, startRecording, stopRecording, playTanpuraNote, playTablaHit, getTanpuraFreqs, getTablaPattern, renderProject omitted)
-  // Re-including critical missing methods to ensure file is complete/valid
-  
-  async playCountIn(bars: number, bpm: number): Promise<void> {
-      await this.resumeContext();
-      const secondsPerBeat = 60 / bpm;
-      const [numerator, denominator] = this.timeSignature;
-      const beatMultiplier = 4 / denominator;
-      const secondsPerTick = secondsPerBeat * beatMultiplier;
-      
-      const beatsToPlay = bars * numerator;
-      const now = this.ctx.currentTime;
-      for (let i = 0; i < beatsToPlay; i++) {
-          this.scheduleClick(i, now + (i * secondsPerTick));
-      }
-      return new Promise(resolve => {
-          setTimeout(resolve, beatsToPlay * secondsPerTick * 1000);
-      });
-  }
+                const clipStart = clip.start;
+                const clipEnd = clip.start + clip.duration;
+                const clipOffset = clip.offset || 0;
+                
+                // If the clip is not in the scheduling window, skip it
+                if (clipEnd < schedulerWindowStart || clipStart > schedulerWindowEnd) return;
 
-  async getAudioDevices() {
-      try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const inputs = devices.filter(d => d.kind === 'audioinput');
-          const outputs = devices.filter(d => d.kind === 'audiooutput');
-          return { inputs, outputs };
-      } catch (e) {
-          console.error("Error enumerating devices:", e);
-          return { inputs: [], outputs: [] };
-      }
-  }
+                const loopLength = clip.loopLength || clip.duration; // Use valid loop length or duration
 
-  async setOutputDevice(deviceId: string) {
-      if (this.ctx && typeof (this.ctx as any).setSinkId === 'function') {
-          try {
-              await (this.ctx as any).setSinkId(deviceId);
-          } catch (e) { console.error("Failed to set output device:", e); }
-      }
-  }
-
-  async initInput(deviceId?: string): Promise<MediaStream> {
-      if (this.activeStream && this.selectedInputDeviceId === deviceId) return this.activeStream;
-      this.closeInput();
-      this.selectedInputDeviceId = deviceId;
-      const constraints: MediaStreamConstraints = {
-          audio: deviceId ? { deviceId: { exact: deviceId }, echoCancellation: false, autoGainControl: false, noiseSuppression: false } 
-                          : { echoCancellation: false, autoGainControl: false, noiseSuppression: false }
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      this.activeStream = stream;
-      this.monitorNode = this.ctx.createMediaStreamSource(stream);
-      this.monitorNode.connect(this.inputAnalyser);
-      return stream;
-  }
-
-  closeInput() {
-      if (this.monitorNode) { this.monitorNode.disconnect(); this.monitorNode = null; }
-      if (this.activeStream) { this.activeStream.getTracks().forEach(t => t.stop()); this.activeStream = null; }
-      try { this.inputAnalyser.disconnect(this.monitorGain); } catch(e) { }
-      this.monitorGain.gain.value = 0;
-  }
-
-  async startRecording(monitor: boolean = false) {
-      const stream = await this.initInput(this.selectedInputDeviceId);
-      if (monitor) { this.inputAnalyser.connect(this.monitorGain); this.monitorGain.gain.value = 1; } 
-      else { try { this.inputAnalyser.disconnect(this.monitorGain); } catch(e) {} this.monitorGain.gain.value = 0; }
-      const types = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav'];
-      const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
-      this.recordingMimeType = mimeType;
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType });
-      this.recordedChunks = [];
-      this.mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.recordedChunks.push(e.data); };
-      this.mediaRecorder.start();
-  }
-
-  async stopRecording(): Promise<Blob | undefined> {
-      return new Promise((resolve) => {
-          try { this.inputAnalyser.disconnect(this.monitorGain); } catch(e) {}
-          this.monitorGain.gain.value = 0;
-          if (!this.mediaRecorder) return resolve(undefined);
-          this.mediaRecorder.onstop = () => {
-              const blob = new Blob(this.recordedChunks, { type: this.recordingMimeType });
-              this.recordedChunks = [];
-              this.mediaRecorder = null;
-              resolve(blob);
-          };
-          if (this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop();
-          else resolve(undefined);
-      });
-  }
-
-  playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number, detuneCents: number = 0) {
-      const osc1 = ctx.createOscillator(); osc1.type = 'sawtooth'; osc1.frequency.value = freq; osc1.detune.value = detuneCents;
-      const osc2 = ctx.createOscillator(); osc2.type = 'sawtooth'; osc2.frequency.value = freq * 1.0015; osc2.detune.value = detuneCents + 5; 
-      const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 2000; filter.Q.value = 1;
-      const lfo = ctx.createOscillator(); lfo.frequency.value = 4; 
-      const lfoGain = ctx.createGain(); lfoGain.gain.value = 300; 
-      lfo.connect(lfoGain); lfoGain.connect(filter.frequency); lfo.start(time); lfo.stop(time + duration);
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0, time); gain.gain.linearRampToValueAtTime(0.25, time + 0.1); gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-      osc1.connect(filter); osc2.connect(filter); filter.connect(gain); gain.connect(destination);
-      osc1.start(time); osc1.stop(time + duration); osc2.start(time); osc2.stop(time + duration);
-  }
-
-  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, hit: string, time: number) {
-    const baseFreq = NOTE_FREQS[key] || 261.63;
-    if (['dha', 'dhin', 'ge', 'ghe'].includes(hit)) {
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.frequency.setValueAtTime(baseFreq / 2, time); osc.frequency.linearRampToValueAtTime((baseFreq / 2) * 1.15, time + 0.05); osc.frequency.linearRampToValueAtTime(baseFreq / 2, time + 0.35);
-        gain.gain.setValueAtTime(0, time); gain.gain.linearRampToValueAtTime(0.9, time + 0.02); gain.gain.exponentialRampToValueAtTime(0.01, time + 0.5);
-        osc.connect(gain); gain.connect(destination); osc.start(time); osc.stop(time + 0.5);
-    }
-    if (['dha', 'dhin', 'tin', 'na'].includes(hit)) {
-        const carrier = ctx.createOscillator(); const modulator = ctx.createOscillator(); const modGain = ctx.createGain(); const gain = ctx.createGain();
-        carrier.frequency.setValueAtTime(baseFreq, time); modulator.frequency.setValueAtTime(baseFreq * 1.48, time); 
-        const modIndex = 250; modGain.gain.setValueAtTime(modIndex, time); modGain.gain.exponentialRampToValueAtTime(1, time + 0.1); 
-        modulator.connect(modGain); modGain.connect(carrier.frequency);
-        gain.gain.setValueAtTime(0, time); gain.gain.linearRampToValueAtTime(0.6, time + 0.01); gain.gain.exponentialRampToValueAtTime(0.001, time + 0.6);
-        carrier.connect(gain); gain.connect(destination); carrier.start(time); carrier.stop(time + 0.6); modulator.start(time); modulator.stop(time + 0.6);
-    }
-    if (['ka', 'ke', 'kat', 'na'].includes(hit)) { 
-        if (this.noiseBuffer) {
-            const noise = ctx.createBufferSource(); noise.buffer = this.noiseBuffer;
-            const filter = ctx.createBiquadFilter(); filter.type = 'highpass'; filter.frequency.value = 1500;
-            const gain = ctx.createGain(); gain.gain.setValueAtTime(hit === 'na' ? 0.3 : 0.5, time); gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
-            noise.connect(filter); filter.connect(gain); gain.connect(destination); noise.start(time);
+                clip.notes.forEach(note => {
+                    // Base timeline position of the note in the first iteration
+                    // Note start relative to clip start (ignoring loop)
+                    const baseTime = clipStart - clipOffset + note.start;
+                    
+                    let startK = 0;
+                    if (loopLength > 0) {
+                        // Find first iteration that could be within the scheduler window
+                        // baseTime + k*loopLength >= schedulerWindowStart
+                        startK = Math.ceil((schedulerWindowStart - baseTime) / loopLength);
+                        // Ensure we don't look at iterations before the clip's valid content start if offset is involved
+                        // But typically MIDI loop starts at 0 relative to clip content.
+                        startK = Math.max(0, startK);
+                    }
+                    
+                    // Check a few iterations to be safe
+                    let k = startK;
+                    let iterationsChecked = 0;
+                    
+                    while (iterationsChecked < 100) { 
+                        const absStart = baseTime + (k * loopLength);
+                        
+                        if (absStart >= schedulerWindowEnd) break; // Future notes, done with this note
+                        
+                        // Handle trimming at start: absStart >= clipStart
+                        if (absStart < clipStart) {
+                            k++;
+                            iterationsChecked++;
+                            continue;
+                        }
+                        
+                        if (absStart >= clipEnd) break; // Past clip end
+                        
+                        // Truncate duration if it extends past clip end
+                        let duration = note.duration;
+                        if (absStart + duration > clipEnd) {
+                            duration = clipEnd - absStart;
+                        }
+                        
+                        // Schedule it if within window
+                        if (absStart >= schedulerWindowStart) {
+                             const schedTime = this._startTime + absStart;
+                             this.scheduleNote(
+                                track.id, 
+                                note.note, 
+                                schedTime, 
+                                duration, 
+                                track.instrument!, 
+                                note.velocity
+                            );
+                        }
+                        
+                        if (loopLength <= 0) break; // Should not happen if duration > 0
+                        k++;
+                        iterationsChecked++;
+                    }
+                });
+            });
+        } catch (e) {
+            console.error("Error in MIDI scheduler", e);
         }
     }
   }
 
-  getTanpuraFreqs(config: TanpuraState): number[] {
-      const sa = NOTE_FREQS[config.key] || 261.63;
-      const lowerSa = sa / 2;
-      let firstStringFreq = sa * 0.75; 
-      if (config.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; 
-      if (config.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; 
-      if (config.tuning === 'Pa') firstStringFreq = sa * 0.75; 
-      return [firstStringFreq, sa, sa, lowerSa];
+  // Metronome
+  scheduleClick(beat: number, time: number) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.connect(gain);
+      gain.connect(this.metronomeGain);
+
+      if (this.metronomeSound === 'beep') {
+          osc.frequency.value = beat % 4 === 0 ? 1000 : 800;
+          osc.type = 'sine';
+      } else if (this.metronomeSound === 'click') {
+          osc.frequency.value = beat % 4 === 0 ? 1200 : 800; 
+          osc.type = 'square'; 
+      } else {
+          osc.type = 'square'; 
+          osc.frequency.value = 8000;
+      }
+
+      osc.start(time);
+      osc.stop(time + 0.05);
+      
+      gain.gain.setValueAtTime(0.5, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
   }
 
-  public getTablaPattern(taal: string): string[] {
-      const patterns: Record<string, string[]> = {
-             'TeenTaal': ['dha', 'dhin', 'dhin', 'dha', 'dha', 'dhin', 'dhin', 'dha', 'dha', 'tin', 'tin', 'na', 'na', 'dhin', 'dhin', 'dha'],
-             'Keherwa': ['dha', 'ge', 'na', 'tin', 'na', 'ka', 'dhin', 'na'],
-             'Dadra': ['dha', 'dhin', 'na', 'dha', 'tin', 'na']
+  // Tanpura
+  getTanpuraFreqs(config: TanpuraState): number[] {
+      const rootFreq = NOTE_FREQS[config.key] || 261.63; // Middle C
+      
+      const sa = rootFreq;
+      const saLow = sa / 2;
+      
+      let firstStringFreq = saLow * 1.5; // Pa lower
+      if (config.tuning === 'Ma') firstStringFreq = saLow * 1.333;
+      if (config.tuning === 'Ni') firstStringFreq = saLow * 1.875;
+
+      return [firstStringFreq, sa, sa, saLow];
+  }
+
+  playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number, fineTune: number) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth'; 
+      
+      osc.frequency.value = freq;
+      osc.detune.value = fineTune;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 2000;
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(destination);
+
+      osc.start(time);
+      osc.stop(time + duration);
+
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(0.2, time + duration * 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+  }
+
+  // Tabla
+  getTablaPattern(taal: string): string[] {
+      switch (taal) {
+          case 'TeenTaal': return ['Dha', 'Dhin', 'Dhin', 'Dha', 'Dha', 'Dhin', 'Dhin', 'Dha', 'Dha', 'Tin', 'Tin', 'Ta', 'Ta', 'Dhin', 'Dhin', 'Dha'];
+          case 'Keherwa': return ['Dha', 'Ge', 'Na', 'Ti', 'Na', 'Ka', 'Dhin', 'Na'];
+          case 'Dadra': return ['Dha', 'Dhin', 'Na', 'Dha', 'Tin', 'Na'];
+          default: return ['Dha'];
+      }
+  }
+
+  playTablaHit(ctx: BaseAudioContext, destination: AudioNode, key: string, hit: string, time: number) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(destination);
+      
+      const rootFreq = NOTE_FREQS[key] || 261.63;
+      
+      if (['Dha', 'Dhin', 'Ga', 'Ge'].includes(hit)) {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(100, time);
+          osc.frequency.exponentialRampToValueAtTime(80, time + 0.3);
+          gain.gain.setValueAtTime(0.8, time);
+          gain.gain.exponentialRampToValueAtTime(0.01, time + 0.4);
+          osc.start(time);
+          osc.stop(time + 0.4);
+      }
+      
+      if (['Dha', 'Dhin', 'Ta', 'Na', 'Tin'].includes(hit)) {
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.connect(gain2);
+          gain2.connect(destination);
+          
+          osc2.type = 'triangle';
+          osc2.frequency.setValueAtTime(rootFreq * 2, time); 
+          gain2.gain.setValueAtTime(0.4, time);
+          gain2.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
+          
+          osc2.start(time);
+          osc2.stop(time + 0.2);
+      }
+  }
+
+  // Recording
+  async startRecording(monitoring: boolean) {
+      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      
+      if (!this.activeStream) {
+          await this.initInput(this.selectedInputDeviceId);
+      }
+      
+      if (!this.activeStream) throw new Error("No input stream available");
+
+      this.mediaRecorder = new MediaRecorder(this.activeStream);
+      this.recordedChunks = [];
+      
+      this.mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) this.recordedChunks.push(e.data);
       };
-      return patterns[taal] || patterns['TeenTaal'];
+      
+      this.mediaRecorder.start();
+      
+      if (monitoring && this.monitorNode) {
+          this.monitorGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.1);
+      } else {
+          this.monitorGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+      }
+  }
+
+  stopRecording(): Promise<Blob> {
+      return new Promise((resolve) => {
+          if (!this.mediaRecorder) {
+              resolve(new Blob()); 
+              return;
+          }
+          
+          this.mediaRecorder.onstop = () => {
+              const blob = new Blob(this.recordedChunks, { type: this.recordingMimeType });
+              this.recordedChunks = [];
+              this.monitorGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+              resolve(blob);
+          };
+          this.mediaRecorder.stop();
+          this.mediaRecorder = null;
+      });
+  }
+
+  async playCountIn(bars: number, bpm: number) {
+      const beats = bars * 4; 
+      const interval = 60 / bpm;
+      const now = this.ctx.currentTime;
+      
+      for (let i = 0; i < beats; i++) {
+          this.scheduleClick(i, now + i * interval);
+      }
+      
+      return new Promise<void>(resolve => {
+          setTimeout(resolve, beats * interval * 1000);
+      });
+  }
+
+  // Audio I/O
+  async getAudioDevices() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return {
+          inputs: devices.filter(d => d.kind === 'audioinput'),
+          outputs: devices.filter(d => d.kind === 'audiooutput')
+      };
+  }
+
+  async initInput(deviceId?: string) {
+      if (this.activeStream) {
+          this.activeStream.getTracks().forEach(t => t.stop());
+      }
+      try {
+          const constraints = deviceId ? { audio: { deviceId: { exact: deviceId } } } : { audio: true };
+          this.activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.selectedInputDeviceId = deviceId;
+          
+          this.monitorNode = this.ctx.createMediaStreamSource(this.activeStream);
+          this.monitorNode.connect(this.inputAnalyser);
+          this.inputAnalyser.connect(this.monitorGain);
+          
+      } catch (e) {
+          console.error("Error accessing microphone", e);
+      }
+  }
+
+  closeInput() {
+      if (this.activeStream) {
+          this.activeStream.getTracks().forEach(t => t.stop());
+          this.activeStream = null;
+      }
+      if (this.monitorNode) {
+          this.monitorNode.disconnect();
+          this.monitorNode = null;
+      }
+  }
+
+  async setOutputDevice(deviceId: string) {
+      // @ts-ignore
+      if (typeof this.ctx.setSinkId === 'function') {
+          // @ts-ignore
+          await this.ctx.setSinkId(deviceId);
+      } else {
+          console.warn("setSinkId not supported");
+      }
   }
 
   async renderProject(project: ProjectState): Promise<Blob> {
-      const endTimes = project.clips.map(c => c.start + c.duration);
-      const maxClipTime = Math.max(0, ...endTimes, project.loopEnd);
-      const duration = maxClipTime + 2; 
-      const offlineCtx = new OfflineAudioContext(2, duration * this.ctx.sampleRate, this.ctx.sampleRate);
+      const maxTime = Math.max(
+          project.loopEnd,
+          ...project.clips.map(c => c.start + c.duration)
+      ) + 2; 
+
+      const sampleRate = 44100;
+      const length = Math.ceil(maxTime * sampleRate);
+      const offlineCtx = new OfflineAudioContext(2, length, sampleRate);
+
+      const masterGain = offlineCtx.createGain();
+      masterGain.gain.value = project.masterVolume;
+      masterGain.connect(offlineCtx.destination);
       
-      const masterGain = offlineCtx.createGain(); masterGain.gain.value = project.masterVolume;
-      const masterLow = offlineCtx.createBiquadFilter(); masterLow.type = 'lowshelf'; masterLow.frequency.value = 200;
-      const masterMid = offlineCtx.createBiquadFilter(); masterMid.type = 'peaking'; masterMid.frequency.value = 1000;
-      const masterHigh = offlineCtx.createBiquadFilter(); masterHigh.type = 'highshelf'; masterHigh.frequency.value = 3000;
-      if (project.masterEq) { masterLow.gain.value = project.masterEq.low; masterMid.gain.value = project.masterEq.mid; masterHigh.gain.value = project.masterEq.high; }
-      
-      const compressor = offlineCtx.createDynamicsCompressor();
-      if (project.masterCompressor) {
-          compressor.threshold.value = project.masterCompressor.threshold; compressor.ratio.value = project.masterCompressor.ratio;
-          compressor.knee.value = project.masterCompressor.knee || 10; compressor.attack.value = project.masterCompressor.attack || 0.05; compressor.release.value = project.masterCompressor.release || 0.25;
-      }
-      masterGain.connect(masterLow); masterLow.connect(masterMid); masterMid.connect(masterHigh); masterHigh.connect(compressor); compressor.connect(offlineCtx.destination);
-      
-      const reverbNode = offlineCtx.createConvolver();
-      if (this.reverbNode.buffer) reverbNode.buffer = this.reverbNode.buffer;
-      const reverbReturn = offlineCtx.createGain(); reverbReturn.gain.value = project.effects.reverb; reverbNode.connect(reverbReturn); reverbReturn.connect(masterGain);
+      for (const track of project.tracks) {
+          if (track.muted) continue;
+          
+          const trackChain = this.createTrackGraph(offlineCtx, masterGain);
+          this.applyTrackSettings(trackChain, track, 0, true); 
+          
+          const trackClips = project.clips.filter(c => c.trackId === track.id);
+          for (const clip of trackClips) {
+              if (clip.muted) continue;
+              if (clip.bufferKey) {
+                  const buffer = this.buffers.get(clip.bufferKey);
+                  if (buffer) {
+                      this.scheduleSource(buffer, clip.start, clip.offset, clip.duration, trackChain.input, clip, 0, offlineCtx);
+                  }
+              }
+              if (clip.notes && track.type === 'instrument' && track.instrument) {
+                  // Loop logic for MIDI export (similar to play)
+                  const loopLength = clip.loopLength || clip.duration;
+                  const clipStart = clip.start;
+                  const clipEnd = clip.start + clip.duration;
+                  const clipOffset = clip.offset || 0;
 
-      const delayNode = offlineCtx.createDelay(); delayNode.delayTime.value = 0.4;
-      const delayReturn = offlineCtx.createGain(); delayReturn.gain.value = project.effects.delay;
-      const delayFeedback = offlineCtx.createGain(); delayFeedback.gain.value = 0.4;
-      delayNode.connect(delayReturn); delayNode.connect(delayFeedback); delayFeedback.connect(delayNode); delayReturn.connect(masterGain);
-
-      const chorusNode = offlineCtx.createDelay(); const chorusReturn = offlineCtx.createGain(); chorusReturn.gain.value = project.effects.chorus;
-      chorusNode.connect(chorusReturn); chorusReturn.connect(masterGain);
-
-      const trackMap = new Map<string, GainNode>(); 
-      
-      project.tracks.forEach(track => {
-          const chain = this.createTrackGraph(offlineCtx, masterGain);
-          chain.reverbSend.connect(reverbNode); chain.delaySend.connect(delayNode); chain.chorusSend.connect(chorusNode);
-          this.applyTrackSettings(chain, track, 0, true);
-          trackMap.set(track.id, chain.input);
-      });
-
-      for (const clip of project.clips) {
-          if (clip.muted) continue;
-          const buffer = this.buffers.get(clip.bufferKey);
-          const dest = trackMap.get(clip.trackId);
-          if (buffer && dest) {
-              this.scheduleSource(buffer, clip.start, clip.offset, clip.duration, dest, clip, 0, offlineCtx);
-          }
-      }
-
-      if (project.tanpura.enabled) {
-          const tanpuraGain = offlineCtx.createGain(); tanpuraGain.gain.value = project.tanpura.volume;
-          tanpuraGain.connect(masterGain); tanpuraGain.connect(reverbNode);
-          const freqs = this.getTanpuraFreqs(project.tanpura);
-          const interval = 60 / project.tanpura.tempo;
-          let time = 0; let sIdx = 0;
-          while (time < duration) {
-              this.playTanpuraNote(offlineCtx, tanpuraGain, freqs[sIdx], time, interval * 4, project.tanpura.fineTune || 0);
-              time += interval; sIdx = (sIdx + 1) % 4;
-          }
-      }
-
-      if (project.tabla.enabled) {
-          const tablaGain = offlineCtx.createGain(); tablaGain.gain.value = project.tabla.volume;
-          tablaGain.connect(masterGain); tablaGain.connect(reverbNode);
-          const bpm = project.tabla.bpm; const beatTime = 60 / bpm;
-          const pattern = this.getTablaPattern(project.tabla.taal);
-          let time = 0; let bIdx = 0;
-          while (time < duration) {
-              const hit = pattern[bIdx % pattern.length];
-              this.playTablaHit(offlineCtx, tablaGain, project.tabla.key, hit as any, time);
-              time += beatTime; bIdx++;
+                  clip.notes.forEach(note => {
+                      const baseTime = clipStart - clipOffset + note.start;
+                      let k = 0;
+                      if (loopLength > 0) {
+                          // Start checking from k=0
+                      }
+                      
+                      let iterationsChecked = 0;
+                      while (iterationsChecked < 100) {
+                          const absStart = baseTime + (k * loopLength);
+                          if (absStart >= clipEnd) break;
+                          
+                          if (absStart < clipStart) {
+                              k++;
+                              iterationsChecked++;
+                              continue;
+                          }
+                          
+                          let duration = note.duration;
+                          if (absStart + duration > clipEnd) {
+                              duration = clipEnd - absStart;
+                          }
+                          
+                          const freq = midiToFreq(note.note);
+                          const voice = new SynthVoice(offlineCtx, trackChain.input, freq, track.instrument!, note.velocity, absStart);
+                          voice.triggerRelease(absStart + duration);
+                          
+                          if (loopLength <= 0) break;
+                          k++;
+                          iterationsChecked++;
+                      }
+                  });
+              }
           }
       }
 

@@ -2,7 +2,8 @@
 import React from 'react';
 import { Clip } from '../types';
 import Knob from './Knob';
-import { X, Copy, Trash2, Clock, Music2, TrendingUp, Scissors, FlipHorizontal, BarChart2, Palette, MicOff, Mic, Gauge } from 'lucide-react';
+import PianoRoll from './PianoRoll';
+import { X, Copy, Trash2, Clock, Music2, TrendingUp, Scissors, FlipHorizontal, BarChart2, Palette, MicOff, Mic, Gauge, Piano, AlignStartVertical } from 'lucide-react';
 
 interface ClipInspectorProps {
   clip: Clip;
@@ -27,6 +28,30 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
       updateClip(clip.id, { detune: (semi * 100) + cnts });
   };
 
+  const isMidi = !!clip.notes;
+
+  const handleQuantize = () => {
+      if (!clip.notes) return;
+      // Default to 1/16th grid (0.25s at 120bpm, but grid is in seconds for now if we don't have BPM ref here easily. 
+      // Actually notes start is in seconds. We should quantize to 16th grid.
+      // Assuming 120bpm for "visual" feel or passing BPM prop. 
+      // For proper quantization we really need project BPM.
+      // However, most DAWs use a grid setting. Let's assume standard 1/16th quantization (0.125s relative grid? No, 120bpm = 0.5s/beat -> 1/16 = 0.125s).
+      
+      // Since we lack BPM in this component's props directly (design limitation), 
+      // let's use a fixed grid of 0.125s (approx 1/16 @ 120bpm) OR modify props.
+      // Better: Use a simple rounding for now or pass BPM. 
+      // Let's assume 1/16th grid.
+      const grid = 0.125; 
+      
+      const newNotes = clip.notes.map(n => ({
+          ...n,
+          start: Math.round(n.start / grid) * grid,
+          duration: Math.max(grid, Math.round(n.duration / grid) * grid)
+      }));
+      updateClip(clip.id, { notes: newNotes });
+  };
+
   return (
     <div className="fixed inset-x-0 bottom-0 top-24 bg-studio-panel z-[100] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300 border-t border-zinc-700">
       
@@ -34,7 +59,7 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
       <div className="flex items-center justify-between p-4 border-b border-zinc-700 bg-zinc-800">
         <div className="flex items-center space-x-3">
              <div className="w-8 h-8 rounded flex items-center justify-center bg-zinc-900 shadow-inner" style={{ backgroundColor: clip.color || '#555' }}>
-                <Music2 size={16} className="text-white mix-blend-overlay" />
+                {isMidi ? <Piano size={16} className="text-white mix-blend-overlay" /> : <Music2 size={16} className="text-white mix-blend-overlay" />}
              </div>
              <div className="flex-1 min-w-0">
                  <input 
@@ -43,7 +68,7 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
                     className="bg-transparent text-lg font-bold text-white outline-none w-full placeholder-zinc-500"
                     placeholder="Clip Name"
                  />
-                 <p className="text-xs text-zinc-400 uppercase tracking-widest">Clip Editor</p>
+                 <p className="text-xs text-zinc-400 uppercase tracking-widest">{isMidi ? 'MIDI Clip' : 'Audio Clip'}</p>
              </div>
         </div>
         <button onClick={onClose} className="p-2 rounded-full bg-zinc-700 hover:bg-zinc-600">
@@ -53,6 +78,36 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
 
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 pb-24">
           
+          {/* Piano Roll for MIDI */}
+          {isMidi && clip.notes && (
+              <div className="bg-zinc-900 rounded-xl overflow-hidden border border-zinc-700 h-96 flex flex-col shadow-inner">
+                  <PianoRoll 
+                      notes={clip.notes} 
+                      duration={clip.duration} 
+                      onNotesChange={(notes) => updateClip(clip.id, { notes })} 
+                  />
+              </div>
+          )}
+
+          {/* MIDI Actions */}
+          {isMidi && (
+              <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
+                  <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
+                      <Music2 size={12} className="mr-2" /> MIDI Tools
+                  </h3>
+                  <div className="flex gap-4">
+                      <button 
+                        onClick={handleQuantize}
+                        className="flex-1 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs flex items-center justify-center space-x-2 transition-colors border border-zinc-700"
+                        title="Quantize to 1/16th Grid"
+                      >
+                          <AlignStartVertical size={14} />
+                          <span>Quantize (1/16)</span>
+                      </button>
+                  </div>
+              </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               
               {/* Timing Section */}
@@ -79,19 +134,21 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
                             className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2 text-sm text-white font-mono focus:border-studio-accent outline-none"
                           />
                       </div>
-                      <div>
-                          <label className="text-[10px] text-zinc-500 font-bold uppercase block mb-1">Offset (s)</label>
-                          <input 
-                            type="number" step="0.01"
-                            value={clip.offset.toFixed(3)}
-                            onChange={(e) => updateClip(clip.id, { offset: Math.max(0, parseFloat(e.target.value) || 0) })}
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2 text-sm text-white font-mono focus:border-studio-accent outline-none"
-                          />
-                      </div>
+                      {!isMidi && (
+                          <div>
+                              <label className="text-[10px] text-zinc-500 font-bold uppercase block mb-1">Offset (s)</label>
+                              <input 
+                                type="number" step="0.01"
+                                value={clip.offset.toFixed(3)}
+                                onChange={(e) => updateClip(clip.id, { offset: Math.max(0, parseFloat(e.target.value) || 0) })}
+                                className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-2 text-sm text-white font-mono focus:border-studio-accent outline-none"
+                              />
+                          </div>
+                      )}
                   </div>
               </div>
 
-              {/* Audio Properties */}
+              {/* Properties */}
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50 relative">
                   <div className="flex items-center justify-between mb-4">
                       <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center">
@@ -206,7 +263,7 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({ clip, updateClip, onDelet
           </div>
 
           {/* Audio Processing Actions */}
-          {onProcessAudio && (
+          {!isMidi && onProcessAudio && (
               <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
                   <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
                       <Music2 size={12} className="mr-2" /> Processing

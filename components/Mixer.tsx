@@ -6,7 +6,8 @@ import Tanpura from './Tanpura';
 import Tabla from './Tabla';
 import LevelMeter from './LevelMeter';
 import SpectrumAnalyzer from './SpectrumAnalyzer';
-import { Play, Pause, Square, Circle, Sliders, Music2, Activity, Plus } from 'lucide-react';
+import TrackIcon from './TrackIcon';
+import { Sliders, Music2, Activity, Plus, Settings2, Piano, Mic, Headphones } from 'lucide-react';
 import { analytics } from '../services/analytics';
 
 interface MixerProps {
@@ -23,18 +24,16 @@ const CLIP_COLORS = [
     '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7', '#f97316', '#06b6d4', '#ec4899', '#71717a'
 ];
 
-const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPause, onStop, onRecord, onOpenMaster }) => {
-  // Initialize tab from URL or default to 'tracks'
+const Mixer: React.FC<MixerProps> = ({ project, setProject, onOpenMaster }) => {
   const [tab, setTab] = useState<'tracks' | 'instruments'>(() => {
     const params = new URLSearchParams(window.location.search);
     return (params.get('mixerTab') as 'tracks' | 'instruments') || 'tracks';
   });
 
-  // Sync tab changes to URL
   useEffect(() => {
     const url = new URL(window.location.href);
     if (tab === 'tracks') {
-        url.searchParams.delete('mixerTab'); // clean URL for default
+        url.searchParams.delete('mixerTab');
     } else {
         url.searchParams.set('mixerTab', tab);
     }
@@ -56,11 +55,15 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
       }
   };
 
-  const handleAddTrack = () => {
+  const handleAddTrack = (type: 'audio' | 'instrument' = 'audio') => {
       const newTrack: Track = {
           id: crypto.randomUUID(),
-          name: `Track ${project.tracks.length + 1}`,
-          volume: 0.8, pan: 0, muted: false, solo: false, color: CLIP_COLORS[project.tracks.length % CLIP_COLORS.length],
+          type,
+          name: type === 'instrument' ? `Synth ${project.tracks.length + 1}` : `Audio ${project.tracks.length + 1}`,
+          volume: 0.8, pan: 0, muted: false, solo: false, 
+          color: CLIP_COLORS[project.tracks.length % CLIP_COLORS.length],
+          icon: type === 'instrument' ? 'keyboard' : 'music',
+          instrument: type === 'instrument' ? { type: 'synth', preset: 'sawtooth', attack: 0.05, decay: 0.1, sustain: 0.5, release: 0.2 } : undefined,
           eq: { low: 0, mid: 0, high: 0 },
           compressor: { enabled: false, threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
           sends: { reverb: 0, delay: 0, chorus: 0 }
@@ -70,168 +73,139 @@ const Mixer: React.FC<MixerProps> = ({ project, setProject, isPlaying, onPlayPau
   };
 
   return (
-    <div className="flex flex-col h-full bg-studio-bg overflow-y-auto no-scrollbar pb-24">
+    <div className="flex flex-col h-full bg-studio-bg overflow-hidden relative">
       
-      {/* Main Display / Transport */}
-      <div className="py-6 px-6 text-center space-y-6 bg-gradient-to-b from-zinc-800 to-studio-bg border-b border-zinc-700 shadow-xl z-20">
-          <div className="flex items-center justify-between max-w-md mx-auto">
-              <h2 className="text-xl font-light text-zinc-400 tracking-widest uppercase hidden sm:block">Studio Mix</h2>
-              <div className="flex-1 mx-4 h-24 relative">
-                  <SpectrumAnalyzer height={96} color="#ef4444" />
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-50">
-                      {/* Grid lines overlay */}
-                      <div className="w-full h-px bg-white/10" />
-                  </div>
-              </div>
-          </div>
-          
-          <div className="flex items-center justify-center space-x-8">
-              <button 
-                onClick={onStop}
-                className="w-12 h-12 rounded-full bg-zinc-800 shadow-knob flex items-center justify-center active:scale-95 transition-transform"
-              >
-                  <Square fill="currentColor" size={16} className="text-zinc-400" />
-              </button>
-
-              <button 
-                onClick={onRecord}
-                className="w-16 h-16 rounded-full bg-gradient-to-br from-red-900 to-red-600 shadow-knob border-4 border-zinc-800 flex items-center justify-center active:scale-95 transition-transform"
-              >
-                  <Circle fill="white" size={20} className="text-white" />
-              </button>
-
-              <button 
-                onClick={onPlayPause}
-                className="w-12 h-12 rounded-full bg-zinc-800 shadow-knob flex items-center justify-center active:scale-95 transition-transform"
-              >
-                 {isPlaying ? 
-                    <Pause fill="currentColor" size={18} className="text-zinc-200" /> : 
-                    <Play fill="currentColor" size={18} className="text-zinc-200 ml-1" />
-                 }
-              </button>
-          </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex justify-center my-6 shrink-0">
-          <div className="bg-zinc-900 rounded-full p-1 flex space-x-1 border border-zinc-800">
+      {/* Mini Header / Tab Switcher */}
+      <div className="h-10 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between px-4 shrink-0 z-20">
+          <div className="flex items-center space-x-1 bg-zinc-900 rounded-md p-0.5 border border-zinc-800">
               <button 
                 onClick={() => setTab('tracks')} 
-                className={`px-6 py-2 rounded-full text-xs font-bold transition-all flex items-center space-x-2 ${tab === 'tracks' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide transition-all flex items-center space-x-1 ${tab === 'tracks' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                  <Sliders size={14} /> <span>Console</span>
+                  <Sliders size={12} /> <span>Console</span>
               </button>
               <button 
                 onClick={() => setTab('instruments')} 
-                className={`px-6 py-2 rounded-full text-xs font-bold transition-all flex items-center space-x-2 ${tab === 'instruments' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide transition-all flex items-center space-x-1 ${tab === 'instruments' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                  <Music2 size={14} /> <span>Backing</span>
+                  <Music2 size={12} /> <span>Backing</span>
               </button>
           </div>
+          
+          {tab === 'tracks' && (
+              <div className="flex gap-2">
+                  <button onClick={() => handleAddTrack('audio')} className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] font-bold bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+                      <Mic size={12} /> + Audio
+                  </button>
+                  <button onClick={() => handleAddTrack('instrument')} className="text-zinc-500 hover:text-white flex items-center gap-1 text-[10px] font-bold bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+                      <Piano size={12} /> + Synth
+                  </button>
+              </div>
+          )}
       </div>
 
-      {/* Content Section */}
-      <div className="flex-1 px-4 overflow-x-auto pb-8">
+      <div className="flex-1 flex overflow-hidden">
         {tab === 'tracks' ? (
-            <div className="flex space-x-4 min-w-max px-4 justify-center items-start">
-                
-                {/* Tracks */}
-                {project.tracks.map(track => (
-                    <div key={track.id} className="flex flex-col items-center space-y-3 group p-2 bg-zinc-900/50 rounded-lg border border-zinc-800/50">
-                        <button 
-                            className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider truncate w-16 text-center hover:text-white transition-colors" 
-                            title={track.name}
-                            onClick={() => handleRenameTrack(track.id, track.name)}
-                        >
-                            {track.name}
-                        </button>
+            <div className="flex-1 flex overflow-hidden">
+                {/* Scrollable Tracks Area */}
+                <div className="flex-1 overflow-x-auto overflow-y-hidden">
+                    <div className="flex h-full min-w-max px-4 pt-4 pb-12 space-x-2">
+                        {project.tracks.map(track => (
+                            <div key={track.id} className="flex flex-col w-20 bg-zinc-900 border-x border-zinc-800 relative group h-full">
+                                {/* Top: Info & Routing */}
+                                <div className="h-24 p-2 flex flex-col items-center justify-between border-b border-zinc-800 bg-zinc-900">
+                                    <div className="w-6 h-6 rounded flex items-center justify-center bg-zinc-800 shadow-inner text-zinc-400">
+                                        <TrackIcon icon={track.icon} name={track.name} color={track.color} size={14} />
+                                    </div>
+                                    
+                                    <button 
+                                        className="text-[10px] font-bold text-zinc-400 hover:text-white truncate w-full text-center px-1"
+                                        onClick={() => handleRenameTrack(track.id, track.name)}
+                                    >
+                                        {track.name}
+                                    </button>
+
+                                    <div className="flex space-x-1 w-full justify-center">
+                                        <button 
+                                            onClick={() => updateTrack(track.id, { muted: !track.muted })}
+                                            className={`w-6 h-5 rounded text-[9px] font-bold transition-colors border ${track.muted ? 'bg-red-500 border-red-600 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'}`}
+                                        >M</button>
+                                        <button 
+                                            onClick={() => updateTrack(track.id, { solo: !track.solo })}
+                                            className={`w-6 h-5 rounded text-[9px] font-bold transition-colors border ${track.solo ? 'bg-yellow-500 border-yellow-600 text-black' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'}`}
+                                        >S</button>
+                                    </div>
+                                </div>
+
+                                {/* Middle: Fader Area */}
+                                <div className="flex-1 bg-zinc-950/50 p-2 flex justify-center relative">
+                                    {/* Grid Lines */}
+                                    <div className="absolute inset-0 pointer-events-none opacity-20 flex flex-col justify-between py-8 px-4">
+                                        {[...Array(10)].map((_, i) => <div key={i} className="w-full h-px bg-zinc-700" />)}
+                                    </div>
+                                    
+                                    <div className="h-full flex gap-1 z-10 py-2">
+                                        <CustomFader 
+                                            value={track.volume} 
+                                            onChange={(v) => updateTrack(track.id, { volume: v })} 
+                                            onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_volume', trackId: track.id, value: v })}
+                                            height={300} // Flexible based on container
+                                            defaultValue={0.8}
+                                        />
+                                        <LevelMeter trackId={track.id} vertical={true} />
+                                    </div>
+                                </div>
+
+                                {/* Bottom: Color */}
+                                <div className="h-3 w-full" style={{ backgroundColor: track.color }} />
+                            </div>
+                        ))}
                         
-                        {/* Mute/Solo Buttons */}
-                        <div className="flex space-x-1">
-                            <button 
-                                onClick={() => {
-                                    updateTrack(track.id, { muted: !track.muted });
-                                    analytics.track('mixer_action', { action: 'toggle_mute', trackId: track.id, value: !track.muted });
-                                }}
-                                className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${track.muted ? 'bg-red-500 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-                            >M</button>
-                            <button 
-                                onClick={() => {
-                                    updateTrack(track.id, { solo: !track.solo });
-                                    analytics.track('mixer_action', { action: 'toggle_solo', trackId: track.id, value: !track.solo });
-                                }}
-                                className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${track.solo ? 'bg-yellow-400 text-black shadow-[0_0_10px_rgba(250,204,21,0.5)]' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-                            >S</button>
-                        </div>
-
-                        <div className="flex space-x-2 h-[200px]">
-                            <CustomFader 
-                                value={track.volume} 
-                                onChange={(v) => updateTrack(track.id, { volume: v })} 
-                                onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_volume', trackId: track.id, value: v })}
-                                height={200}
-                                defaultValue={0.8}
-                            />
-                            <LevelMeter trackId={track.id} vertical={true} />
-                        </div>
-                        
-                        <div className="w-full flex justify-center">
-                            <div className="w-8 h-8 rounded shadow-md opacity-80" style={{ backgroundColor: track.color }} />
-                        </div>
-                    </div>
-                ))}
-
-                {/* Add Track Button */}
-                <button 
-                    onClick={handleAddTrack}
-                    className="flex flex-col items-center justify-center space-y-3 p-2 h-[280px] w-12 bg-zinc-900/30 rounded-lg border border-zinc-800/50 hover:bg-zinc-800 transition-colors text-zinc-600 hover:text-white"
-                    title="Add Track"
-                >
-                    <Plus size={24} />
-                </button>
-
-                <div className="w-px h-[280px] bg-zinc-800 mx-2" />
-
-                {/* Master Strip */}
-                <div className="flex flex-col items-center space-y-3 group p-2 bg-zinc-950 rounded-lg border border-zinc-800 shadow-xl">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider w-16 text-center">Master</span>
-                    
-                    <button 
-                        onClick={onOpenMaster}
-                        className="w-full py-1.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700 transition-colors flex items-center justify-center gap-1"
-                    >
-                        <Activity size={10} /> FX
-                    </button>
-
-                    <div className="flex space-x-2 h-[200px]">
-                        <CustomFader 
-                            value={project.masterVolume} 
-                            onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
-                            onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_master_volume', value: v })}
-                            height={200}
-                            defaultValue={1.0}
-                        />
-                        <LevelMeter vertical={true} />
-                    </div>
-                    
-                    <div className="w-full flex justify-center">
-                        <div className="w-8 h-8 rounded shadow-md bg-zinc-800 flex items-center justify-center text-red-500 font-bold text-[9px]">
-                            M
+                        {/* Spacer for adding tracks */}
+                        <div className="w-20 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded-lg m-2 opacity-50 hover:opacity-100 transition-opacity">
+                            <button onClick={() => handleAddTrack('audio')} className="p-4 text-zinc-500 hover:text-white">
+                                <Plus size={24} />
+                            </button>
                         </div>
                     </div>
                 </div>
 
+                {/* Fixed Master Strip */}
+                <div className="w-28 bg-zinc-950 border-l border-zinc-800 flex flex-col shrink-0 h-full shadow-2xl z-30">
+                    <div className="h-24 bg-zinc-900 border-b border-zinc-800 p-2 flex flex-col justify-between">
+                        <div className="h-12 w-full bg-black rounded overflow-hidden relative">
+                            <SpectrumAnalyzer height={48} color="#ef4444" />
+                        </div>
+                        <div className="flex justify-between items-center px-1">
+                            <span className="text-[10px] font-bold text-red-500 tracking-wider">MASTER</span>
+                            <button onClick={onOpenMaster} className="text-zinc-500 hover:text-white" title="Master FX">
+                                <Activity size={14} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 p-3 flex justify-center relative bg-zinc-950">
+                         <div className="h-full flex gap-3 z-10 py-2">
+                            <CustomFader 
+                                value={project.masterVolume} 
+                                onChange={(v) => setProject(p => ({...p, masterVolume: v}))} 
+                                onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_master_volume', value: v })}
+                                height={350}
+                                defaultValue={1.0}
+                            />
+                            <div className="w-4 h-full">
+                                <LevelMeter vertical={true} />
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         ) : (
-            <div className="max-w-md mx-auto space-y-6">
-                <Tanpura 
-                    config={project.tanpura} 
-                    onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} 
-                />
-                <Tabla 
-                    config={project.tabla} 
-                    onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} 
-                />
+            <div className="flex-1 overflow-y-auto p-6">
+                <div className="max-w-2xl mx-auto space-y-8">
+                    <Tanpura config={project.tanpura} onChange={(cfg) => setProject(p => ({...p, tanpura: cfg}))} />
+                    <Tabla config={project.tabla} onChange={(cfg) => setProject(p => ({...p, tabla: cfg}))} />
+                </div>
             </div>
         )}
       </div>
