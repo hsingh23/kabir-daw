@@ -4,6 +4,7 @@ import { fireEvent } from '@testing-library/dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SettingsDialog from '../../components/SettingsDialog';
 import { audio } from '../../services/audio';
+import { ProjectState } from '../../types';
 
 vi.mock('../../services/audio', () => ({
   audio: {
@@ -26,13 +27,36 @@ Object.defineProperty(navigator, 'mediaDevices', {
     writable: true
 });
 
+const mockProject: ProjectState = {
+    id: 'test',
+    name: 'Test Project',
+    bpm: 120,
+    tracks: [],
+    clips: [],
+    markers: [],
+    loopStart: 0,
+    loopEnd: 4,
+    isLooping: false,
+    metronomeOn: false,
+    metronomeSound: 'beep',
+    countIn: 0,
+    recordingLatency: 0,
+    inputMonitoring: false,
+    masterVolume: 1,
+    masterEq: { low: 0, mid: 0, high: 0 },
+    masterCompressor: { threshold: -20, ratio: 4 },
+    effects: { reverb: 0, delay: 0, chorus: 0 },
+    tanpura: { enabled: false, volume: 0, key: 'C', tuning: 'Pa', tempo: 60 },
+    tabla: { enabled: false, volume: 0, taal: 'TeenTaal', bpm: 100, key: 'C' }
+};
+
 describe('SettingsDialog Component', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
     it('loads devices on mount', async () => {
-        const { getByText, findByText } = render(<SettingsDialog onClose={() => {}} />);
+        const { getByText, findByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={() => {}} />);
         
         await waitFor(() => expect(audio.getAudioDevices).toHaveBeenCalled());
         
@@ -42,17 +66,10 @@ describe('SettingsDialog Component', () => {
     });
 
     it('changes output device', async () => {
-        const { findByRole } = render(<SettingsDialog onClose={() => {}} />);
+        const { findByRole } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={() => {}} />);
         
-        // Wait for select to populate
-        const outputSelect = await findByRole('combobox', { name: '' }); // Selects are tricky without explicit label association via ID in this simple component structure
-        // Actually we can find by display value
-        // The component has label "Output Device", then select.
-        
-        // Let's use getByDisplayValue after wait
         await waitFor(() => expect(audio.getAudioDevices).toHaveBeenCalled());
         
-        // Fire change event
         const selects = document.querySelectorAll('select');
         const outputSel = selects[1]; // Second select is output
         
@@ -61,20 +78,39 @@ describe('SettingsDialog Component', () => {
         expect(audio.setOutputDevice).toHaveBeenCalledWith('out1');
     });
 
-    it('changes metronome volume', () => {
-        const { container } = render(<SettingsDialog onClose={() => {}} />);
-        const range = container.querySelector('input[type="range"]');
+    it('updates recording latency', () => {
+        const setProject = vi.fn();
+        const { getByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={setProject} />);
         
-        fireEvent.change(range!, { target: { value: '0.8' } });
-        expect(audio.setMetronomeVolume).toHaveBeenCalledWith(0.8);
+        const latencyLabel = getByText('Recording Latency');
+        expect(latencyLabel).toBeInTheDocument();
+        
+        // The latency input is likely the second range input on the page (first is volume, third is metronome)
+        // Or we can find by sibling logic. Latency is unique because it has max=500
+        const inputs = document.querySelectorAll('input[type="range"]');
+        const latencyInput = Array.from(inputs).find(i => i.getAttribute('max') === '500');
+        
+        fireEvent.change(latencyInput!, { target: { value: '50' } });
+        
+        expect(setProject).toHaveBeenCalledWith(expect.any(Function));
+        
+        // Verify state update function logic
+        const updater = setProject.mock.calls[0][0];
+        expect(updater(mockProject).recordingLatency).toBe(50);
     });
 
-    it('switches tabs', () => {
-        const { getByText, queryByText } = render(<SettingsDialog onClose={() => {}} />);
+    it('toggles input monitoring', () => {
+        const setProject = vi.fn();
+        const { getByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={setProject} />);
         
-        fireEvent.click(getByText('General'));
+        const monitorLabel = getByText('Input Monitoring');
+        const toggleBtn = monitorLabel.parentElement?.nextElementSibling; // Button is sibling to the text column
         
-        expect(getByText('PocketStudio')).toBeInTheDocument();
-        expect(queryByText('Input Device')).not.toBeInTheDocument();
+        fireEvent.click(toggleBtn!);
+        
+        expect(setProject).toHaveBeenCalledWith(expect.any(Function));
+        
+        const updater = setProject.mock.calls[0][0];
+        expect(updater(mockProject).inputMonitoring).toBe(true);
     });
 });

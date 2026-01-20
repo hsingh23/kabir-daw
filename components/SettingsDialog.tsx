@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { audio } from '../services/audio';
 import { ProjectState } from '../types';
-import { X, Mic, Speaker, Music, Settings, Info } from 'lucide-react';
+import { X, Mic, Speaker, Music, Settings, Info, FileText, Activity, AlertTriangle } from 'lucide-react';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -73,6 +73,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
       }
   };
 
+  const handlePanic = () => {
+      audio.panic();
+  };
+
   return (
     <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
         <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-200">
@@ -96,7 +100,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                     onClick={() => setActiveTab('general')}
                     className={`flex-1 py-3 text-sm font-bold border-b-2 transition-colors ${activeTab === 'general' ? 'border-studio-accent text-white bg-zinc-800/30' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
                 >
-                    General
+                    Project
                 </button>
             </div>
 
@@ -136,6 +140,39 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                             </select>
                             {outputs.length === 0 && <p className="text-[10px] text-zinc-600">Output selection not supported by this browser.</p>}
                         </div>
+
+                        {project && setProject && (
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
+                                    <Activity size={14} /> Recording Latency
+                                </label>
+                                <div className="flex items-center gap-3">
+                                    <input 
+                                        type="range" min={0} max={500} step={1}
+                                        value={project.recordingLatency}
+                                        onChange={(e) => setProject(p => ({...p, recordingLatency: parseInt(e.target.value)}))}
+                                        className="flex-1 h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-studio-accent"
+                                    />
+                                    <div className="w-12 text-right font-mono text-sm text-zinc-300">{project.recordingLatency}ms</div>
+                                </div>
+                                <p className="text-[10px] text-zinc-600">Adjust to correct sync issues when recording.</p>
+                            </div>
+                        )}
+
+                        {project && setProject && (
+                            <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded-lg border border-zinc-800">
+                                <div className="flex flex-col">
+                                    <span className="text-xs font-bold text-zinc-300">Input Monitoring</span>
+                                    <span className="text-[10px] text-zinc-500">Hear your input while recording</span>
+                                </div>
+                                <button 
+                                    onClick={() => setProject(p => ({...p, inputMonitoring: !p.inputMonitoring}))}
+                                    className={`w-10 h-5 rounded-full relative transition-colors ${project.inputMonitoring ? 'bg-studio-accent' : 'bg-zinc-700'}`}
+                                >
+                                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${project.inputMonitoring ? 'left-6' : 'left-1'}`} />
+                                </button>
+                            </div>
+                        )}
 
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
@@ -180,21 +217,44 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose, project, setPr
                                 </div>
                             </div>
                         </div>
+
+                        <div className="pt-2">
+                            <button 
+                                onClick={handlePanic}
+                                className="w-full py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded-lg border border-red-900/50 flex items-center justify-center gap-2 text-xs font-bold transition-colors"
+                            >
+                                <AlertTriangle size={14} /> Reset Audio Engine (Panic)
+                            </button>
+                        </div>
                     </div>
                 )}
 
                 {activeTab === 'general' && (
-                    <div className="space-y-4 text-center py-4">
-                        <div className="w-16 h-16 bg-gradient-to-br from-zinc-700 to-zinc-800 rounded-2xl mx-auto shadow-inner border border-zinc-600 flex items-center justify-center">
-                            <Settings size={32} className="text-zinc-400" />
-                        </div>
-                        <div>
+                    <div className="space-y-6">
+                        {project && setProject && (
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
+                                    <FileText size={14} /> Project Notes / Lyrics
+                                </label>
+                                <textarea 
+                                    className="w-full h-48 bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-zinc-300 focus:border-studio-accent outline-none resize-none"
+                                    placeholder="Write lyrics, chord progressions, or session notes here..."
+                                    value={project.notes || ''}
+                                    onChange={(e) => setProject(p => ({...p, notes: e.target.value}))}
+                                />
+                            </div>
+                        )}
+
+                        <div className="text-center pt-4 border-t border-zinc-800">
+                            <div className="w-16 h-16 bg-gradient-to-br from-zinc-700 to-zinc-800 rounded-2xl mx-auto shadow-inner border border-zinc-600 flex items-center justify-center mb-3">
+                                <Settings size={32} className="text-zinc-400" />
+                            </div>
                             <h3 className="text-xl font-bold text-white">PocketStudio</h3>
-                            <p className="text-xs text-zinc-500">v1.0.0 (Beta)</p>
-                        </div>
-                        <div className="text-xs text-zinc-400 bg-zinc-800/50 p-4 rounded-lg border border-zinc-700/50">
-                            <p className="mb-2">A mobile-first DAW built with React & Web Audio API.</p>
-                            <p>Created for music creators on the go.</p>
+                            <p className="text-xs text-zinc-500 mb-2">v1.0.0 (Beta)</p>
+                            <div className="text-xs text-zinc-400 bg-zinc-800/50 p-4 rounded-lg border border-zinc-700/50">
+                                <p className="mb-2">A mobile-first DAW built with React & Web Audio API.</p>
+                                <p>Created for music creators on the go.</p>
+                            </div>
                         </div>
                     </div>
                 )}

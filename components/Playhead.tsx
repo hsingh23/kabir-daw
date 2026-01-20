@@ -7,9 +7,10 @@ interface PlayheadProps {
   isPlaying: boolean;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   staticTime: number; // Used when paused
+  autoScroll?: boolean;
 }
 
-const Playhead: React.FC<PlayheadProps> = ({ zoom, isPlaying, scrollContainerRef, staticTime }) => {
+const Playhead: React.FC<PlayheadProps> = ({ zoom, isPlaying, scrollContainerRef, staticTime, autoScroll = true }) => {
   const lineRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
@@ -29,7 +30,7 @@ const Playhead: React.FC<PlayheadProps> = ({ zoom, isPlaying, scrollContainerRef
       }
       
       // Auto-scroll logic decoupled from React render
-      if (isPlaying && scrollContainerRef.current) {
+      if (isPlaying && autoScroll && scrollContainerRef.current) {
          const container = scrollContainerRef.current;
          const visibleStart = container.scrollLeft;
          const visibleWidth = container.clientWidth;
@@ -52,7 +53,7 @@ const Playhead: React.FC<PlayheadProps> = ({ zoom, isPlaying, scrollContainerRef
     }
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, zoom, staticTime, scrollContainerRef]);
+  }, [isPlaying, zoom, staticTime, scrollContainerRef, autoScroll]);
 
   return (
     <div 

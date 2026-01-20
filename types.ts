@@ -86,6 +86,7 @@ export interface Marker {
 export interface ProjectState {
   id: string;
   name: string;
+  notes?: string; // Project notes/lyrics
   bpm: number;
   tracks: Track[];
   clips: Clip[];

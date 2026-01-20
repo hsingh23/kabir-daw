@@ -40,28 +40,16 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.scale(dpr, dpr);
       }
 
-      // Logic to determine render range
       const bufferDuration = buffer.duration;
       const renderDuration = duration || bufferDuration;
+      
+      // Calculate resolution to decide whether to use peaks or raw data
+      const pixelsPerSecond = rect.width / renderDuration;
+      const usePeaks = pixelsPerSecond < 100; // Use peaks if zoomed out (less than 100px per second)
+      const peaks = usePeaks ? audio.getPeaks(bufferKey) : null;
+
       // Clamp offset
       const startOffset = Math.max(0, Math.min(offset, bufferDuration));
-      const endOffset = Math.min(bufferDuration, startOffset + renderDuration);
-      
-      const data = buffer.getChannelData(0);
-      const sampleRate = buffer.sampleRate;
-      
-      const startIndex = Math.floor(startOffset * sampleRate);
-      const endIndex = Math.floor(endOffset * sampleRate);
-      const sampleCount = endIndex - startIndex;
-      
-      if (sampleCount <= 0) {
-          ctx.clearRect(0, 0, rect.width, rect.height);
-          return;
-      }
-
-      const step = Math.ceil(sampleCount / rect.width);
-      const amp = rect.height / 2;
-      const mid = rect.height / 2;
       
       ctx.clearRect(0, 0, rect.width, rect.height);
       
@@ -69,49 +57,74 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
       ctx.fillStyle = color;
       ctx.beginPath();
       
+      const amp = rect.height / 2;
+      const mid = rect.height / 2;
+
+      // Source Data Props
+      let dataLength = buffer.length;
+      let dataRate = buffer.sampleRate;
+      let dataSource: Float32Array | undefined;
+
+      if (peaks) {
+          dataSource = peaks;
+          dataRate = 100; // Peaks are always 100Hz
+          dataLength = peaks.length;
+      } else {
+          dataSource = buffer.getChannelData(0);
+      }
+
+      if (!dataSource) return;
+
+      const startIndex = Math.floor(startOffset * dataRate);
+      const renderLengthSamples = Math.floor(renderDuration * dataRate);
+      const endIndex = Math.min(dataLength, startIndex + renderLengthSamples);
+      const sampleCount = endIndex - startIndex;
+
+      if (sampleCount <= 0) return;
+
+      // Draw Loop
+      // We iterate pixels (x) and find the max value in the corresponding time slice of data
+      const step = sampleCount / rect.width;
+
       for (let i = 0; i < rect.width; i++) {
-        // Map pixel i to time in rendered clip
+        // Fade Logic
         const timeInClip = (i / rect.width) * renderDuration;
-        
-        // Calculate Fade Gain
         let gain = 1.0;
         if (timeInClip < fadeIn) {
             gain = timeInClip / fadeIn;
         } else if (timeInClip > renderDuration - fadeOut) {
             gain = (renderDuration - timeInClip) / fadeOut;
         }
-        // Clamp gain (avoid negatives or >1)
         gain = Math.max(0, Math.min(1, gain));
 
-        const dataIdx = startIndex + Math.floor(i * step);
+        const dataIdx = Math.floor(startIndex + (i * step));
+        const nextDataIdx = Math.floor(startIndex + ((i + 1) * step));
         let max = 0;
         
-        // Optimization: Don't iterate massive steps if zoomed out a lot
-        // Just take a few samples or the max of a smaller window if performance is an issue
-        // For now, standard stride
-        const bound = Math.min(startIndex + sampleCount, dataIdx + step);
-        const stride = Math.max(1, Math.floor((bound - dataIdx) / 10)); // Skip samples for perf
+        // Find max in the bin
+        const bound = Math.min(endIndex, nextDataIdx);
+        // optimization: if step is huge, don't iterate all, just take stride
+        const stride = Math.max(1, Math.floor((bound - dataIdx) / 10));
 
         for (let j = dataIdx; j < bound; j+=stride) {
-            const val = Math.abs(data[j]);
+            const val = Math.abs(dataSource[j]);
             if (val > max) max = val;
         }
         
-        // Apply fade gain to amplitude
+        // If step < 1 (zoomed in extremely), we might miss data if we just floor.
+        // But for visualization, picking nearest neighbor or max is fine.
+        if (bound <= dataIdx) {
+             max = Math.abs(dataSource[dataIdx] || 0);
+        }
+
         const drawnHeight = max * amp * 0.95 * gain;
-
         const yTop = mid - drawnHeight;
-        const yBottom = mid + drawnHeight;
-
-        // Draw vertical line for this pixel column (more robust than path for spikes)
-        // Or continue path approach. Path approach allows fill.
-        // Let's stick to top/bottom path for fill look.
         
         if (i === 0) ctx.moveTo(i, yTop);
         else ctx.lineTo(i, yTop);
       }
 
-      // Draw bottom half in reverse to close shape
+      // Draw bottom half mirrored
       for (let i = rect.width - 1; i >= 0; i--) {
         const timeInClip = (i / rect.width) * renderDuration;
         let gain = 1.0;
@@ -119,14 +132,18 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
         else if (timeInClip > renderDuration - fadeOut) gain = (renderDuration - timeInClip) / fadeOut;
         gain = Math.max(0, Math.min(1, gain));
 
-        const dataIdx = startIndex + Math.floor(i * step);
+        const dataIdx = Math.floor(startIndex + (i * step));
+        const nextDataIdx = Math.floor(startIndex + ((i + 1) * step));
+        const bound = Math.min(endIndex, nextDataIdx);
         let max = 0;
-        const bound = Math.min(startIndex + sampleCount, dataIdx + step);
         const stride = Math.max(1, Math.floor((bound - dataIdx) / 10));
 
         for (let j = dataIdx; j < bound; j+=stride) {
-            const val = Math.abs(data[j]);
+            const val = Math.abs(dataSource[j]);
             if (val > max) max = val;
+        }
+        if (bound <= dataIdx) {
+             max = Math.abs(dataSource[dataIdx] || 0);
         }
 
         const drawnHeight = max * amp * 0.95 * gain;
