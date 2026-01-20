@@ -263,6 +263,9 @@ const AppContent: React.FC = () => {
             showToast("Recording started", 'success');
             analytics.track('recording_started');
         } catch (_e) {
+            console.error("Recording failed:", _e);
+            setIsRecording(false);
+            setIsPlaying(false);
             showToast("Could not start recording. Check permissions.", 'error');
         }
   }, [currentTime, project.clips, project.tracks, project.inputMonitoring, showToast]);

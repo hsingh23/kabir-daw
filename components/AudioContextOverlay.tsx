@@ -32,10 +32,28 @@ const AudioContextOverlay: React.FC = () => {
     window.addEventListener('touchstart', unlock, { once: true });
     window.addEventListener('click', unlock, { once: true });
 
+    // --- Mobile Lifecycle Handling ---
+    const handleVisibilityChange = () => {
+        if (document.hidden) {
+            // Background: Suspend to save battery and stop audio
+            if (audio.ctx.state === 'running') {
+                audio.ctx.suspend().then(() => console.log('Audio suspended (background)'));
+            }
+        } else {
+            // Foreground: Resume if we were playing or active
+            // Note: We might show overlay if browser blocks resume
+            if (audio.ctx.state === 'suspended') {
+                setNeedsResume(true);
+            }
+        }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       ctx.removeEventListener('statechange', checkState);
       window.removeEventListener('touchstart', unlock);
       window.removeEventListener('click', unlock);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
