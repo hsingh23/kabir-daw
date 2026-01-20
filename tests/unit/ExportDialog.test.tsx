@@ -1,5 +1,4 @@
 
-
 import { render, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import ExportDialog from '../../components/ExportDialog';
@@ -10,6 +9,8 @@ describe('ExportDialog Component', () => {
       id: 'p1',
       name: 'Test Project',
       bpm: 120,
+      timeSignature: [4, 4],
+      returnToStartOnStop: true,
       tracks: [
           { id: 't1', name: 'Track 1', volume: 1, pan: 0, muted: false, solo: false, color: '#000', eq: {low:0,mid:0,high:0}, sends: {reverb:0,delay:0,chorus:0} }
       ],
@@ -24,7 +25,7 @@ describe('ExportDialog Component', () => {
       inputMonitoring: false,
       masterVolume: 1,
       masterEq: {low:0,mid:0,high:0},
-      masterCompressor: {threshold:-20,ratio:4},
+      masterCompressor: {threshold:-20,ratio:4, attack: 0.01, release: 0.1},
       effects: {reverb:0,delay:0,chorus:0},
       tanpura: {enabled:false,volume:0,key:'C',tuning:'Pa',tempo:60},
       tabla: {enabled:false,volume:0,taal:'TeenTaal',bpm:100,key:'C'}

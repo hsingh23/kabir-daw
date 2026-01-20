@@ -14,7 +14,10 @@ vi.mock('../../services/audio', () => ({
     })),
     setOutputDevice: vi.fn(),
     setMetronomeVolume: vi.fn(),
-    selectedInputDeviceId: undefined
+    selectedInputDeviceId: undefined,
+    initInput: vi.fn(),
+    measureInputLevel: vi.fn(() => 0),
+    closeInput: vi.fn()
   }
 }));
 
@@ -31,6 +34,8 @@ const mockProject: ProjectState = {
     id: 'test',
     name: 'Test Project',
     bpm: 120,
+    timeSignature: [4, 4],
+    returnToStartOnStop: true,
     tracks: [],
     clips: [],
     markers: [],
@@ -44,7 +49,7 @@ const mockProject: ProjectState = {
     inputMonitoring: false,
     masterVolume: 1,
     masterEq: { low: 0, mid: 0, high: 0 },
-    masterCompressor: { threshold: -20, ratio: 4 },
+    masterCompressor: { threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
     effects: { reverb: 0, delay: 0, chorus: 0 },
     tanpura: { enabled: false, volume: 0, key: 'C', tuning: 'Pa', tempo: 60 },
     tabla: { enabled: false, volume: 0, taal: 'TeenTaal', bpm: 100, key: 'C' }
@@ -71,7 +76,13 @@ describe('SettingsDialog Component', () => {
         await waitFor(() => expect(audio.getAudioDevices).toHaveBeenCalled());
         
         const selects = document.querySelectorAll('select');
-        const outputSel = selects[1]; // Second select is output
+        // Index might vary depending on structure, finding by label text usually better but simplified here
+        // Order: Input, Output, CountIn
+        // Let's rely on option text if possible, or order
+        
+        // Input is first select
+        // Output is second select
+        const outputSel = selects[1]; 
         
         fireEvent.change(outputSel, { target: { value: 'out1' } });
         
@@ -82,11 +93,9 @@ describe('SettingsDialog Component', () => {
         const setProject = vi.fn();
         const { getByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={setProject} />);
         
-        const latencyLabel = getByText('Recording Latency');
+        const latencyLabel = getByText('Recording Latency Compensation');
         expect(latencyLabel).toBeInTheDocument();
         
-        // The latency input is likely the second range input on the page (first is volume, third is metronome)
-        // Or we can find by sibling logic. Latency is unique because it has max=500
         const inputs = document.querySelectorAll('input[type="range"]');
         const latencyInput = Array.from(inputs).find(i => i.getAttribute('max') === '500');
         
@@ -104,7 +113,7 @@ describe('SettingsDialog Component', () => {
         const { getByText } = render(<SettingsDialog onClose={() => {}} project={mockProject} setProject={setProject} />);
         
         const monitorLabel = getByText('Input Monitoring');
-        const toggleBtn = monitorLabel.parentElement?.nextElementSibling; // Button is sibling to the text column
+        const toggleBtn = monitorLabel.nextElementSibling; // Button is sibling
         
         fireEvent.click(toggleBtn!);
         

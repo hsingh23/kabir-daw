@@ -7,7 +7,7 @@ import Ruler from './Ruler';
 import TrackLane from './TrackLane'; 
 import { audio } from '../services/audio';
 import { useArrangerInteraction } from '../hooks/useArrangerInteraction';
-import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, GripVertical, Split, MoreVertical, Plus, MicOff, Minimize, Edit2, Layers } from 'lucide-react';
+import { Scissors, MousePointer, Trash2, Repeat, ZoomIn, ZoomOut, Grid, Music2, GripVertical, Split, MoreVertical, Plus, MicOff, Minimize, Edit2, Layers, AlignStartVertical } from 'lucide-react';
 import { formatBars, formatTime } from '../services/utils';
 import { analytics } from '../services/analytics';
 
@@ -43,8 +43,15 @@ interface ArrangerProps {
 
 const SNAP_OPTIONS = [
     { label: 'Off', value: 0 },
-    { label: 'Bar', value: 4 },
-    { label: '1/4', value: 1 },
+    { label: 'Bar', value: 4 }, // Value represents multiplier of a beat? Or ratio?
+    // Let's standardize: Value is "Notes". 
+    // 1 = Quarter Note. 
+    // 4 = Bar (assuming 4/4). 
+    // This logic breaks with time sig.
+    // Let's refine snap values logic in useArrangerInteraction or here.
+    // Actually simpler: value = multiplier of secondsPerBeat.
+    // 1 Beat = 1 Quarter Note.
+    { label: '1/4', value: 1 }, 
     { label: '1/8', value: 0.5 },
     { label: '1/16', value: 0.25 },
 ];
@@ -75,10 +82,25 @@ const Arranger: React.FC<ArrangerProps> = ({
   const [headerWidth, setHeaderWidth] = React.useState(220);
   
   const secondsPerBeat = 60 / project.bpm;
-  const beatsPerBar = 4;
-  const secondsPerBar = secondsPerBeat * beatsPerBar;
-  const pixelsPerBeat = zoom * secondsPerBeat;
-  const pixelsPerBar = pixelsPerBeat * beatsPerBar;
+  // Time Signature logic
+  const [numerator, denominator] = project.timeSignature || [4, 4];
+  const beatsPerBar = numerator;
+  
+  // A "beat" in standard DAW logic is usually a quarter note.
+  // If TimeSig is 6/8, we might want 6 beats per bar where each beat is an 8th note.
+  // Standard BPM is quarter notes.
+  // secondsPerBeat (Quarter) * (4/Denominator) = Duration of the Denominator Note.
+  // E.g. 6/8: Beat unit is 8th note. 
+  // Duration of 8th note = secondsPerQuarter * (4/8) = 0.5 * secondsPerQuarter.
+  // Total Bar Duration = 6 * (secondsPerQuarter * 0.5) = 3 * secondsPerQuarter.
+  
+  const beatMultiplier = 4 / denominator;
+  const secondsPerTick = secondsPerBeat * beatMultiplier; // Duration of one 'beat' in the time signature
+  const secondsPerBar = secondsPerTick * beatsPerBar;
+  
+  const pixelsPerTick = zoom * secondsPerTick; // Width of one beat/tick
+  const pixelsPerBar = pixelsPerTick * beatsPerBar;
+  
   const totalBars = Math.max(50, Math.ceil((project.loopEnd + 20) / secondsPerBar));
   const totalWidth = totalBars * pixelsPerBar;
 
@@ -138,6 +160,25 @@ const Arranger: React.FC<ArrangerProps> = ({
       setZoom(newZoom);
   };
 
+  const handleQuantize = () => {
+      if (selectedClipIds.length === 0) return;
+      
+      const gridSeconds = (snapGrid > 0 ? snapGrid : 0.25) * secondsPerBeat;
+      
+      commitTransaction();
+      setProject(prev => ({
+          ...prev,
+          clips: prev.clips.map(c => {
+              if (selectedClipIds.includes(c.id)) {
+                  const quantizedStart = Math.round(c.start / gridSeconds) * gridSeconds;
+                  return { ...c, start: quantizedStart };
+              }
+              return c;
+          })
+      }));
+      analytics.track('clip_action', { action: 'quantize', count: selectedClipIds.length });
+  };
+
   const handleTimelineDrop = (e: React.DragEvent, trackId: string) => {
       e.preventDefault();
       e.stopPropagation();
@@ -174,24 +215,29 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const { backgroundImage, backgroundSize } = useMemo(() => {
-      const showBeats = pixelsPerBeat > 20;
-      const showSubdivisions = pixelsPerBeat > 80;
+      // Dynamic Grid based on Time Signature
+      const showTicks = pixelsPerTick > 20;
       
       let bgImage = `linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)`;
       let bgSize = `${pixelsPerBar}px 100%`;
 
-      if (showBeats) {
+      if (showTicks) {
           bgImage += `, linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px)`;
-          bgSize += `, ${pixelsPerBeat}px 100%`;
+          bgSize += `, ${pixelsPerTick}px 100%`;
       }
       
-      if (showSubdivisions) {
+      // Subdivisions (16th notes usually, or based on snap)
+      // If Tick is Quarter, show 16th (divide by 4)
+      // If Tick is Eighth, show 16th (divide by 2)
+      
+      // Simplify: if zoomed in enough, show quarter divisions of the tick
+      if (pixelsPerTick > 80) {
           bgImage += `, linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px)`;
-          bgSize += `, ${pixelsPerBeat / 4}px 100%`;
+          bgSize += `, ${pixelsPerTick / 4}px 100%`;
       }
       
       return { backgroundImage: bgImage, backgroundSize: bgSize };
-  }, [pixelsPerBeat, pixelsPerBar]);
+  }, [pixelsPerTick, pixelsPerBar]);
 
   return (
     <div 
@@ -216,10 +262,21 @@ const Arranger: React.FC<ArrangerProps> = ({
                 <button 
                     onClick={onSplitAtPlayhead}
                     className="flex items-center space-x-1 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
-                    title="Split at Playhead"
+                    title="Split at Playhead (Ctrl+B)"
                 >
                     <Split size={12} />
                     <span className="hidden sm:inline">Split</span>
+                </button>
+            )}
+
+            {selectedClipIds.length > 0 && (
+                <button 
+                    onClick={handleQuantize}
+                    className="flex items-center space-x-1 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                    title="Quantize Selection (Q)"
+                >
+                    <AlignStartVertical size={12} />
+                    <span className="hidden sm:inline">Quantize</span>
                 </button>
             )}
 
@@ -227,13 +284,17 @@ const Arranger: React.FC<ArrangerProps> = ({
             <div className="flex items-center space-x-1 bg-zinc-900 rounded px-2 h-7 border border-zinc-800">
                 <Grid size={12} className="text-zinc-500" />
                 <select value={snapGrid} onChange={(e) => setSnapGrid(parseFloat(e.target.value))} className="bg-transparent text-zinc-300 outline-none text-[10px] w-14 appearance-none">
-                    {SNAP_OPTIONS.map(opt => <option key={opt.label} value={opt.value}>{opt.label}</option>)}
+                    <option value="0">Off</option>
+                    <option value={numerator}>Bar</option>
+                    <option value="1">1/4</option>
+                    <option value="0.5">1/8</option>
+                    <option value="0.25">1/16</option>
                 </select>
             </div>
              <button 
                 onClick={() => setProject(p => ({...p, isLooping: !p.isLooping}))} 
                 className={`p-1.5 rounded transition-all ${project.isLooping ? 'bg-studio-accent text-white' : 'text-zinc-500'}`}
-                title="Toggle Loop"
+                title="Toggle Loop (L)"
              >
                 <Repeat size={14} />
              </button>

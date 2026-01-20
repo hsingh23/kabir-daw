@@ -27,6 +27,8 @@ const mockProject: ProjectState = {
   id: 'test-project',
   name: 'Test Project',
   bpm: 120,
+  timeSignature: [4, 4],
+  returnToStartOnStop: true,
   tracks: [
     { id: 't1', name: 'Guitar', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } },
     { id: 't2', name: 'Bass', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
@@ -47,7 +49,10 @@ const mockProject: ProjectState = {
   masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: {
     threshold: -24,
-    ratio: 12
+    ratio: 12,
+    knee: 10,
+    attack: 0.05,
+    release: 0.25
   },
   effects: { reverb: 0, delay: 0, chorus: 0 },
   tanpura: {
@@ -170,7 +175,7 @@ describe('Arranger Integration', () => {
         />
       );
 
-      const splitBtn = getByTitle('Split at Playhead');
+      const splitBtn = getByTitle('Split at Playhead (Ctrl+B)');
       fireEvent.click(splitBtn);
       expect(onSplitAtPlayhead).toHaveBeenCalled();
   });

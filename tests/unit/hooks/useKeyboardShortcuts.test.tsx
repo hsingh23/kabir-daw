@@ -9,6 +9,8 @@ const mockProject: ProjectState = {
     id: 'test',
     name: 'Test Project',
     bpm: 120,
+    timeSignature: [4, 4],
+    returnToStartOnStop: true,
     tracks: [],
     clips: [],
     markers: [],
@@ -21,7 +23,7 @@ const mockProject: ProjectState = {
     inputMonitoring: false,
     masterVolume: 1,
     masterEq: { low: 0, mid: 0, high: 0 },
-    masterCompressor: { threshold: -20, ratio: 4 },
+    masterCompressor: { threshold: -20, ratio: 4, attack: 0.01, release: 0.1 },
     effects: { reverb: 0, delay: 0, chorus: 0 },
     tanpura: { enabled: false, volume: 0, key: 'C', tuning: 'Pa', tempo: 60 },
     tabla: { enabled: false, volume: 0, taal: 'TeenTaal', bpm: 100, key: 'C' }
@@ -47,7 +49,10 @@ describe('useKeyboardShortcuts Hook', () => {
             setClipboard: vi.fn(),
             clipboard: [],
             handleSplit: vi.fn(),
-            setShowShortcuts: vi.fn()
+            onSplitAtPlayhead: vi.fn(),
+            setShowShortcuts: vi.fn(),
+            onSeek: vi.fn(),
+            onQuantize: vi.fn()
         };
     });
 

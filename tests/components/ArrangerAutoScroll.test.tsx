@@ -15,10 +15,11 @@ vi.mock('../../components/Waveform', () => ({
 }));
 
 const mockProject: ProjectState = {
-  id: 'test', name: 'Test', bpm: 120, tracks: [{id:'t1', name:'T1', volume:1, pan:0, muted:false, solo:false, color:'#000', eq:{low:0,mid:0,high:0}, sends:{reverb:0,delay:0,chorus:0}}],
+  id: 'test', name: 'Test', bpm: 120, timeSignature: [4, 4], returnToStartOnStop: true, 
+  tracks: [{id:'t1', name:'T1', volume:1, pan:0, muted:false, solo:false, color:'#000', eq:{low:0,mid:0,high:0}, sends:{reverb:0,delay:0,chorus:0}}],
   clips: [{id:'c1', trackId:'t1', name:'Clip', start:0, duration:4, offset:0, bufferKey:'k1', fadeIn:0, fadeOut:0}],
   markers: [], loopStart:0, loopEnd:4, isLooping:false, metronomeOn:false, countIn:0, recordingLatency:0, inputMonitoring:false,
-  masterVolume:1, masterEq:{low:0,mid:0,high:0}, masterCompressor:{threshold:-20,ratio:4}, effects:{reverb:0,delay:0,chorus:0},
+  masterVolume:1, masterEq:{low:0,mid:0,high:0}, masterCompressor:{threshold:-20,ratio:4, attack: 0.01, release: 0.1}, effects:{reverb:0,delay:0,chorus:0},
   tanpura:{enabled:false,volume:0,key:'C',tuning:'Pa',tempo:60}, tabla:{enabled:false,volume:0,taal:'TeenTaal',bpm:100,key:'C'}
 };
 

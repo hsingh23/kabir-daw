@@ -27,6 +27,8 @@ const mockProject: ProjectState = {
   id: 'test-project',
   name: 'Test Project',
   bpm: 120,
+  timeSignature: [4, 4],
+  returnToStartOnStop: true,
   tracks: [
     { id: 't1', name: 'Guitar', volume: 1, pan: 0, muted: false, solo: false, color: '#fff', eq: { low: 0, mid: 0, high: 0 }, sends: { reverb: 0, delay: 0, chorus: 0 } }
   ],
@@ -43,7 +45,7 @@ const mockProject: ProjectState = {
   inputMonitoring: false,
   masterVolume: 1,
   masterEq: { low: 0, mid: 0, high: 0 },
-  masterCompressor: { threshold: -24, ratio: 12 },
+  masterCompressor: { threshold: -24, ratio: 12, attack: 0.05, release: 0.25 },
   effects: { reverb: 0, delay: 0, chorus: 0 },
   tanpura: { enabled: false, volume: 0.5, key: 'C', tuning: 'Pa', tempo: 60 },
   tabla: { enabled: false, volume: 0.5, taal: 'TeenTaal', bpm: 100, key: 'C' }

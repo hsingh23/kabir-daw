@@ -30,6 +30,7 @@ const INITIAL_PROJECT: ProjectState = {
   name: 'New Project',
   notes: '',
   bpm: 120,
+  timeSignature: [4, 4],
   tracks: TEMPLATES['Basic Band'].tracks || [],
   clips: [],
   markers: [],
@@ -41,6 +42,7 @@ const INITIAL_PROJECT: ProjectState = {
   countIn: 0,
   recordingLatency: 0,
   inputMonitoring: false,
+  returnToStartOnStop: true,
   masterVolume: 1.0,
   masterEq: { low: 0, mid: 0, high: 0 },
   masterCompressor: {
@@ -455,6 +457,25 @@ const AppContent: React.FC = () => {
     }
   }, [isRecording, isPlaying, project.clips, project.tracks]);
 
+  const handleQuantize = useCallback(() => {
+      if (selectedClipIds.length === 0) return;
+      const secondsPerBeat = 60 / project.bpm;
+      const grid = 0.25 * secondsPerBeat; // 1/16th quantization fixed for now or could use snapGrid
+      
+      commitTransaction();
+      updateProject(prev => ({
+          ...prev,
+          clips: prev.clips.map(c => {
+              if (selectedClipIds.includes(c.id)) {
+                  const qStart = Math.round(c.start / grid) * grid;
+                  return { ...c, start: qStart };
+              }
+              return c;
+          })
+      }));
+      showToast("Quantized clips", 'success');
+  }, [selectedClipIds, project.bpm, updateProject, commitTransaction, showToast]);
+
   // Use the extracted keyboard shortcuts hook
   useKeyboardShortcuts({
       project,
@@ -474,7 +495,8 @@ const AppContent: React.FC = () => {
       handleSplit,
       onSplitAtPlayhead: handleSplitAtPlayhead,
       setShowShortcuts,
-      onSeek: handleSeek
+      onSeek: handleSeek,
+      onQuantize: handleQuantize
   });
 
   useEffect(() => {
