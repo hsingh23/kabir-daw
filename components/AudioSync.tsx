@@ -16,6 +16,13 @@ const AudioSync: React.FC = () => {
         audio.syncInstruments(project.sequencer, project.drone);
     }, [project.sequencer, project.drone]);
 
+    // Sync Backing (Tanpura/Tabla) - Refactored to unified backing handler
+    useEffect(() => {
+        if (project.tanpura && project.tabla) {
+            audio.syncBacking(project.tanpura, project.tabla);
+        }
+    }, [project.tanpura, project.tabla]);
+
     // Sync Master Chain
     useEffect(() => {
         audio.setMasterVolume(project.masterVolume);
@@ -23,9 +30,9 @@ const AudioSync: React.FC = () => {
             audio.setMasterCompressor(
                 project.masterCompressor.threshold, 
                 project.masterCompressor.ratio, 
-                project.masterCompressor.knee, 
-                project.masterCompressor.attack, 
-                project.masterCompressor.release
+                project.masterCompressor.knee || 30, 
+                project.masterCompressor.attack || 0.003, 
+                project.masterCompressor.release || 0.25
             );
         }
         if (project.masterEq) {

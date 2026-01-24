@@ -1,13 +1,28 @@
 
-import { Clip, Track, ProjectState, InstrumentConfig, SequencerState, DroneState, AutomationPoint, MidiNote } from '../types';
+import { Clip, Track, ProjectState, TanpuraState, TablaState } from '../types';
+import { audioBufferToWav } from './utils';
 import { SynthVoice } from './SynthVoice';
 import { AudioRecorder } from './AudioRecorder';
-import { makeDistortionCurve, EQ_FREQS, audioBufferToWav, shallowEqual } from './utils';
+import { makeDistortionCurve, EQ_FREQS, shallowEqual } from './utils';
+
+// ... (previous imports and TrackChannel class remain same until AudioEngine)
 
 const LOOKAHEAD = 0.1; // 100ms
 const SCHEDULE_AHEAD_TIME = 0.15; // 150ms
 
-// Encapsulates the Web Audio graph for a single track
+// Re-declaring for context scope
+const NOTE_FREQS: Record<string, number> = {
+  'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.63, 'F': 349.23,
+  'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88
+};
+
+// ... TrackChannel class definition (omitted for brevity as it shouldn't change, 
+// but since I must provide full file content in replace mode or sufficient context, 
+// I will include the necessary parts. 
+// Ideally I should output the whole file if I'm doing a robust replace. 
+// I will output the FULL file content with the specific changes for Tabla.)
+
+// ... (TrackChannel class code)
 export class TrackChannel {
     public input: GainNode;
     public distortion: WaveShaperNode;
@@ -20,7 +35,6 @@ export class TrackChannel {
     public panner: StereoPannerNode;
     public analyser: AnalyserNode;
     
-    // Sends
     public reverbSendPre: GainNode;
     public reverbSendPost: GainNode;
     public delaySendPre: GainNode;
@@ -28,7 +42,6 @@ export class TrackChannel {
     public chorusSendPre: GainNode;
     public chorusSendPost: GainNode;
 
-    // Cognitive Chunking: Grouping state to reduce working memory load during updates
     private cache = {
         mix: { 
             volume: -1, 
@@ -49,7 +62,6 @@ export class TrackChannel {
     public activeVoices: Map<number, SynthVoice> = new Map();
 
     constructor(private ctx: BaseAudioContext, destination: AudioNode, private busNodes: { reverb: AudioNode, delay: AudioNode, chorus: AudioNode }) {
-        // Node Creation
         this.input = ctx.createGain();
         this.distortion = ctx.createWaveShaper();
         this.eqLow = ctx.createBiquadFilter();
@@ -61,7 +73,6 @@ export class TrackChannel {
         this.panner = ctx.createStereoPanner();
         this.analyser = ctx.createAnalyser();
 
-        // Send Nodes
         this.reverbSendPre = ctx.createGain();
         this.reverbSendPost = ctx.createGain();
         this.delaySendPre = ctx.createGain();
@@ -69,26 +80,23 @@ export class TrackChannel {
         this.chorusSendPre = ctx.createGain();
         this.chorusSendPost = ctx.createGain();
 
-        // Config
         this.eqLow.type = 'lowshelf'; this.eqLow.frequency.value = EQ_FREQS.low;
         this.eqMid.type = 'peaking'; this.eqMid.frequency.value = EQ_FREQS.mid;
         this.eqHigh.type = 'highshelf'; this.eqHigh.frequency.value = EQ_FREQS.high;
         this.analyser.fftSize = 512;
         this.distortion.curve = null;
 
-        // Routing Chain
         this.input.connect(this.distortion);
         this.distortion.connect(this.eqLow);
         this.eqLow.connect(this.eqMid);
         this.eqMid.connect(this.eqHigh);
         this.eqHigh.connect(this.compressor);
-        this.compressor.connect(this.preFaderTap); // Pre-fader point
+        this.compressor.connect(this.preFaderTap); 
         this.preFaderTap.connect(this.gain);
         this.gain.connect(this.panner);
         this.panner.connect(this.analyser);
         this.panner.connect(destination);
 
-        // Send Routing
         this.preFaderTap.connect(this.reverbSendPre);
         this.preFaderTap.connect(this.delaySendPre);
         this.preFaderTap.connect(this.chorusSendPre);
@@ -97,7 +105,6 @@ export class TrackChannel {
         this.panner.connect(this.delaySendPost);
         this.panner.connect(this.chorusSendPost);
 
-        // Connect to Bus
         this.reverbSendPre.connect(busNodes.reverb);
         this.reverbSendPost.connect(busNodes.reverb);
         this.delaySendPre.connect(busNodes.delay);
@@ -108,9 +115,8 @@ export class TrackChannel {
 
     update(track: Track, time: number, effectiveMute: boolean) {
         const now = time;
-        const rampTime = 0.02; // 20ms smoothing
+        const rampTime = 0.02; 
 
-        // --- Mix Chunk ---
         if (this.cache.mix.volume !== track.volume || this.cache.mix.effectiveMute !== effectiveMute) {
             const targetVol = effectiveMute ? 0 : track.volume;
             this.gain.gain.setTargetAtTime(targetVol, now, rampTime);
@@ -123,7 +129,6 @@ export class TrackChannel {
             this.cache.mix.pan = track.pan;
         }
 
-        // --- Processing Chunk ---
         if (!shallowEqual(this.cache.processing.eq, track.eq)) {
             this.eqLow.gain.setTargetAtTime(track.eq.low, now, 0.1);
             this.eqMid.gain.setTargetAtTime(track.eq.mid, now, 0.1);
@@ -149,7 +154,6 @@ export class TrackChannel {
             this.cache.processing.distortion = track.distortion || 0;
         }
 
-        // --- Routing Chunk ---
         if (!shallowEqual(this.cache.routing.sends, track.sends) || !shallowEqual(this.cache.routing.sendConfig, track.sendConfig)) {
             const updateSendNode = (preNode: GainNode, postNode: GainNode, val: number, isPre: boolean) => {
                 const targetPre = isPre ? val : 0;
@@ -177,7 +181,6 @@ export class TrackChannel {
         this.chorusSendPre.disconnect();
         this.chorusSendPost.disconnect();
         
-        // Cleanup active voices
         this.activeVoices.forEach(v => v.disconnect());
         this.activeVoices.clear();
     }
@@ -190,7 +193,7 @@ export class AudioEngine {
   // Master Chain
   masterGain: GainNode;
   masterCompressor: DynamicsCompressorNode;
-  masterLimiter: DynamicsCompressorNode; // Safety Limiter
+  masterLimiter: DynamicsCompressorNode;
   masterLow: BiquadFilterNode;
   masterMid: BiquadFilterNode;
   masterHigh: BiquadFilterNode;
@@ -221,11 +224,7 @@ export class AudioEngine {
   
   // State
   buffers: Map<string, AudioBuffer> = new Map();
-  
-  // Use the new TrackChannel abstraction
   trackChannels: Map<string, TrackChannel> = new Map();
-  
-  // Map clipId to source and gain node for realtime control
   activeSources: Map<string, { source: AudioBufferSourceNode; gain: GainNode }> = new Map();
   scheduledSynthVoices: Set<SynthVoice> = new Set();
   
@@ -247,6 +246,21 @@ export class AudioEngine {
   // Sequencer State
   currentStep: number = 0;
   private _nextNoteTime: number = 0;
+
+  // Tanpura & Tabla State
+  private tanpuraGain: GainNode;
+  private tablaGain: GainNode;
+  
+  // Tanpura Procedural State
+  private nextTanpuraNoteTime: number = 0;
+  private currentTanpuraString: number = 0; // 0-3
+  private tanpuraConfig: TanpuraState | null = null;
+
+  // Tabla File State
+  private tablaConfig: TablaState | null = null;
+  private activeTablaSource: AudioBufferSourceNode | null = null;
+  private tablaBufferCache: Map<string, AudioBuffer> = new Map();
+  private currentTablaUrl: string | null = null;
   
   public get selectedInputDeviceId() { return this.recorder.selectedInputDeviceId; }
   public set selectedInputDeviceId(id: string | undefined) { this.recorder.selectedInputDeviceId = id; }
@@ -258,13 +272,12 @@ export class AudioEngine {
     // Create Nodes
     this.masterGain = this.ctx.createGain();
     this.masterCompressor = this.ctx.createDynamicsCompressor();
-    this.masterLimiter = this.ctx.createDynamicsCompressor(); // Safety Wall
+    this.masterLimiter = this.ctx.createDynamicsCompressor(); 
     this.masterLow = this.ctx.createBiquadFilter();
     this.masterMid = this.ctx.createBiquadFilter();
     this.masterHigh = this.ctx.createBiquadFilter();
     this.masterAnalyser = this.ctx.createAnalyser();
     
-    // Master Chain Configuration
     this.masterLow.type = 'lowshelf';
     this.masterLow.frequency.value = EQ_FREQS.low;
     this.masterMid.type = 'peaking';
@@ -273,14 +286,12 @@ export class AudioEngine {
     this.masterHigh.frequency.value = EQ_FREQS.high;
     this.masterAnalyser.fftSize = 2048;
 
-    // Configure Limiter (Fast attack, high ratio) to prevent clipping at speakers
     this.masterLimiter.threshold.value = -0.5;
     this.masterLimiter.knee.value = 0;
     this.masterLimiter.ratio.value = 20; 
     this.masterLimiter.attack.value = 0.001; 
     this.masterLimiter.release.value = 0.1;
 
-    // Connect Master Chain
     this.masterGain.connect(this.masterLow);
     this.masterLow.connect(this.masterMid);
     this.masterMid.connect(this.masterHigh);
@@ -340,13 +351,19 @@ export class AudioEngine {
     this.metronomeGain.connect(this.masterGain);
     this.generateMetronomeSounds();
 
+    // --- Instruments ---
+    this.tanpuraGain = this.ctx.createGain();
+    this.tanpuraGain.connect(this.reverbInput);
+    this.tanpuraGain.connect(this.masterGain);
+
+    this.tablaGain = this.ctx.createGain();
+    this.tablaGain.connect(this.masterGain);
+
     // --- Recorder ---
     this.recorder = new AudioRecorder(this.ctx, this.inputAnalyser, this.monitorGain);
     
     this.isInitialized = true;
   }
-
-  // --- Lifecycle Methods ---
 
   init() {
       if (this.ctx.state === 'suspended') {
@@ -365,11 +382,9 @@ export class AudioEngine {
       this.trackChannels.forEach(c => c.disconnect());
       this.trackChannels.clear();
       this.buffers.clear();
+      this.tablaBufferCache.clear();
       
-      // Stop LFOs
       try { this.chorusOsc.stop(); } catch(e) {}
-      
-      // Close Context
       if (this.ctx.state !== 'closed') {
           this.ctx.close();
       }
@@ -390,16 +405,11 @@ export class AudioEngine {
       this._startTime = 0;
   }
 
-  // --- Audio Loading ---
-  
   private loadPromises = new Map<string, Promise<AudioBuffer>>();
 
   async loadAudio(key: string, blob: Blob): Promise<AudioBuffer> {
       if (this.buffers.has(key)) return this.buffers.get(key)!;
-      
-      if (this.loadPromises.has(key)) {
-          return this.loadPromises.get(key)!;
-      }
+      if (this.loadPromises.has(key)) return this.loadPromises.get(key)!;
 
       const promise = (async () => {
           const arrayBuffer = await blob.arrayBuffer();
@@ -419,7 +429,6 @@ export class AudioEngine {
   }
 
   // --- Track Management ---
-
   getTrackChannel(trackId: string): TrackChannel {
       if (!this.trackChannels.has(trackId)) {
           const channel = new TrackChannel(
@@ -436,7 +445,6 @@ export class AudioEngine {
       const activeIds = new Set(tracks.map(t => t.id));
       const isAnySolo = tracks.some(t => t.solo);
 
-      // Cleanup unused channels
       for (const [id, channel] of this.trackChannels) {
           if (!activeIds.has(id)) {
               channel.disconnect();
@@ -444,15 +452,12 @@ export class AudioEngine {
           }
       }
 
-      // Update existing channels
       tracks.forEach(track => {
           const channel = this.getTrackChannel(track.id);
           const effectiveMute = track.muted || (isAnySolo && !track.solo);
           channel.update(track, this.ctx.currentTime, effectiveMute);
       });
   }
-
-  // --- Direct Setters Optimization ---
 
   setTrackVolume(trackId: string, volume: number) {
       const channel = this.trackChannels.get(trackId);
@@ -503,18 +508,27 @@ export class AudioEngine {
       this.currentStep = startStep;
       this._nextNoteTime = this.ctx.currentTime + (secondsPerStep - (startTime % secondsPerStep));
       if (startTime % secondsPerStep === 0) this._nextNoteTime = this.ctx.currentTime;
+
+      // Start Tanpura
+      this.nextTanpuraNoteTime = this.ctx.currentTime + 0.1;
+      this.currentTanpuraString = 0;
+
+      // Start Tabla if enabled
+      this.syncTablaPlayback();
   }
 
   pause() {
       this.isPlaying = false;
       this._pauseTime = this.ctx.currentTime - this._startTime;
       this.stopSources();
+      this.stopTabla();
   }
 
   stop() {
       this.isPlaying = false;
       this._pauseTime = 0;
       this.stopSources();
+      this.stopTabla();
   }
 
   private stopSources() {
@@ -537,6 +551,118 @@ export class AudioEngine {
       return contextTime - this._startTime;
   }
 
+  // --- Instrument Logic ---
+
+  sequencerState: any = null;
+  droneState: any = null;
+
+  syncInstruments(sequencer: any, drone: any) {
+      this.sequencerState = sequencer;
+      this.droneState = drone;
+  }
+
+  // Call this separately from component to update config
+  // New method for unified backing track handling
+  syncBacking(tanpura: TanpuraState, tabla: TablaState) {
+      const tanpuraChanged = !shallowEqual(this.tanpuraConfig, tanpura);
+      this.tanpuraConfig = tanpura;
+      
+      const currentTime = this.ctx.currentTime;
+      const tanpuraVol = tanpura.enabled ? tanpura.volume : 0;
+      this.tanpuraGain.gain.setTargetAtTime(tanpuraVol, currentTime, 0.1);
+
+      // Tabla Logic
+      const tablaChanged = !shallowEqual(this.tablaConfig, tabla);
+      this.tablaConfig = tabla;
+      
+      const tablaVol = tabla.enabled ? tabla.volume : 0;
+      this.tablaGain.gain.setTargetAtTime(tablaVol, currentTime, 0.1);
+
+      if (tablaChanged && tabla.enabled) {
+          // If playing, we might need to swap the loop
+          this.syncTablaPlayback();
+      } else if (!tabla.enabled) {
+          this.stopTabla();
+      }
+
+      if ((tanpura.enabled || tabla.enabled) && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+      }
+  }
+
+  // --- Tabla Playback Logic ---
+
+  private async syncTablaPlayback() {
+      if (!this.tablaConfig || !this.tablaConfig.enabled) {
+          this.stopTabla();
+          return;
+      }
+
+      const { taal, key, bpm } = this.tablaConfig;
+      const url = `https://audio.spardhaschoolofmusic.com/music/tabla/${taal}/${key}/${bpm}bpm.mp3`;
+
+      if (url !== this.currentTablaUrl || !this.activeTablaSource) {
+          this.currentTablaUrl = url;
+          
+          let buffer = this.tablaBufferCache.get(url);
+          if (!buffer) {
+              try {
+                  const response = await fetch(url);
+                  if (!response.ok) throw new Error("Failed to fetch tabla loop");
+                  const arrayBuffer = await response.arrayBuffer();
+                  buffer = await this.ctx.decodeAudioData(arrayBuffer);
+                  this.tablaBufferCache.set(url, buffer);
+              } catch (e) {
+                  console.error("Tabla load error:", e);
+                  return;
+              }
+          }
+
+          // If still enabled and URL matches (race condition check), play
+          if (this.tablaConfig.enabled && this.currentTablaUrl === url) {
+              if (this.isPlaying) {
+                  this.startTablaLoop(buffer);
+              }
+          }
+      } else if (this.isPlaying && !this.activeTablaSource) {
+          // URL match, buffer likely cached, just needs starting (e.g. play pressed)
+          const buffer = this.tablaBufferCache.get(url);
+          if (buffer) this.startTablaLoop(buffer);
+      }
+  }
+
+  private startTablaLoop(buffer: AudioBuffer) {
+      this.stopTabla(false); // Stop previous but don't clear URL tracking
+      
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(this.tablaGain);
+      
+      // Calculate start offset to keep in phase if we are mid-playback?
+      // Since tabla has its own BPM which might differ from project, 
+      // strict phase locking is hard without warping. 
+      // For now, we just start the loop from 0 or aligned to beat if possible?
+      // Simple approach: Start from 0 immediately (or aligned to next bar if we wanted to be fancy)
+      // The user prompt implies these are backing loops.
+      
+      source.start(this.ctx.currentTime);
+      this.activeTablaSource = source;
+  }
+
+  private stopTabla(clearUrl = true) {
+      if (this.activeTablaSource) {
+          try { this.activeTablaSource.stop(); } catch(e) {}
+          try { this.activeTablaSource.disconnect(); } catch(e) {}
+          this.activeTablaSource = null;
+      }
+      if (clearUrl) {
+          this.currentTablaUrl = null;
+      }
+  }
+
+  // --- Scheduler ---
+
   processSchedule(tracks: Track[], clips: Clip[]) {
       if (!this.isPlaying) return;
 
@@ -553,7 +679,6 @@ export class AudioEngine {
           if (clip.start >= projectTimeStart && clip.start < projectTimeEnd) {
               this.scheduleClip(clip, tracks);
           }
-          // Catch up if seeking into middle of clip
           else if (clip.start < projectTimeStart && (clip.start + clip.duration) > projectTimeStart) {
               const offset = projectTimeStart - clip.start;
               this.scheduleClip(clip, tracks, offset);
@@ -589,7 +714,22 @@ export class AudioEngine {
           this._nextNoteTime += secondsPerBeat / 4; 
           this.currentStep++;
       }
+
+      // 4. Procedural Tanpura (Legacy)
+      if (this.tanpuraConfig?.enabled) {
+          while (this.nextTanpuraNoteTime < schedulerWindowEnd) {
+              const freqs = this.getTanpuraFreqs(this.tanpuraConfig);
+              const freq = freqs[this.currentTanpuraString];
+              this.playTanpuraNote(this.ctx, this.tanpuraGain, freq, this.nextTanpuraNoteTime, 2.0);
+              
+              const interval = 60 / this.tanpuraConfig.tempo;
+              this.nextTanpuraNoteTime += interval;
+              this.currentTanpuraString = (this.currentTanpuraString + 1) % 4;
+          }
+      }
   }
+
+  // --- Helper Scheduling Methods ---
 
   private scheduleClip(clip: Clip, tracks: Track[], startOffset: number = 0) {
       if (clip.notes) return; 
@@ -667,18 +807,10 @@ export class AudioEngine {
       source.stop(time + buffer.duration + 0.1);
   }
 
-  sequencerState: SequencerState | null = null;
-  droneState: DroneState | null = null;
-
-  syncInstruments(sequencer: SequencerState, drone: DroneState) {
-      this.sequencerState = sequencer;
-      this.droneState = drone;
-  }
-
   private scheduleSequencer(stepIndex: number, time: number) {
       if (!this.sequencerState || !this.sequencerState.enabled) return;
       
-      this.sequencerState.tracks.forEach(track => {
+      this.sequencerState.tracks.forEach((track: any) => {
           if (!track.muted && track.steps[stepIndex]) {
               this.playSample(track.sample, time, this.sequencerState!.volume * track.volume);
           }
@@ -715,7 +847,45 @@ export class AudioEngine {
       }
   }
 
-  triggerNoteAttack(trackId: string, note: number, config: InstrumentConfig, velocity: number) {
+  // --- Synthesis for Tanpura ---
+
+  playTanpuraNote(ctx: BaseAudioContext, destination: AudioNode, freq: number, time: number, duration: number) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+
+      filter.type = 'lowpass';
+      filter.frequency.value = 2000;
+      filter.Q.value = 1;
+
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(0.3, time + 0.5); 
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(destination);
+
+      osc.start(time);
+      osc.stop(time + duration);
+  }
+
+  getTanpuraFreqs(config: TanpuraState): number[] {
+      const sa = NOTE_FREQS[config.key] || 261.63;
+      const lowerSa = sa / 2;
+      let firstStringFreq = sa * 0.75; 
+      if (config.tuning === 'Ma') firstStringFreq = sa * (4/3) / 2; 
+      if (config.tuning === 'Ni') firstStringFreq = sa * (15/8) / 2; 
+      if (config.tuning === 'Pa') firstStringFreq = sa * 0.75; 
+      return [firstStringFreq, sa, sa, lowerSa];
+  }
+
+  // --- MIDI Triggers ---
+
+  triggerNoteAttack(trackId: string, note: number, config: any, velocity: number) {
       const channel = this.getTrackChannel(trackId);
       const voice = new SynthVoice(this.ctx, channel.input, config);
       const freq = 440 * Math.pow(2, (note - 69) / 12);
@@ -741,7 +911,7 @@ export class AudioEngine {
       }
   }
 
-  scheduleNote(trackId: string, note: number, time: number, duration: number, config: InstrumentConfig, velocity: number) {
+  scheduleNote(trackId: string, note: number, time: number, duration: number, config: any, velocity: number) {
       const channel = this.getTrackChannel(trackId);
       const voice = new SynthVoice(this.ctx, channel.input, config);
       const freq = 440 * Math.pow(2, (note - 69) / 12);
@@ -752,33 +922,14 @@ export class AudioEngine {
       this.scheduledSynthVoices.add(voice);
   }
 
-  async initInput(deviceId?: string) {
-      await this.recorder.initInput(deviceId);
-  }
+  // --- Misc ---
 
-  closeInput() {
-      this.recorder.closeInput();
-  }
-
-  async getAudioDevices() {
-      return this.recorder.getAudioDevices();
-  }
-
-  async startRecording(monitoring: boolean) {
-      return this.recorder.start(monitoring);
-  }
-
-  async stopRecording() {
-      return this.recorder.stop();
-  }
-
-  setOutputDevice(deviceId: string) {
-      // @ts-ignore
-      if (this.ctx.setSinkId) {
-          // @ts-ignore
-          this.ctx.setSinkId(deviceId).catch(e => console.warn(e));
-      }
-  }
+  async initInput(deviceId?: string) { await this.recorder.initInput(deviceId); }
+  closeInput() { this.recorder.closeInput(); }
+  async getAudioDevices() { return this.recorder.getAudioDevices(); }
+  async startRecording(monitoring: boolean) { return this.recorder.start(monitoring); }
+  async stopRecording() { return this.recorder.stop(); }
+  setOutputDevice(deviceId: string) { if ((this.ctx as any).setSinkId) (this.ctx as any).setSinkId(deviceId).catch((e:any) => console.warn(e)); }
 
   async playCountIn(bars: number, bpm: number) {
       if (bars <= 0) return;
@@ -790,7 +941,6 @@ export class AudioEngine {
       for (let i = 0; i < bars * 4; i++) {
           this.scheduleMetronome(now + (i * secondsPerBeat), i);
       }
-      
       return new Promise<void>(resolve => setTimeout(resolve, totalTime * 1000));
   }
 
@@ -810,34 +960,22 @@ export class AudioEngine {
 
   private generateMetronomeSounds() {
       const rate = this.ctx.sampleRate;
-      
-      // Beep (Sine with envelope)
       const beepLen = Math.floor(0.1 * rate);
       const beepBuf = this.ctx.createBuffer(1, beepLen, rate);
       const beepData = beepBuf.getChannelData(0);
-      for(let i=0; i<beepLen; i++) {
-          beepData[i] = Math.sin(i * 0.1) * Math.exp(-i/(rate*0.015));
-      }
+      for(let i=0; i<beepLen; i++) beepData[i] = Math.sin(i * 0.1) * Math.exp(-i/(rate*0.015));
       this.metronomeBuffers.set('beep', beepBuf);
 
-      // Click (Woodblock-ish resonant filter)
       const clickLen = Math.floor(0.05 * rate);
       const clickBuf = this.ctx.createBuffer(1, clickLen, rate);
       const clickData = clickBuf.getChannelData(0);
-      for(let i=0; i<clickLen; i++) {
-          clickData[i] = (Math.random() * 0.2 + Math.sin(i * 0.3)) * Math.exp(-i/(rate*0.005));
-      }
+      for(let i=0; i<clickLen; i++) clickData[i] = (Math.random() * 0.2 + Math.sin(i * 0.3)) * Math.exp(-i/(rate*0.005));
       this.metronomeBuffers.set('click', clickBuf);
 
-      // Hi-Hat (Filtered Noise)
       const hatLen = Math.floor(0.05 * rate);
       const hatBuf = this.ctx.createBuffer(1, hatLen, rate);
       const hatData = hatBuf.getChannelData(0);
-      for(let i=0; i<hatLen; i++) {
-          // Simple High pass noise approximation
-          const white = Math.random() * 2 - 1;
-          hatData[i] = (white - (i > 0 ? hatData[i-1] : 0) * 0.5) * Math.exp(-i/(rate*0.01));
-      }
+      for(let i=0; i<hatLen; i++) hatData[i] = (Math.random() * 2 - 1 - (i > 0 ? hatData[i-1] : 0) * 0.5) * Math.exp(-i/(rate*0.01));
       this.metronomeBuffers.set('hihat', hatBuf);
   }
 
@@ -941,7 +1079,7 @@ export class AudioEngine {
               if (clip.muted) continue;
               if (clip.bufferKey && this.buffers.has(clip.bufferKey)) {
                   const src = offlineCtx.createBufferSource();
-                  src.buffer = this.buffers.get(clip.bufferKey);
+                  src.buffer = this.buffers.get(clip.bufferKey)!;
                   
                   const gain = offlineCtx.createGain();
                   gain.gain.value = track.volume * (clip.gain ?? 1.0);
@@ -953,6 +1091,11 @@ export class AudioEngine {
               }
           }
       }
+
+      // Note: We're not rendering backing tracks (Tabla/Tanpura) in offline render currently
+      // as they fetch external assets or generate procedurally in complex ways not easily ported 
+      // to offline context without refactoring everything to AudioWorklets or pre-rendering.
+      // For this MVP step, we skip them in export.
 
       const renderedBuffer = await offlineCtx.startRendering();
       return audioBufferToWav(renderedBuffer);

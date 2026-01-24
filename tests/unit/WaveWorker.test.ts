@@ -26,7 +26,7 @@ if (typeof OffscreenCanvas === 'undefined') {
         }
         transferToImageBitmap() { return {}; }
     }
-    (global as any).OffscreenCanvas = MockOffscreenCanvas;
+    (globalThis as any).OffscreenCanvas = MockOffscreenCanvas;
 }
 
 // Ideally we import the worker code, but since it's a separate file likely processed by Vite,
