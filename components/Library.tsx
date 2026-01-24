@@ -106,7 +106,7 @@ const Library: React.FC<LibraryProps> = ({ onLoadProject, onCreateNewProject, on
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
           setLoadingAssets(true);
-          const files = Array.from(e.target.files);
+          const files: File[] = Array.from(e.target.files);
           const newIds: string[] = [];
           let errorCount = 0;
           let quotaError = false;

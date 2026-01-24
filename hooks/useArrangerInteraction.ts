@@ -1,5 +1,5 @@
 
-import { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { ProjectState, Clip, ToolMode } from '../types';
 import { analytics } from '../services/analytics';
 import { formatBars, formatTime } from '../services/utils';

@@ -1,5 +1,5 @@
 
-import { useRef, useCallback } from 'react';
+import React, { useRef, useCallback } from 'react';
 
 export const useTimelineNavigation = (
     zoom: number,
@@ -25,7 +25,7 @@ export const useTimelineNavigation = (
         activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
         
         if (activePointers.current.size === 2) {
-            const points = Array.from(activePointers.current.values());
+            const points: {x: number, y: number}[] = Array.from(activePointers.current.values());
             const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
             initialPinchDist.current = dist;
             initialZoom.current = zoom;
@@ -38,7 +38,7 @@ export const useTimelineNavigation = (
         activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
         if (activePointers.current.size === 2 && initialPinchDist.current) {
-            const points = Array.from(activePointers.current.values());
+            const points: {x: number, y: number}[] = Array.from(activePointers.current.values());
             const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
             if (dist > 0 && initialPinchDist.current > 0) {
                 const scale = dist / initialPinchDist.current;

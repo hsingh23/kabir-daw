@@ -29,8 +29,8 @@ describe('ArrangerMiniMap', () => {
         // Viewport: left 0%, width 20%
         
         // We can just check for existence of clips style
-        const clip1 = Array.from(clipDivs).find(d => d.getAttribute('style')?.includes('width: 10%'));
-        const clip2 = Array.from(clipDivs).find(d => d.getAttribute('style')?.includes('width: 5%'));
+        const clip1 = Array.from(clipDivs).find((d: any) => d.getAttribute('style')?.includes('width: 10%'));
+        const clip2 = Array.from(clipDivs).find((d: any) => d.getAttribute('style')?.includes('width: 5%'));
         
         expect(clip1).toBeDefined();
         expect(clip2).toBeDefined();

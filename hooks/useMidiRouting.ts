@@ -1,5 +1,5 @@
 
-import { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { midi } from '../services/midi';
 import { audio } from '../services/audio';
 import { ProjectState, MidiNote } from '../types';

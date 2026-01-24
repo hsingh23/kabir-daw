@@ -1,9 +1,9 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Knob from './Knob';
 import { audio } from '../services/audio';
+import { Loader2 } from 'lucide-react';
 
-// Local definition
 interface TablaState {
   enabled: boolean;
   volume: number;
@@ -17,34 +17,60 @@ interface TablaProps {
   onChange: (config: TablaState) => void;
 }
 
-const TAALS = ['TeenTaal', 'Keherwa', 'Dadra'];
-const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+// Configuration from requirements
+const TAAL_GROUPS: Record<string, string[]> = {
+    high: ['teen_taal', 'roopak', 'ektaal', 'bhajani'], // 80-200
+    low: ['dadra', 'jhaptaal', 'kehrwa'] // 80-150
+};
+
+const ALL_TAALS = [...TAAL_GROUPS.high, ...TAAL_GROUPS.low];
+
+const KEYS = [
+    "c", "c_sharp", "d", "d_sharp", "e", "f", 
+    "f_sharp", "g", "g_sharp", "a", "a_sharp", "b"
+];
+
+const formatKey = (k: string) => k.replace('_sharp', '#').toUpperCase();
+const formatTaal = (t: string) => t.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 const Tabla: React.FC<TablaProps> = ({ config, onChange }) => {
-  const [currentBeat, setCurrentBeat] = useState<number>(-1);
-  const rafRef = useRef<number>(0);
-  
-  // Placeholder pattern as audio support removed
-  const pattern = ['Dha', 'Dhin', 'Dhin', 'Dha']; 
+  const [isLoading, setIsLoading] = useState(false);
 
+  // Determine valid BPM range based on selected taal
+  const isHighRange = TAAL_GROUPS.high.includes(config.taal);
+  const minBpm = 80;
+  const maxBpm = isHighRange ? 200 : 150;
+
+  // Validate and snap BPM on mount/change
   useEffect(() => {
-      const loop = () => {
-          if (config.enabled && audio.isPlaying) {
-              // audio.currentTablaBeat removed, simulating placeholder or 0
-              setCurrentBeat(0); 
-          } else {
-              setCurrentBeat(-1);
-          }
-          rafRef.current = requestAnimationFrame(loop);
-      };
-      loop();
-      return () => cancelAnimationFrame(rafRef.current);
-  }, [config.enabled, config.taal]);
+      let newBpm = config.bpm;
+      
+      // Clamp
+      if (newBpm < minBpm) newBpm = minBpm;
+      if (newBpm > maxBpm) newBpm = maxBpm;
+      
+      // Snap to 5
+      const remainder = newBpm % 5;
+      if (remainder !== 0) {
+          newBpm = newBpm - remainder + (remainder >= 2.5 ? 5 : 0);
+      }
+      
+      // Ensure we don't exceed bounds after snap
+      if (newBpm > maxBpm) newBpm = maxBpm;
+      if (newBpm < minBpm) newBpm = minBpm;
+
+      if (newBpm !== config.bpm) {
+          onChange({ ...config, bpm: newBpm });
+      }
+  }, [config.taal]);
 
   return (
-    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4 opacity-50 pointer-events-none grayscale">
+    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4 shadow-lg">
         <div className="flex items-center justify-between border-b border-zinc-700 pb-2">
-            <h3 className="text-zinc-200 font-bold tracking-wide uppercase text-sm">Tabla (Legacy)</h3>
+            <h3 className="text-zinc-200 font-bold tracking-wide uppercase text-sm flex items-center gap-2">
+                Tabla Loop
+                {isLoading && <Loader2 size={12} className="animate-spin text-zinc-500" />}
+            </h3>
             <button 
                 onClick={() => onChange({ ...config, enabled: !config.enabled })}
                 className={`p-2 rounded-full transition-colors ${config.enabled ? 'bg-studio-accent text-white shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 text-zinc-500'}`}
@@ -53,52 +79,31 @@ const Tabla: React.FC<TablaProps> = ({ config, onChange }) => {
             </button>
         </div>
 
-        {/* Pattern Visualizer */}
-        <div className="bg-black/30 rounded-lg p-3 min-h-[60px] flex flex-wrap gap-1 justify-center items-center">
-             {pattern.map((bol, idx) => {
-                 const isActive = idx === currentBeat && config.enabled && audio.isPlaying;
-                 const isSum = idx === 0; // The 'Sum' (first beat)
-                 return (
-                     <div 
-                        key={idx}
-                        className={`
-                            px-2 py-1 rounded text-xs font-mono font-bold uppercase transition-all duration-75
-                            ${isActive 
-                                ? 'bg-yellow-500 text-black transform scale-110 shadow-lg' 
-                                : isSum ? 'bg-zinc-700 text-zinc-300 border border-zinc-600' : 'bg-zinc-800 text-zinc-500 border border-transparent'}
-                        `}
-                     >
-                         {bol}
-                     </div>
-                 )
-             })}
-        </div>
-
         <div className="flex flex-col space-y-2">
-            <label className="text-[10px] text-zinc-500 font-bold uppercase">Taal Pattern</label>
-            <div className="flex space-x-1">
-                {TAALS.map(t => (
+            <label className="text-[10px] text-zinc-500 font-bold uppercase">Taal</label>
+            <div className="grid grid-cols-2 gap-1 bg-zinc-950/30 p-1 rounded-lg">
+                {ALL_TAALS.map(t => (
                     <button 
                         key={t}
                         onClick={() => onChange({ ...config, taal: t })}
-                        className={`flex-1 py-1.5 text-[10px] rounded font-bold transition-colors ${config.taal === t ? 'bg-yellow-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+                        className={`py-1.5 px-2 text-[10px] rounded font-bold transition-colors truncate ${config.taal === t ? 'bg-yellow-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                     >
-                        {t}
+                        {formatTaal(t)}
                     </button>
                 ))}
             </div>
         </div>
 
         <div className="flex flex-col space-y-2">
-             <label className="text-[10px] text-zinc-500 font-bold uppercase">Tuning (Dayan)</label>
-             <div className="flex flex-wrap gap-1">
+             <label className="text-[10px] text-zinc-500 font-bold uppercase">Key</label>
+             <div className="grid grid-cols-6 gap-1">
                  {KEYS.map(k => (
                     <button 
                         key={k}
                         onClick={() => onChange({...config, key: k})}
-                        className={`w-6 h-6 text-[10px] rounded font-bold transition-colors ${config.key === k ? 'bg-zinc-200 text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+                        className={`h-8 text-[10px] rounded font-bold transition-colors ${config.key === k ? 'bg-zinc-200 text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
                     >
-                        {k}
+                        {formatKey(k)}
                     </button>
                  ))}
              </div>
@@ -107,9 +112,17 @@ const Tabla: React.FC<TablaProps> = ({ config, onChange }) => {
         <div className="flex justify-around pt-2">
             <Knob 
                 label="BPM" 
-                value={(config.bpm - 60) / 140} // Range 60-200
+                value={(config.bpm - minBpm) / (maxBpm - minBpm)} 
                 min={0} max={1}
-                onChange={(v) => onChange({ ...config, bpm: 60 + (v * 140) })}
+                onChange={(v) => {
+                    // Map 0-1 to min-max range
+                    let rawBpm = minBpm + (v * (maxBpm - minBpm));
+                    // Snap to 5
+                    let snapped = Math.round(rawBpm / 5) * 5;
+                    // Clamp
+                    snapped = Math.max(minBpm, Math.min(maxBpm, snapped));
+                    onChange({ ...config, bpm: snapped });
+                }}
             />
             <Knob 
                 label="Volume" 
@@ -119,7 +132,7 @@ const Tabla: React.FC<TablaProps> = ({ config, onChange }) => {
             />
         </div>
         <div className="text-center text-[10px] text-zinc-500 font-mono">
-            {Math.round(config.bpm)} BPM
+            {config.bpm} BPM
         </div>
     </div>
   );
