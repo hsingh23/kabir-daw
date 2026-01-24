@@ -5,8 +5,6 @@ import { SynthVoice } from './SynthVoice';
 import { AudioRecorder } from './AudioRecorder';
 import { makeDistortionCurve, EQ_FREQS, shallowEqual } from './utils';
 
-// ... (previous imports and TrackChannel class remain same until AudioEngine)
-
 const LOOKAHEAD = 0.1; // 100ms
 const SCHEDULE_AHEAD_TIME = 0.15; // 150ms
 
@@ -16,13 +14,6 @@ const NOTE_FREQS: Record<string, number> = {
   'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88
 };
 
-// ... TrackChannel class definition (omitted for brevity as it shouldn't change, 
-// but since I must provide full file content in replace mode or sufficient context, 
-// I will include the necessary parts. 
-// Ideally I should output the whole file if I'm doing a robust replace. 
-// I will output the FULL file content with the specific changes for Tabla.)
-
-// ... (TrackChannel class code)
 export class TrackChannel {
     public input: GainNode;
     public distortion: WaveShaperNode;
