@@ -31,13 +31,13 @@ const TimeDisplay: React.FC<TimeDisplayProps> = ({ currentTime, bpm, isPlaying }
   return (
     <button 
       onClick={() => setMode(mode === 'bars' ? 'time' : 'bars')}
-      className="hidden sm:flex flex-col items-center justify-center bg-black/40 border border-zinc-700/50 rounded px-2 md:px-3 py-1 min-w-[70px] md:min-w-[90px] cursor-pointer hover:bg-black/60 transition-colors select-none outline-none focus:ring-1 focus:ring-zinc-600"
+      className="flex flex-col items-end justify-center min-w-[80px] cursor-pointer group outline-none"
       title="Toggle Time Format"
     >
-      <span className="text-sm md:text-lg font-mono font-bold text-studio-accent leading-none tabular-nums tracking-tighter">
+      <span className="text-xl font-mono font-bold text-cyan-400 leading-none tracking-tight drop-shadow-[0_0_5px_rgba(34,211,238,0.4)]">
         {mode === 'bars' ? formatBars(displayTime, bpm) : formatTime(displayTime)}
       </span>
-      <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest leading-none mt-0.5">
+      <span className="text-[7px] text-zinc-500 font-bold uppercase tracking-widest leading-none mt-0.5 group-hover:text-zinc-400">
         {mode === 'bars' ? 'BARS' : 'TIME'}
       </span>
     </button>

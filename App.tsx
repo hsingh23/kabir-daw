@@ -82,7 +82,7 @@ const INITIAL_PROJECT: ProjectState = {
       ]
   },
   tanpura: { enabled: false, volume: 0.5, key: 'C', tuning: 'Pa', tempo: 60, fineTune: 0 },
-  tabla: { enabled: false, volume: 0.5, taal: 'TeenTaal', bpm: 100, key: 'C' },
+  tabla: { enabled: false, volume: 0.5, taal: 'teen_taal', bpm: 100, key: 'c' },
   midiMappings: []
 };
 

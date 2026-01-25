@@ -64,10 +64,10 @@ const Mixer: React.FC<MixerProps> = ({ onOpenMaster }) => {
   const isSoloActive = useMemo(() => project.tracks.some(t => t.solo), [project.tracks]);
 
   return (
-    <div className="flex flex-col h-full bg-studio-bg overflow-hidden relative">
+    <div className="flex flex-col h-full bg-[#1a1a1a] overflow-hidden relative">
       
       {/* Mini Header / Tab Switcher */}
-      <div className="h-12 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between px-4 shrink-0 z-20">
+      <div className="h-12 border-b border-black bg-[#252525] flex items-center justify-between px-4 shrink-0 z-20 shadow-sm">
           <div className="flex items-center space-x-1 bg-zinc-900 rounded-md p-1 border border-zinc-800">
               <button 
                 onClick={() => setTab('tracks')} 
@@ -105,17 +105,17 @@ const Mixer: React.FC<MixerProps> = ({ onOpenMaster }) => {
           )}
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden bg-[#1e1e1e]">
         {tab === 'tracks' ? (
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden relative">
                 {/* Scrollable Tracks Area */}
                 {project.tracks.length === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 space-y-4 p-8 text-center animate-in fade-in duration-300">
-                        <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center border border-zinc-800">
+                        <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center border border-zinc-800 shadow-xl">
                             <LayoutGrid size={32} />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-zinc-400">Empty Mixing Console</h3>
+                            <h3 className="text-lg font-bold text-zinc-400">Empty Console</h3>
                             <p className="text-xs text-zinc-600 max-w-xs mx-auto">Add tracks to start mixing your project.</p>
                         </div>
                         <div className="flex gap-3">
@@ -128,8 +128,8 @@ const Mixer: React.FC<MixerProps> = ({ onOpenMaster }) => {
                         </div>
                     </div>
                 ) : (
-                    <div className="flex-1 overflow-x-auto overflow-y-hidden snap-x snap-mandatory">
-                        <div className="flex h-full min-w-max px-4 pt-4 pb-12 space-x-2">
+                    <div className="flex-1 overflow-x-auto overflow-y-hidden snap-x snap-mandatory scroll-smooth pb-safe pl-safe custom-scrollbar">
+                        <div className="flex h-full min-w-max px-0 space-x-0">
                             {project.tracks.map(track => {
                                 const isImplicitlyMuted = isSoloActive && !track.solo;
                                 return (
@@ -146,39 +146,42 @@ const Mixer: React.FC<MixerProps> = ({ onOpenMaster }) => {
                             })}
                             
                             {/* Spacer for adding tracks */}
-                            <div className="w-20 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded-lg m-2 opacity-50 hover:opacity-100 transition-opacity snap-center">
-                                <button onClick={() => handleAddTrack('audio')} className="p-4 text-zinc-500 hover:text-white" title="Add Track">
-                                    <Plus size={24} />
+                            <div className="w-24 flex flex-col items-center justify-center border-l border-r border-dashed border-zinc-800/30 bg-[#151515] snap-center shrink-0">
+                                <button onClick={() => handleAddTrack('audio')} className="p-4 text-zinc-600 hover:text-zinc-400 transition-colors" title="Add Track">
+                                    <Plus size={32} />
                                 </button>
                             </div>
+                            
+                            {/* Right Spacer for Master visibility overlap */}
+                            <div className="w-28 shrink-0" /> 
                         </div>
                     </div>
                 )}
 
-                {/* Fixed Master Strip */}
-                <div className="w-28 bg-zinc-950 border-l border-zinc-800 flex flex-col shrink-0 h-full shadow-2xl z-30">
-                    <div className="h-24 bg-zinc-900 border-b border-zinc-800 p-2 flex flex-col justify-between">
-                        <div className="h-12 w-full bg-black rounded overflow-hidden relative">
-                            <SpectrumAnalyzer height={48} color="#ef4444" />
+                {/* Fixed Master Strip Overlay (Right Side) */}
+                <div className="absolute top-0 right-0 bottom-0 w-28 bg-[#181818] border-l border-black shadow-[0_0_20px_rgba(0,0,0,0.8)] flex flex-col shrink-0 z-30 pb-safe">
+                    <div className="h-28 bg-[#202020] border-b border-black p-2 flex flex-col justify-between">
+                        <div className="h-16 w-full bg-black rounded border border-white/5 overflow-hidden relative shadow-inner">
+                            <SpectrumAnalyzer height={64} color="#ef4444" />
                         </div>
-                        <div className="flex justify-between items-center px-1">
+                        <div className="flex justify-between items-center px-1 pt-1">
                             <span className="text-[10px] font-bold text-red-500 tracking-wider">MASTER</span>
-                            <button onClick={onOpenMaster} className="text-zinc-500 hover:text-white transition-colors" title="Master FX">
+                            <button onClick={onOpenMaster} className="text-zinc-500 hover:text-white transition-colors p-1" title="Master FX">
                                 <Activity size={14} />
                             </button>
                         </div>
                     </div>
 
-                    <div className="flex-1 p-3 flex justify-center relative bg-zinc-950">
+                    <div className="flex-1 p-2 flex justify-center relative bg-[#181818]">
                          <div className="h-full flex gap-3 z-10 py-2">
                             <CustomFader 
                                 value={project.masterVolume} 
-                                onChange={(v) => updateProject(p => ({...p, masterVolume: v}))} 
-                                onChangeEnd={(v) => analytics.track('mixer_action', { action: 'set_master_volume', value: v })}
-                                height={350}
+                                onChange={(v) => import('../services/audio').then(({ audio }) => audio.setMasterVolume(v))} 
+                                onChangeEnd={(v) => updateProject(p => ({...p, masterVolume: v}))}
+                                height={320}
                                 defaultValue={1.0}
                             />
-                            <div className="w-4 h-full">
+                            <div className="w-4 h-full bg-black border border-white/10 rounded-sm">
                                 <LevelMeter vertical={true} />
                             </div>
                         </div>
@@ -186,12 +189,14 @@ const Mixer: React.FC<MixerProps> = ({ onOpenMaster }) => {
                 </div>
             </div>
         ) : (
-            <div className="flex-1 overflow-y-auto p-6">
-                <div className="max-w-3xl mx-auto space-y-8">
+            <div className="flex-1 overflow-y-auto p-6 bg-[#1a1a1a]">
+                <div className="max-w-4xl mx-auto space-y-8 pb-20">
                     {project.drone && <DroneSynth config={project.drone} onChange={(cfg) => updateProject(p => ({...p, drone: cfg}))} />}
                     {project.sequencer && <StepSequencer config={project.sequencer} onChange={(cfg) => updateProject(p => ({...p, sequencer: cfg}))} />}
-                    {project.tanpura && <Tanpura config={project.tanpura} onChange={(cfg) => updateProject(p => ({...p, tanpura: cfg}))} />}
-                    {project.tabla && <Tabla config={project.tabla} onChange={(cfg) => updateProject(p => ({...p, tabla: cfg}))} />}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {project.tanpura && <Tanpura config={project.tanpura} onChange={(cfg) => updateProject(p => ({...p, tanpura: cfg}))} />}
+                        {project.tabla && <Tabla config={project.tabla} onChange={(cfg) => updateProject(p => ({...p, tabla: cfg}))} />}
+                    </div>
                 </div>
             </div>
         )}

@@ -1,10 +1,10 @@
+
 import React from 'react';
 import { Track, InstrumentConfig } from '../types';
 import Knob from './Knob';
 import VisualEQ from './VisualEQ';
-import TrackIcon, { ICONS } from './TrackIcon';
-import { X, Trash2, Zap, Palette, Copy, Smile, Waves, RotateCcw } from 'lucide-react';
-import CustomFader from './Fader';
+import TrackIcon from './TrackIcon';
+import { X, Trash2, Copy } from 'lucide-react';
 
 interface TrackInspectorProps {
   track: Track;
@@ -15,34 +15,31 @@ interface TrackInspectorProps {
 }
 
 const TRACK_COLORS = [
-    '#ef4444', // Red
-    '#f97316', // Orange
-    '#eab308', // Yellow
-    '#22c55e', // Green
-    '#06b6d4', // Cyan
-    '#3b82f6', // Blue
-    '#a855f7', // Purple
-    '#ec4899', // Pink
-    '#71717a', // Zinc
+    '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899', '#71717a'
 ];
 
 const WAVEFORMS = ['sine', 'square', 'sawtooth', 'triangle'];
 
+// Moved PluginSlot outside to prevent recreation on every render
+// Made children optional to satisfy potential TS strictness on usage sites
+const PluginSlot = ({ label, active, children, onToggle }: { label: string, active: boolean, children?: React.ReactNode, onToggle?: () => void }) => (
+    <div className={`mb-3 bg-[#222] border border-black rounded-lg overflow-hidden transition-all ${active ? 'opacity-100' : 'opacity-70 grayscale'}`}>
+        <div className="bg-[#2a2a2a] px-3 py-1.5 border-b border-black flex items-center justify-between">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">{label}</span>
+            {onToggle && (
+                <button onClick={onToggle} className={`w-3 h-3 rounded-full border border-black/50 shadow-inner ${active ? 'bg-cyan-500 shadow-[0_0_5px_rgba(6,182,212,0.5)]' : 'bg-[#111]'}`} />
+            )}
+        </div>
+        <div className="p-3">
+            {children}
+        </div>
+    </div>
+);
+
 const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onDeleteTrack, onDuplicateTrack, onClose }) => {
   
   const updateEQ = (band: 'low' | 'mid' | 'high', value: number) => {
-      updateTrack(track.id, {
-          eq: {
-              ...track.eq,
-              [band]: value
-          }
-      });
-  };
-
-  const resetEQ = () => {
-      updateTrack(track.id, {
-          eq: { low: 0, mid: 0, high: 0 }
-      });
+      updateTrack(track.id, { eq: { ...track.eq, [band]: value } });
   };
 
   const updateCompressor = (updates: Partial<NonNullable<Track['compressor']>>) => {
@@ -59,128 +56,63 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
       });
   };
 
-  const resetCompressor = () => {
-      updateTrack(track.id, {
-          compressor: {
-              enabled: track.compressor?.enabled || false,
-              threshold: -20,
-              ratio: 4,
-              attack: 0.01,
-              release: 0.1
-          },
-          distortion: 0
-      });
-  };
-
   const updateSend = (type: 'reverb' | 'delay' | 'chorus', value: number) => {
-      updateTrack(track.id, {
-          sends: {
-              reverb: 0, delay: 0, chorus: 0,
-              ...track.sends,
-              [type]: value
-          }
-      });
-  };
-
-  const togglePreFader = (type: 'reverbPre' | 'delayPre' | 'chorusPre') => {
-      updateTrack(track.id, {
-          sendConfig: {
-              reverbPre: false, delayPre: false, chorusPre: false,
-              ...track.sendConfig,
-              [type]: !track.sendConfig?.[type]
-          }
-      });
+      updateTrack(track.id, { sends: { reverb: 0, delay: 0, chorus: 0, ...track.sends, [type]: value } });
   };
 
   const updateInstrument = (updates: Partial<InstrumentConfig>) => {
       if (!track.instrument) return;
-      updateTrack(track.id, {
-          instrument: {
-              ...track.instrument,
-              ...updates
-          }
-      });
+      updateTrack(track.id, { instrument: { ...track.instrument, ...updates } });
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-14 bg-studio-panel z-[100] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
+    <div className="fixed inset-y-0 right-0 w-80 bg-[#1a1a1a] border-l border-black z-[100] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-zinc-700 bg-zinc-800">
-            <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded flex items-center justify-center bg-zinc-900 shadow-inner text-zinc-400">
-                    <TrackIcon icon={track.icon} name={track.name} color={track.color} />
+        <div className="flex items-center justify-between p-3 border-b border-black bg-[#252525]">
+            <div className="flex items-center space-x-2">
+                <div className="w-6 h-6 rounded flex items-center justify-center bg-black/40 shadow-inner text-zinc-400">
+                    <TrackIcon icon={track.icon} name={track.name} color={track.color} size={12} />
                 </div>
-                <div className="flex-1 min-w-0">
-                    <input 
-                        value={track.name}
-                        onChange={(e) => updateTrack(track.id, { name: e.target.value })}
-                        className="bg-transparent text-lg font-bold text-white outline-none w-full placeholder-zinc-500"
-                        placeholder="Track Name"
-                    />
-                    <p className="text-xs text-zinc-400 uppercase tracking-widest">Channel Strip</p>
-                </div>
+                <input 
+                    value={track.name}
+                    onChange={(e) => updateTrack(track.id, { name: e.target.value })}
+                    className="bg-transparent text-sm font-bold text-zinc-200 outline-none w-32 placeholder-zinc-500 focus:text-white"
+                    placeholder="Track Name"
+                />
             </div>
-            <button onClick={onClose} className="p-2 rounded-full bg-zinc-700 hover:bg-zinc-600">
-                <X size={20} />
+            <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-700 text-zinc-500 hover:text-white transition-colors">
+                <X size={16} />
             </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-24">
+        <div className="flex-1 overflow-y-auto p-3 space-y-4 custom-scrollbar">
             
-            {/* 1. Track Color & Icon */}
-            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
-                    <Palette size={12} className="mr-2" /> Appearance
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                    {TRACK_COLORS.map(c => (
-                        <button 
-                            key={c}
-                            onClick={() => updateTrack(track.id, { color: c })}
-                            className={`w-6 h-6 rounded-full border-2 transition-all ${track.color === c ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:border-zinc-500'}`}
-                            style={{ backgroundColor: c }}
-                        />
-                    ))}
-                </div>
-            </div>
-
-            {/* 2. Instrument Settings (if applicable) */}
+            {/* 1. Synth Engine (Dynamic) */}
             {track.type === 'instrument' && track.instrument && (
-                <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                    <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
-                        <Smile size={12} className="mr-2" /> Synth Engine
-                    </h3>
-                    <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-lg w-max">
+                <PluginSlot label="Synthesizer" active={true}>
+                    <div className="flex gap-1 mb-3 bg-black p-0.5 rounded-md">
                         {WAVEFORMS.map(w => (
                             <button
                                 key={w}
                                 onClick={() => updateInstrument({ preset: w as any })}
-                                className={`px-3 py-1.5 rounded text-[10px] uppercase font-bold transition-colors ${track.instrument?.preset === w ? 'bg-studio-accent text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                className={`flex-1 py-1 rounded text-[9px] uppercase font-bold transition-all ${track.instrument?.preset === w ? 'bg-studio-accent text-white shadow-sm' : 'text-zinc-600 hover:text-zinc-400'}`}
                             >
-                                {w}
+                                {w.slice(0,3)}
                             </button>
                         ))}
                     </div>
-                    <div className="flex justify-around">
-                        <Knob label="Attack" value={track.instrument.attack * 2} min={0} max={1} onChange={(v) => updateInstrument({ attack: v / 2 })} />
-                        <Knob label="Decay" value={track.instrument.decay * 2} min={0} max={1} onChange={(v) => updateInstrument({ decay: v / 2 })} />
-                        <Knob label="Sustain" value={track.instrument.sustain} min={0} max={1} onChange={(v) => updateInstrument({ sustain: v })} />
-                        <Knob label="Release" value={track.instrument.release / 2} min={0} max={1} onChange={(v) => updateInstrument({ release: v * 2 })} />
+                    <div className="flex justify-between px-1">
+                        <Knob label="Atk" value={track.instrument.attack * 2} min={0} max={1} onChange={(v) => updateInstrument({ attack: v / 2 })} size={36} />
+                        <Knob label="Dec" value={track.instrument.decay * 2} min={0} max={1} onChange={(v) => updateInstrument({ decay: v / 2 })} size={36} />
+                        <Knob label="Sus" value={track.instrument.sustain} min={0} max={1} onChange={(v) => updateInstrument({ sustain: v })} size={36} />
+                        <Knob label="Rel" value={track.instrument.release / 2} min={0} max={1} onChange={(v) => updateInstrument({ release: v * 2 })} size={36} />
                     </div>
-                </div>
+                </PluginSlot>
             )}
 
-            {/* 3. EQ */}
-            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center">
-                        <Waves size={12} className="mr-2" /> Equalizer
-                    </h3>
-                    <button onClick={resetEQ} className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-white" title="Reset EQ">
-                        <RotateCcw size={12} />
-                    </button>
-                </div>
-                <div className="mb-4">
+            {/* 2. Channel EQ */}
+            <PluginSlot label="Channel EQ" active={true}>
+                <div className="mb-3">
                     <VisualEQ 
                         low={track.eq.low}
                         mid={track.eq.mid}
@@ -190,138 +122,62 @@ const TrackInspector: React.FC<TrackInspectorProps> = ({ track, updateTrack, onD
                         onChangeHigh={(v) => updateEQ('high', v)}
                     />
                 </div>
-                <div className="flex justify-around">
-                    <Knob label="Low" value={(track.eq.low + 12)/24} min={0} max={1} onChange={(v) => updateEQ('low', (v*24)-12)} />
-                    <Knob label="Mid" value={(track.eq.mid + 12)/24} min={0} max={1} onChange={(v) => updateEQ('mid', (v*24)-12)} />
-                    <Knob label="High" value={(track.eq.high + 12)/24} min={0} max={1} onChange={(v) => updateEQ('high', (v*24)-12)} />
+                <div className="flex justify-between px-2">
+                    <Knob label="Low" value={(track.eq.low + 12)/24} min={0} max={1} onChange={(v) => updateEQ('low', (v*24)-12)} size={40} color="#f87171" />
+                    <Knob label="Mid" value={(track.eq.mid + 12)/24} min={0} max={1} onChange={(v) => updateEQ('mid', (v*24)-12)} size={40} color="#fbbf24" />
+                    <Knob label="High" value={(track.eq.high + 12)/24} min={0} max={1} onChange={(v) => updateEQ('high', (v*24)-12)} size={40} color="#34d399" />
                 </div>
-            </div>
+            </PluginSlot>
 
-            {/* 4. Dynamics (Compressor + Distortion) */}
-            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider flex items-center">
-                        <Zap size={12} className="mr-2" /> Dynamics
-                    </h3>
-                    <div className="flex items-center gap-2">
-                        <button 
-                            onClick={() => updateCompressor({ enabled: !track.compressor?.enabled })}
-                            className={`w-8 h-4 rounded-full transition-colors ${track.compressor?.enabled ? 'bg-studio-accent' : 'bg-zinc-700'}`}
-                        >
-                            <div className={`w-3 h-3 bg-white rounded-full shadow-sm transform transition-transform ${track.compressor?.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                        </button>
-                    </div>
+            {/* 3. Compressor */}
+            <PluginSlot 
+                label="Compressor" 
+                active={!!track.compressor?.enabled}
+                onToggle={() => updateCompressor({ enabled: !track.compressor?.enabled })}
+            >
+                <div className="flex justify-between px-2 mb-3">
+                    <Knob label="Thresh" value={(track.compressor?.threshold || -20) + 60} min={0} max={60} onChange={(v) => updateCompressor({ threshold: v - 60 })} size={36} />
+                    <Knob label="Ratio" value={((track.compressor?.ratio || 4) - 1) / 19} min={0} max={1} onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} size={36} />
+                    <Knob label="Drive" value={track.distortion || 0} min={0} max={1} onChange={(v) => updateTrack(track.id, { distortion: v })} size={36} color="#f97316" />
                 </div>
-                
-                <div className={`transition-opacity duration-200 ${track.compressor?.enabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
-                    <div className="flex justify-around mb-6">
-                        <Knob label="Thresh" value={(track.compressor?.threshold || -20) + 60} min={0} max={60} onChange={(v) => updateCompressor({ threshold: v - 60 })} />
-                        <Knob label="Ratio" value={((track.compressor?.ratio || 4) - 1) / 19} min={0} max={1} onChange={(v) => updateCompressor({ ratio: 1 + (v * 19) })} />
-                        <Knob label="Attack" value={(track.compressor?.attack || 0.01) * 10} min={0} max={1} onChange={(v) => updateCompressor({ attack: v / 10 })} />
-                    </div>
-                </div>
+            </PluginSlot>
 
-                <div className="border-t border-zinc-800 pt-4 mt-4">
-                    <div className="flex items-center gap-4">
-                        <Knob label="Distortion" value={track.distortion || 0} min={0} max={1} onChange={(v) => updateTrack(track.id, { distortion: v })} />
-                        <div className="flex-1">
-                            <p className="text-[10px] text-zinc-500 mb-1">Saturation</p>
-                            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                                <div className="h-full bg-orange-500" style={{ width: `${(track.distortion || 0) * 100}%` }} />
-                            </div>
+            {/* 4. Sends */}
+            <div className="bg-[#222] border border-black rounded-lg p-2">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2 block px-1">Sends</span>
+                <div className="space-y-1">
+                    <div className="flex items-center gap-2 bg-black/30 p-1 rounded">
+                        <span className="text-[10px] text-zinc-400 w-10">Reverb</span>
+                        <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500" style={{ width: `${track.sends.reverb * 100}%` }} />
                         </div>
+                        <input type="range" min="0" max="1" step="0.01" value={track.sends.reverb} onChange={(e) => updateSend('reverb', parseFloat(e.target.value))} className="w-12 h-1 opacity-0 absolute" />
                     </div>
-                </div>
-            </div>
-
-            {/* 5. Sends */}
-            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-700/50">
-                <h3 className="text-xs font-bold text-zinc-500 uppercase mb-4 tracking-wider flex items-center">
-                    <Waves size={12} className="mr-2" /> FX Sends
-                </h3>
-                <div className="grid grid-cols-3 gap-4">
-                    <div className="flex flex-col items-center gap-2">
-                        <Knob label="Reverb" value={track.sends.reverb} min={0} max={1} onChange={(v) => updateSend('reverb', v)} />
-                        <button onClick={() => togglePreFader('reverbPre')} className={`text-[9px] px-1.5 py-0.5 rounded border ${track.sendConfig.reverbPre ? 'bg-blue-900/30 border-blue-500 text-blue-400' : 'border-zinc-700 text-zinc-500'}`}>
-                            {track.sendConfig.reverbPre ? 'PRE' : 'POST'}
-                        </button>
-                    </div>
-                    <div className="flex flex-col items-center gap-2">
-                        <Knob label="Delay" value={track.sends.delay} min={0} max={1} onChange={(v) => updateSend('delay', v)} />
-                        <button onClick={() => togglePreFader('delayPre')} className={`text-[9px] px-1.5 py-0.5 rounded border ${track.sendConfig.delayPre ? 'bg-blue-900/30 border-blue-500 text-blue-400' : 'border-zinc-700 text-zinc-500'}`}>
-                            {track.sendConfig.delayPre ? 'PRE' : 'POST'}
-                        </button>
-                    </div>
-                    <div className="flex flex-col items-center gap-2">
-                        <Knob label="Chorus" value={track.sends.chorus} min={0} max={1} onChange={(v) => updateSend('chorus', v)} />
-                        <button onClick={() => togglePreFader('chorusPre')} className={`text-[9px] px-1.5 py-0.5 rounded border ${track.sendConfig.chorusPre ? 'bg-blue-900/30 border-blue-500 text-blue-400' : 'border-zinc-700 text-zinc-500'}`}>
-                            {track.sendConfig.chorusPre ? 'PRE' : 'POST'}
-                        </button>
+                    <div className="flex items-center gap-2 bg-black/30 p-1 rounded">
+                        <span className="text-[10px] text-zinc-400 w-10">Delay</span>
+                        <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-green-500" style={{ width: `${track.sends.delay * 100}%` }} />
+                        </div>
+                        <input type="range" min="0" max="1" step="0.01" value={track.sends.delay} onChange={(e) => updateSend('delay', parseFloat(e.target.value))} className="w-12 h-1 opacity-0 absolute" />
                     </div>
                 </div>
             </div>
 
             {/* Actions */}
-            <div className="grid grid-cols-2 gap-4 pt-4">
+            <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-white/5">
                 <button 
                     onClick={() => onDuplicateTrack && onDuplicateTrack(track.id)}
-                    className="py-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-sm flex items-center justify-center space-x-2 transition-colors border border-zinc-700"
+                    className="py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-xs font-bold flex items-center justify-center gap-2 border border-zinc-700"
                 >
-                    <Copy size={16} />
-                    <span>Duplicate</span>
+                    <Copy size={12} /> Duplicate
                 </button>
                 <button 
                     onClick={() => onDeleteTrack && onDeleteTrack(track.id)}
-                    className="py-3 rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-500 font-bold text-sm flex items-center justify-center space-x-2 transition-colors border border-red-900/30"
+                    className="py-2 rounded bg-zinc-800 hover:bg-red-900/30 text-zinc-400 hover:text-red-500 text-xs font-bold flex items-center justify-center gap-2 border border-zinc-700"
                 >
-                    <Trash2 size={16} />
-                    <span>Delete</span>
+                    <Trash2 size={12} /> Delete
                 </button>
             </div>
-
-            <div className="h-4" /> {/* Spacer */}
-        </div>
-
-        {/* Floating Mute/Solo/Fader strip at bottom */}
-        <div className="p-4 bg-zinc-900 border-t border-zinc-700 flex items-center space-x-4">
-             <div className="flex items-center gap-2">
-                 <button 
-                    onClick={() => updateTrack(track.id, { muted: !track.muted })}
-                    className={`w-10 h-10 rounded-lg font-bold border transition-all ${track.muted ? 'bg-red-500 border-red-600 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'}`}
-                 >
-                     M
-                 </button>
-                 <button 
-                    onClick={() => updateTrack(track.id, { solo: !track.solo })}
-                    className={`w-10 h-10 rounded-lg font-bold border transition-all ${track.solo ? 'bg-yellow-500 border-yellow-600 text-black shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:bg-zinc-700'}`}
-                 >
-                     S
-                 </button>
-             </div>
-             <div className="flex-1">
-                 <div className="flex justify-between text-xs text-zinc-500 mb-1 font-mono">
-                     <span>VOL</span>
-                     <span>{Math.round(track.volume * 100)}%</span>
-                 </div>
-                 <input 
-                    type="range" min={0} max={1} step={0.01}
-                    value={track.volume}
-                    onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })}
-                    className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-studio-accent"
-                 />
-             </div>
-             <div className="w-20">
-                 <div className="flex justify-between text-xs text-zinc-500 mb-1 font-mono">
-                     <span>PAN</span>
-                     <span>{Math.round(track.pan * 50)}</span>
-                 </div>
-                 <input 
-                    type="range" min={-1} max={1} step={0.01}
-                    value={track.pan}
-                    onChange={(e) => updateTrack(track.id, { pan: parseFloat(e.target.value) })}
-                    className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-500"
-                 />
-             </div>
         </div>
     </div>
   );

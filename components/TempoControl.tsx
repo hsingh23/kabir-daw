@@ -11,20 +11,15 @@ const TempoControl: React.FC<TempoControlProps> = ({ bpm, onChange }) => {
   const lastTapTime = useRef<number>(0);
 
   const handleTap = (e: React.MouseEvent) => {
-    // Prevent focus stealing
     e.preventDefault();
-    
     const now = performance.now();
     if (now - lastTapTime.current > 2000) {
-      tapTimes.current = []; // Reset if gap is too long (2 seconds)
+      tapTimes.current = [];
     }
     lastTapTime.current = now;
     tapTimes.current.push(now);
 
-    // Keep only the last 5 taps for moving average
-    if (tapTimes.current.length > 5) {
-      tapTimes.current.shift();
-    }
+    if (tapTimes.current.length > 5) tapTimes.current.shift();
 
     if (tapTimes.current.length >= 2) {
       const intervals = [];
@@ -33,7 +28,6 @@ const TempoControl: React.FC<TempoControlProps> = ({ bpm, onChange }) => {
       }
       const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
       const newBpm = Math.round(60000 / avgInterval);
-      // Clamp reasonable values
       onChange(Math.min(300, Math.max(30, newBpm)));
     }
   };
@@ -49,20 +43,18 @@ const TempoControl: React.FC<TempoControlProps> = ({ bpm, onChange }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center bg-black/40 border border-zinc-700/50 rounded px-2 md:px-3 py-1 min-w-[60px] md:min-w-[70px] select-none group">
+    <div className="flex flex-col items-center group cursor-ns-resize" onDoubleClick={handleManualEntry}>
         <div 
-            className="text-sm md:text-lg font-mono font-bold text-studio-accent leading-none cursor-pointer hover:text-white transition-colors"
-            onClick={handleManualEntry}
-            title="Click to edit BPM"
+            className="text-xl font-mono font-bold text-cyan-400 leading-none drop-shadow-[0_0_5px_rgba(34,211,238,0.4)]"
+            title="Double click to edit BPM"
         >
             {Math.round(bpm)}
         </div>
         <button 
-            className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest leading-none mt-0.5 hover:text-white hover:bg-zinc-700/50 rounded px-1 transition-all active:scale-95"
+            className="opacity-0 group-hover:opacity-100 absolute"
             onPointerDown={handleTap}
-            title="Tap Tempo"
         >
-            TAP
+            {/* Hidden tap area overlay handled by parent usually, keeping specific button hidden for logic retention but visual cleanup */}
         </button>
     </div>
   );

@@ -1,3 +1,4 @@
+
 import React from 'react';
 import BottomNavigation, { ViewType } from './BottomNavigation';
 
@@ -12,7 +13,7 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children, view, setView, isRecording }) => {
     return (
-        <div className={`flex flex-col h-screen overflow-hidden transition-all duration-300 ${isRecording ? 'ring-4 ring-red-500/50' : ''}`}>
+        <div className={`flex flex-col h-[100dvh] overflow-hidden transition-all duration-300 bg-studio-bg ${isRecording ? 'ring-4 ring-red-500/50' : ''}`}>
             {children}
             <BottomNavigation view={view} setView={setView} />
         </div>

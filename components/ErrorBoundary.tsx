@@ -1,9 +1,10 @@
-import React, { ErrorInfo, ReactNode } from 'react';
+
+import React, { ErrorInfo, ReactNode, Component } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { analytics } from '../services/analytics';
 
 interface Props {
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 interface State {
@@ -11,17 +12,17 @@ interface State {
   error: Error | null;
 }
 
-class ErrorBoundary extends React.Component<Props, State> {
+class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     error: null,
   };
 
-  public static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
     analytics.track('app_crash', { 
         message: error.message, 
@@ -30,7 +31,7 @@ class ErrorBoundary extends React.Component<Props, State> {
     });
   }
 
-  public render() {
+  render() {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-4 text-center">

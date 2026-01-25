@@ -16,8 +16,8 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
   const [dragging, setDragging] = useState<'low' | 'mid' | 'high' | null>(null);
 
   // Constants
-  const minDb = -15;
-  const maxDb = 15;
+  const minDb = -24;
+  const maxDb = 24;
   const dbRange = maxDb - minDb;
   
   // Frequency mapping helpers
@@ -31,8 +31,6 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
   };
 
   const dbToY = (db: number, height: number) => {
-      // +15dB at top (0), -15dB at bottom (height)
-      // 0dB at height/2
       const norm = (db - minDb) / dbRange;
       return height - (norm * height);
   };
@@ -49,7 +47,6 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
       if (!ctx) return;
 
       const rect = canvas.getBoundingClientRect();
-      // Handle High DPI
       const dpr = window.devicePixelRatio || 1;
       if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
           canvas.width = rect.width * dpr;
@@ -60,41 +57,58 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
       const w = rect.width;
       const h = rect.height;
 
-      // Clear
-      ctx.clearRect(0, 0, w, h);
+      // --- Background ---
+      const gradientBg = ctx.createLinearGradient(0, 0, 0, h);
+      gradientBg.addColorStop(0, '#1a1a1a');
+      gradientBg.addColorStop(1, '#0f0f0f');
+      ctx.fillStyle = gradientBg;
+      ctx.fillRect(0, 0, w, h);
 
-      // Grid
-      ctx.strokeStyle = '#333';
+      // --- Grid ---
       ctx.lineWidth = 1;
       ctx.beginPath();
       // Horizontal dB lines
-      [12, 6, 0, -6, -12].forEach(db => {
+      ctx.strokeStyle = '#333';
+      [12, 0, -12].forEach(db => {
           const y = dbToY(db, h);
           ctx.moveTo(0, y);
           ctx.lineTo(w, y);
-          if (db === 0) ctx.strokeStyle = '#555'; // Brighter for 0dB
-          else ctx.strokeStyle = '#333';
-          ctx.stroke();
-          ctx.beginPath();
       });
+      ctx.stroke();
+      
       // Vertical Freq Lines
+      ctx.strokeStyle = '#222';
       [100, 1000, 10000].forEach(f => {
           const x = freqToX(f, w);
+          ctx.beginPath();
           ctx.moveTo(x, 0);
           ctx.lineTo(x, h);
+          ctx.stroke();
       });
-      ctx.strokeStyle = '#333';
-      ctx.stroke();
 
-      // Curve
+      // --- Curve Fill ---
       const curveData = getEQResponse(low, mid, high, w);
       
+      const fillGrad = ctx.createLinearGradient(0, 0, 0, h);
+      fillGrad.addColorStop(0, 'rgba(56, 189, 248, 0.6)'); // Light Blue
+      fillGrad.addColorStop(1, 'rgba(3, 105, 161, 0.1)'); // Dark Blue
+      
+      ctx.fillStyle = fillGrad;
       ctx.beginPath();
-      ctx.strokeStyle = '#3b82f6'; // Blue-500
-      ctx.lineWidth = 2;
-      ctx.shadowBlur = 4;
-      ctx.shadowColor = '#3b82f6';
+      ctx.moveTo(0, h);
+      for (let i = 0; i < w; i++) {
+          const db = curveData[i];
+          const y = dbToY(db, h);
+          ctx.lineTo(i, y);
+      }
+      ctx.lineTo(w, h);
+      ctx.closePath();
+      ctx.fill();
 
+      // --- Curve Stroke ---
+      ctx.beginPath();
+      ctx.strokeStyle = '#7dd3fc'; // Sky 300
+      ctx.lineWidth = 2;
       for (let i = 0; i < w; i++) {
           const db = curveData[i];
           const y = dbToY(db, h);
@@ -102,32 +116,33 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
           else ctx.lineTo(i, y);
       }
       ctx.stroke();
-      ctx.shadowBlur = 0;
 
-      // Draw Nodes
-      const drawNode = (freq: number, db: number, label: string) => {
+      // --- Draw Nodes (Logic Style Colored Dots) ---
+      const drawNode = (freq: number, db: number, color: string, label: string) => {
           const x = freqToX(freq, w);
           const y = dbToY(db, h);
           
-          ctx.fillStyle = '#fff';
+          // Glow
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = color;
+          
+          // Outer circle
+          ctx.fillStyle = color;
           ctx.beginPath();
-          ctx.arc(x, y, 6, 0, Math.PI * 2);
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
           ctx.fill();
           
-          // Outer ring
-          ctx.strokeStyle = '#3b82f6';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-
+          ctx.shadowBlur = 0;
+          
           // Label
-          ctx.fillStyle = '#aaa';
-          ctx.font = '10px monospace';
-          ctx.fillText(label, x - 10, h - 5);
+          // ctx.fillStyle = '#666';
+          // ctx.font = '8px sans-serif';
+          // ctx.fillText(label, x - 4, h - 4);
       };
 
-      drawNode(EQ_FREQS.low, low, 'LOW');
-      drawNode(EQ_FREQS.mid, mid, 'MID');
-      drawNode(EQ_FREQS.high, high, 'HIGH');
+      drawNode(EQ_FREQS.low, low, '#ef4444', 'LO');
+      drawNode(EQ_FREQS.mid, mid, '#eab308', 'MID');
+      drawNode(EQ_FREQS.high, high, '#22c55e', 'HI');
 
   }, [low, mid, high]);
 
@@ -136,14 +151,13 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      
-      // Hit test
       const w = rect.width;
+      
       const xLow = freqToX(EQ_FREQS.low, w);
       const xMid = freqToX(EQ_FREQS.mid, w);
       const xHigh = freqToX(EQ_FREQS.high, w);
       
-      const threshold = 20;
+      const threshold = 30;
 
       if (Math.abs(x - xLow) < threshold) setDragging('low');
       else if (Math.abs(x - xMid) < threshold) setDragging('mid');
@@ -160,7 +174,7 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
       const y = e.clientY - rect.top;
       
       let db = yToDb(y, rect.height);
-      db = Math.max(-12, Math.min(12, db)); // Clamp to +/- 12dB
+      db = Math.max(-18, Math.min(18, db)); 
 
       if (dragging === 'low') onChangeLow(db);
       if (dragging === 'mid') onChangeMid(db);
@@ -173,17 +187,14 @@ const VisualEQ: React.FC<VisualEQProps> = ({ low, mid, high, onChangeLow, onChan
   };
 
   return (
-      <div className="relative w-full h-32 bg-zinc-950 rounded-lg overflow-hidden border border-zinc-800 touch-none">
+      <div className="relative w-full h-32 bg-black rounded border border-zinc-800 touch-none shadow-inner overflow-hidden cursor-crosshair">
           <canvas 
             ref={canvasRef} 
-            className="w-full h-full cursor-pointer"
+            className="w-full h-full block"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
           />
-          <div className="absolute top-2 left-2 text-[10px] text-zinc-500 font-bold pointer-events-none">
-              VISUAL EQ
-          </div>
       </div>
   );
 };
