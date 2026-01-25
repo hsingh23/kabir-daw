@@ -9,23 +9,31 @@ interface KnobProps {
   min?: number;
   max?: number;
   defaultValue?: number;
+  size?: number;
+  color?: string;
 }
 
-const Knob: React.FC<KnobProps> = ({ label, value: externalValue, onChange, onChangeEnd, min = 0, max = 1, defaultValue }) => {
+const Knob: React.FC<KnobProps> = ({ 
+    label, value: externalValue, onChange, onChangeEnd, 
+    min = 0, max = 1, defaultValue, 
+    size = 48, color = '#3b82f6' 
+}) => {
   const [localValue, setLocalValue] = useState(externalValue);
   const isDragging = useRef(false);
   const startY = useRef<number>(0);
   const startValue = useRef<number>(0);
 
-  // Sync with external updates (automation, undo/redo)
   useEffect(() => {
       if (!isDragging.current) {
           setLocalValue(externalValue);
       }
   }, [externalValue]);
 
-  // Convert current local value to degrees (-135 to 135)
-  const deg = (localValue - min) / (max - min) * 270 - 135;
+  // Degrees: -135 (min) to 135 (max)
+  const angleRange = 270;
+  const startAngle = -135;
+  const normalizedValue = (localValue - min) / (max - min);
+  const currentAngle = startAngle + (normalizedValue * angleRange);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     isDragging.current = true;
@@ -43,7 +51,7 @@ const Knob: React.FC<KnobProps> = ({ label, value: externalValue, onChange, onCh
     newValue = Math.max(min, Math.min(max, newValue));
     
     setLocalValue(newValue);
-    onChange(newValue); // Transient update
+    onChange(newValue);
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
@@ -61,8 +69,38 @@ const Knob: React.FC<KnobProps> = ({ label, value: externalValue, onChange, onCh
       }
   };
 
+  // SVG Calculation
+  const center = size / 2;
+  const radius = (size / 2) - 4;
+  const strokeWidth = 3;
+  
+  // Helper to get coordinates on circle
+  const polarToCartesian = (centerX: number, centerY: number, radius: number, angleInDegrees: number) => {
+    var angleInRadians = (angleInDegrees - 90) * Math.PI / 180.0;
+    return {
+      x: centerX + (radius * Math.cos(angleInRadians)),
+      y: centerY + (radius * Math.sin(angleInRadians))
+    };
+  }
+
+  const describeArc = (x: number, y: number, radius: number, startAngle: number, endAngle: number) => {
+      var start = polarToCartesian(x, y, radius, endAngle);
+      var end = polarToCartesian(x, y, radius, startAngle);
+      var largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+      var d = [
+          "M", start.x, start.y, 
+          "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y
+      ].join(" ");
+      return d;       
+  }
+
+  // Value Arc
+  const valuePath = describeArc(center, center, radius, startAngle, currentAngle);
+  // Background Arc (full range)
+  const bgPath = describeArc(center, center, radius, startAngle, startAngle + angleRange);
+
   return (
-    <div className="flex flex-col items-center justify-center space-y-2 select-none touch-none">
+    <div className="flex flex-col items-center justify-center space-y-1 select-none touch-none group">
       <div 
         role="slider"
         tabIndex={0}
@@ -70,7 +108,8 @@ const Knob: React.FC<KnobProps> = ({ label, value: externalValue, onChange, onCh
         aria-valuemin={min}
         aria-valuemax={max}
         aria-valuenow={localValue}
-        className="relative w-16 h-16 rounded-full shadow-knob bg-gradient-to-br from-zinc-200 to-zinc-400 border border-zinc-600 cursor-ns-resize outline-none focus:ring-2 focus:ring-studio-accent focus:ring-offset-2 focus:ring-offset-zinc-900"
+        className="relative cursor-ns-resize outline-none"
+        style={{ width: size, height: size }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -89,19 +128,29 @@ const Knob: React.FC<KnobProps> = ({ label, value: externalValue, onChange, onCh
              }
         }}
       >
-        {/* Inner metal texture effect */}
-        <div className="absolute inset-1 rounded-full bg-gradient-to-tl from-zinc-300 to-zinc-100" />
-        
-        {/* The rotating indicator */}
+        <svg width={size} height={size} className="pointer-events-none">
+            {/* Track Background */}
+            <path d={bgPath} fill="none" stroke="#27272a" strokeWidth={strokeWidth} strokeLinecap="round" />
+            
+            {/* Value Arc */}
+            <path d={valuePath} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" className="filter drop-shadow-sm transition-all duration-75" />
+        </svg>
+
+        {/* Knob Body */}
         <div 
-          className="absolute inset-0 w-full h-full rounded-full will-change-transform"
-          style={{ transform: `rotate(${deg}deg)` }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#18181b] shadow-lg border border-zinc-700 group-hover:border-zinc-500 transition-colors"
+            style={{ width: size * 0.65, height: size * 0.65 }}
         >
-          {/* Tick mark */}
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-1.5 h-4 bg-zinc-800 rounded-sm shadow-sm" />
+             {/* Indicator Line */}
+             <div 
+                className="absolute top-0 left-1/2 w-0.5 h-1/2 -translate-x-1/2 origin-bottom"
+                style={{ transform: `rotate(${currentAngle}deg)` }}
+             >
+                 <div className="w-full h-1/2 bg-white rounded-full mx-auto mt-1" />
+             </div>
         </div>
       </div>
-      <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">{label}</span>
+      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider group-hover:text-zinc-300 transition-colors">{label}</span>
     </div>
   );
 };

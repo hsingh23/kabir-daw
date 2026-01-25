@@ -207,7 +207,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   const handleQuantize = () => {
       if (selectedClipIds.length === 0) return;
-      const gridValue = snapGrid > 0 ? snapGrid : 0.25;
+      const gridValue = snapGrid > 0 ? snapGrid * secondsPerBeat : 0.25; // in seconds
       const strength = quantizeStrength / 100;
       
       commitTransaction();
@@ -215,7 +215,7 @@ const Arranger: React.FC<ArrangerProps> = ({
           ...prev,
           clips: prev.clips.map(c => {
               if (selectedClipIds.includes(c.id)) {
-                  const targetStart = snapToGrid(c.start, gridValue);
+                  const targetStart = Math.round(c.start / gridValue) * gridValue;
                   const newStart = c.start + (targetStart - c.start) * strength;
                   return { ...c, start: newStart };
               }
@@ -307,18 +307,19 @@ const Arranger: React.FC<ArrangerProps> = ({
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-      const left = e.currentTarget.scrollLeft;
-      if (Math.abs(left - lastScrollLeft.current) > 100) {
-          setScrollLeft(left);
-          lastScrollLeft.current = left;
+      const { scrollLeft, scrollTop } = e.currentTarget;
+      if (Math.abs(scrollLeft - lastScrollLeft.current) > 20) { // Throttled update
+          setScrollLeft(scrollLeft);
+          lastScrollLeft.current = scrollLeft;
       }
+      
+      // Sync track header vertical scroll
       if (trackHeaderRef.current) {
-          const el = trackHeaderRef.current.querySelector('div[style*="translateY"]');
-          if (el) (el as HTMLElement).style.transform = `translateY(-${e.currentTarget.scrollTop || 0}px)`;
+          trackHeaderRef.current.scrollTop = scrollTop;
       }
   };
 
-  const currentHeaderWidth = isSidebarCollapsed ? 40 : headerWidth;
+  const currentHeaderWidth = isSidebarCollapsed ? 50 : headerWidth; // 50px for collapsed icon only mode
 
   const toggleTrackHeight = () => {
       setTrackHeight(h => h === TRACK_HEIGHT_DEFAULT ? TRACK_HEIGHT_COMPACT : TRACK_HEIGHT_DEFAULT);
@@ -326,7 +327,7 @@ const Arranger: React.FC<ArrangerProps> = ({
 
   return (
     <div 
-        className="flex flex-col h-full bg-studio-bg text-xs select-none touch-none"
+        className="flex flex-col h-full bg-[#1e1e1e] text-xs select-none touch-none overflow-hidden"
         onPointerDown={handleGlobalPointerDown}
         onPointerMove={(e) => handleGlobalPointerMove(e)}
         onPointerUp={handleGlobalPointerUp}
@@ -359,13 +360,13 @@ const Arranger: React.FC<ArrangerProps> = ({
         {/* Library Sidebar (Responsive Overlay on Mobile) */}
         {isLibraryOpen && (
             <div className={`
-                border-r border-zinc-800 bg-studio-panel flex flex-col z-30 transition-all duration-300
-                ${isMobile ? 'fixed inset-y-0 left-0 w-64 shadow-2xl' : 'w-56 shrink-0 relative'}
+                border-r border-zinc-800 bg-[#1a1a1a] flex flex-col z-30 transition-all duration-300
+                ${isMobile ? 'fixed inset-y-0 left-0 w-64 shadow-2xl' : 'w-64 shrink-0 relative'}
             `}>
                 {isMobile && (
-                    <div className="p-2 border-b border-zinc-700 flex justify-end bg-zinc-900">
+                    <div className="p-3 border-b border-zinc-700 flex justify-end bg-zinc-900">
                         <button onClick={() => setIsLibraryOpen(false)} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
-                            <X size={16} />
+                            <X size={20} />
                         </button>
                     </div>
                 )}
@@ -373,6 +374,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                     variant="sidebar" 
                     currentProjectId={project.id}
                     onAssetsChange={refreshAssets}
+                    onAddAsset={(asset) => onDropAsset && onDropAsset(project.tracks[0]?.id, currentTime, asset)}
                 />
             </div>
         )}
@@ -386,48 +388,46 @@ const Arranger: React.FC<ArrangerProps> = ({
         )}
 
         {/* Track Headers */}
-        <div className="flex-none bg-studio-panel border-r border-zinc-800 z-20 flex flex-col shadow-xl transition-all duration-300" style={{ width: currentHeaderWidth }}>
-             <div className="h-8 border-b border-zinc-800 bg-zinc-800/50 flex items-center px-2 justify-between relative">
+        <div className="flex-none bg-[#252525] border-r border-black z-20 flex flex-col shadow-[2px_0_10px_rgba(0,0,0,0.3)] transition-all duration-300" style={{ width: currentHeaderWidth }}>
+             <div className="h-8 border-b border-zinc-900 bg-[#2a2a2a] flex items-center px-2 justify-between relative shadow-sm shrink-0">
                  {!isSidebarCollapsed && <span className="text-[10px] text-zinc-500 font-bold tracking-wider">TRACKS</span>}
                  {/* Desktop Add Button */}
-                 <button onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }} className="text-zinc-500 hover:text-white mx-auto hidden sm:block" title="Add Track">
-                    <Plus size={12} />
+                 <button onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }} className={`text-zinc-400 hover:text-white mx-auto ${isSidebarCollapsed ? '' : 'hidden sm:block'}`} title="Add Track">
+                    <Plus size={14} />
                  </button>
 
                  {showAddMenu && (
-                     <div className="absolute top-8 left-2 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-50 flex flex-col min-w-[140px] overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                         <button onClick={(e) => { e.stopPropagation(); handleAddTrack('audio'); }} className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2">
+                     <div className="absolute top-8 left-2 bg-[#333] border border-black rounded shadow-xl z-50 flex flex-col min-w-[140px] overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                         <button onClick={(e) => { e.stopPropagation(); handleAddTrack('audio'); }} className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-[#444] hover:text-white flex items-center gap-2">
                              <Mic size={14} className="text-zinc-500" /> Audio Track
                          </button>
-                         <button onClick={(e) => { e.stopPropagation(); handleAddTrack('instrument'); }} className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-2 border-t border-zinc-800">
+                         <button onClick={(e) => { e.stopPropagation(); handleAddTrack('instrument'); }} className="px-3 py-2 text-left text-xs text-zinc-300 hover:bg-[#444] hover:text-white flex items-center gap-2 border-t border-black/20">
                              <Piano size={14} className="text-zinc-500" /> Synth Track
                          </button>
                      </div>
                  )}
              </div> 
-             <div className="flex-1 overflow-hidden relative" ref={trackHeaderRef}>
-                 <div style={{ transform: `translateY(-${scrollContainerRef.current?.scrollTop || 0}px)` }}>
-                    {project.tracks.map((track, idx) => (
-                        <TrackLane 
-                            key={track.id}
-                            track={track}
-                            index={idx}
-                            trackHeight={trackHeight}
-                            isCompactHeader={isSidebarCollapsed || isCompactHeader}
-                            isSelected={selectedTrackId === track.id}
-                            onSelectTrack={onSelectTrack}
-                            onOpenInspector={onOpenInspector}
-                            handleTrackDragStart={handleTrackDragStart}
-                            updateTrack={updateTrackInArranger}
-                            onContextMenu={(e, id) => setTrackContextMenu({ x: e.clientX, y: e.clientY, trackId: id })}
-                        />
-                    ))}
-                 </div>
+             <div className="flex-1 overflow-hidden relative no-scrollbar" ref={trackHeaderRef}>
+                 {project.tracks.map((track, idx) => (
+                    <TrackLane 
+                        key={track.id}
+                        track={track}
+                        index={idx}
+                        trackHeight={trackHeight}
+                        isCompactHeader={isSidebarCollapsed}
+                        isSelected={selectedTrackId === track.id}
+                        onSelectTrack={onSelectTrack}
+                        onOpenInspector={onOpenInspector}
+                        handleTrackDragStart={handleTrackDragStart}
+                        updateTrack={updateTrackInArranger}
+                        onContextMenu={(e, id) => setTrackContextMenu({ x: e.clientX, y: e.clientY, trackId: id })}
+                    />
+                ))}
              </div>
         </div>
 
         {/* Timeline Area */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-zinc-950">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#191919]">
             {/* Mini Map (Sticky) */}
             <ArrangerMiniMap 
                 clips={project.clips}
@@ -441,21 +441,21 @@ const Arranger: React.FC<ArrangerProps> = ({
                 }}
             />
 
-            <div ref={scrollContainerRef} className="flex-1 overflow-auto relative" onScroll={handleScroll} onWheel={handleWheel}>
+            <div ref={scrollContainerRef} className="flex-1 overflow-auto relative custom-scrollbar" onScroll={handleScroll} onWheel={handleWheel}>
                 {/* Empty State Overlay */}
                 {project.tracks.length === 0 && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center z-10 text-zinc-600 pointer-events-none">
-                        <div className="bg-zinc-900/80 p-8 rounded-2xl border border-zinc-800 flex flex-col items-center max-w-sm text-center pointer-events-auto shadow-2xl">
+                        <div className="bg-zinc-900/80 p-8 rounded-2xl border border-zinc-800 flex flex-col items-center max-w-sm text-center pointer-events-auto shadow-2xl backdrop-blur-sm">
                             <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mb-4 text-zinc-500">
                                 <Layers size={32} />
                             </div>
                             <h3 className="text-lg font-bold text-zinc-300 mb-2">No Tracks Created</h3>
                             <p className="text-sm text-zinc-500 mb-6">Start by adding a track or dragging an audio file from the library.</p>
                             <div className="flex flex-wrap gap-2 justify-center">
-                                <button onClick={() => handleAddTrack('audio')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
+                                <button onClick={() => handleAddTrack('audio')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs border border-zinc-700">
                                     <Mic size={14} /> Audio Track
                                 </button>
-                                <button onClick={() => handleAddTrack('instrument')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
+                                <button onClick={() => handleAddTrack('instrument')} className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs border border-zinc-700">
                                     <Piano size={14} /> Synth Track
                                 </button>
                                 <button onClick={() => setIsLibraryOpen(true)} className="bg-studio-accent hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2 transition-transform active:scale-95 text-xs">
@@ -469,7 +469,7 @@ const Arranger: React.FC<ArrangerProps> = ({
                 <div style={{ width: totalWidth, minWidth: '100%', height: Math.max(300, project.tracks.length * trackHeight + 32) }}>
                     {/* Background Grid */}
                     <div className="absolute inset-0 top-8 pointer-events-none">
-                        <ArrangerGrid pixelsPerBar={pixelsPerBar} pixelsPerTick={pixelsPerTick} height={Math.max(300, project.tracks.length * trackHeight)} width={totalWidth} />
+                        <ArrangerGrid pixelsPerBar={pixelsPerBar} pixelsPerTick={pixelsPerTick} height={Math.max(300, project.tracks.length * trackHeight)} width={totalWidth} zoom={zoom} />
                     </div>
 
                     {/* Ruler */}
@@ -497,8 +497,8 @@ const Arranger: React.FC<ArrangerProps> = ({
                     />
 
                     {/* Snap Line */}
-                    <div ref={snapLineRef} className="absolute top-0 bottom-0 w-px bg-yellow-400 z-40 pointer-events-none hidden">
-                        <div ref={snapLabelRef} className="absolute top-8 left-1 bg-yellow-400 text-black text-[9px] font-bold px-1 rounded shadow-sm whitespace-nowrap">0:0:0</div>
+                    <div ref={snapLineRef} className="absolute top-0 bottom-0 w-px bg-white/50 z-40 pointer-events-none hidden mix-blend-difference" style={{ boxShadow: '0 0 2px rgba(255,255,255,0.8)' }}>
+                        <div ref={snapLabelRef} className="absolute top-8 left-1 bg-zinc-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-sm shadow-md whitespace-nowrap border border-zinc-600">0:0:0</div>
                     </div>
 
                     {/* Track Lanes */}
@@ -562,11 +562,11 @@ const Arranger: React.FC<ArrangerProps> = ({
         )}
 
         {/* Selection Box */}
-        <div ref={selectionBoxRef} className="absolute bg-blue-500/10 border border-blue-400 z-50 pointer-events-none hidden" />
+        <div ref={selectionBoxRef} className="absolute bg-blue-500/10 border border-blue-400/50 z-50 pointer-events-none hidden rounded-sm backdrop-blur-[1px]" />
 
         {/* Instruments Overlay */}
         {showInstruments && (
-            <div className="absolute inset-x-0 bottom-0 bg-zinc-900 border-t border-zinc-700 shadow-2xl z-50 p-4 animate-in slide-in-from-bottom duration-200">
+            <div className="absolute inset-x-0 bottom-0 bg-zinc-900/95 backdrop-blur-md border-t border-zinc-700 shadow-2xl z-50 p-4 animate-in slide-in-from-bottom duration-200">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-zinc-400 font-bold uppercase text-xs tracking-wider">Backing Instruments</h3>
                     <button onClick={() => setShowInstruments(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>

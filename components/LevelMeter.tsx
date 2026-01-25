@@ -11,6 +11,8 @@ interface LevelMeterProps {
 const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => {
   const fillRef = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
+  const peakRef = useRef(0);
+  const peakTimerRef = useRef(0);
 
   useEffect(() => {
     const update = () => {
@@ -26,9 +28,21 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => 
           setClipped(true);
       }
 
-      // Smooth decay could be added here, but raw RMS is good for now
-      // Clamp 0-1 (usually audio levels are low, so we boost visualization)
-      const displayLevel = Math.min(1, level * 2.5); 
+      // Smooth falloff for peak
+      if (level > peakRef.current) {
+          peakRef.current = level;
+          peakTimerRef.current = 40; // Frames to hold
+      } else {
+          if (peakTimerRef.current > 0) {
+              peakTimerRef.current--;
+          } else {
+              peakRef.current *= 0.92; // Decay
+          }
+      }
+
+      // Clamp 0-1 (boost visualization for lower signals)
+      // Visual scale usually log, but simple linear boost is okay for web demo
+      const displayLevel = Math.min(1, Math.max(level * 1.2, peakRef.current * 1.2)); 
       
       if (fillRef.current) {
         const pct = displayLevel * 100;
@@ -45,18 +59,36 @@ const LevelMeter: React.FC<LevelMeterProps> = ({ trackId, vertical = true }) => 
   }, [trackId, vertical]);
 
   return (
-    <div className={`relative bg-zinc-900 rounded overflow-hidden border border-zinc-800 shadow-inner ${vertical ? 'w-2 h-full' : 'h-2 w-full'}`}>
-      {/* Clip Indicator */}
+    <div className={`relative bg-black rounded-sm overflow-hidden border border-zinc-900 shadow-inner ${vertical ? 'w-3 h-full' : 'h-2.5 w-full'}`}>
+      
+      {/* Clip LED */}
       <div 
         onClick={(e) => { e.stopPropagation(); setClipped(false); }}
-        className={`absolute z-10 cursor-pointer transition-colors ${vertical ? 'top-0 left-0 w-full h-1' : 'right-0 top-0 h-full w-1'} ${clipped ? 'bg-red-500' : 'bg-zinc-800'}`} 
+        className={`absolute z-20 cursor-pointer transition-colors ${vertical ? 'top-0 left-0 w-full h-1' : 'right-0 top-0 h-full w-1'} ${clipped ? 'bg-[#ff3b30] shadow-[0_0_6px_#ff3b30]' : 'bg-[#333]'}`} 
         title="Clip Indicator (Click to Reset)"
       />
       
+      {/* LED Segment Grid Overlay (The "Grill") */}
+      <div className="absolute inset-0 z-10 pointer-events-none" 
+           style={{ 
+               backgroundImage: vertical 
+                 ? 'linear-gradient(to bottom, rgba(0,0,0,0.8) 1px, transparent 1px)' 
+                 : 'linear-gradient(to right, rgba(0,0,0,0.8) 1px, transparent 1px)',
+               backgroundSize: vertical ? '100% 4px' : '4px 100%'
+           }} 
+      />
+
+      {/* Meter Fill - Gradient mimicking Green > Yellow > Red */}
       <div 
         ref={fillRef}
-        className={`bg-gradient-to-t from-green-500 via-yellow-400 to-red-500 transition-all duration-75 ease-out origin-bottom-left ${vertical ? 'w-full' : 'h-full bg-gradient-to-r'}`}
-        style={{ [vertical ? 'height' : 'width']: '0%' }}
+        className={`transition-transform duration-75 ease-out origin-bottom-left ${vertical ? 'w-full absolute bottom-0' : 'h-full absolute left-0'}`}
+        style={{ 
+            [vertical ? 'height' : 'width']: '0%',
+            background: vertical 
+                ? 'linear-gradient(to top, #22c55e 0%, #22c55e 60%, #eab308 60%, #eab308 85%, #ef4444 85%, #ef4444 100%)'
+                : 'linear-gradient(to right, #22c55e 0%, #22c55e 60%, #eab308 60%, #eab308 85%, #ef4444 85%, #ef4444 100%)',
+            opacity: 0.9 
+        }}
       />
     </div>
   );

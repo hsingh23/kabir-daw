@@ -2,8 +2,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Knob from './Knob';
 import { audio } from '../services/audio';
+import { Power } from 'lucide-react';
 
-// Local definition to avoid import error
 interface TanpuraState {
   enabled: boolean;
   volume: number;
@@ -26,9 +26,10 @@ const Tanpura: React.FC<TanpuraProps> = ({ config, onChange }) => {
 
   useEffect(() => {
     const loop = () => {
-        // Disabled active string visual as audio engine support was removed
         if (config.enabled && audio.isPlaying) {
-            setActiveString(-1); // Placeholder
+            // Simulated visualizer since exact string phase isn't exposed
+            const time = Date.now() / (60000 / config.tempo);
+            setActiveString(Math.floor(time) % 4);
         } else {
             setActiveString(-1);
         }
@@ -36,99 +37,103 @@ const Tanpura: React.FC<TanpuraProps> = ({ config, onChange }) => {
     };
     loop();
     return () => cancelAnimationFrame(rafRef.current);
-  }, [config.enabled]);
+  }, [config.enabled, config.tempo]);
 
   return (
-    <div className="bg-zinc-900/80 rounded-xl p-4 border border-zinc-700/50 flex flex-col space-y-4 shadow-lg opacity-50 pointer-events-none grayscale">
-        <div className="flex items-center justify-between border-b border-zinc-700 pb-2">
-            <h3 className="text-zinc-200 font-bold tracking-wide uppercase text-sm flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-                Tanpura (Legacy)
-            </h3>
+    <div className="relative rounded-xl overflow-hidden shadow-2xl bg-[#1a1a1a] border border-black group">
+        {/* Wood Texture Background */}
+        <div className="absolute inset-0 opacity-20 pointer-events-none bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-amber-900 to-black" />
+        
+        {/* Header */}
+        <div className="relative flex items-center justify-between px-4 py-3 border-b border-amber-900/30 bg-black/40">
+            <div>
+                <h3 className="text-amber-500 font-bold tracking-widest uppercase text-xs">Tanpura</h3>
+                <p className="text-[9px] text-amber-700 font-mono tracking-tighter">DRONE ACCOMPANIMENT</p>
+            </div>
             <button 
                 onClick={() => onChange({ ...config, enabled: !config.enabled })}
-                className={`p-2 rounded-full transition-all duration-300 ${config.enabled ? 'bg-studio-accent text-white shadow-[0_0_20px_rgba(239,68,68,0.6)]' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                className={`w-8 h-8 rounded-full border border-amber-900/50 flex items-center justify-center transition-all shadow-inner ${config.enabled ? 'bg-amber-900 text-amber-100 shadow-[0_0_15px_rgba(180,83,9,0.4)]' : 'bg-[#111] text-zinc-700'}`}
             >
-                <div className="w-3 h-3 rounded-full bg-current shadow-sm" />
+                <Power size={14} />
             </button>
         </div>
 
-        {/* Visualizer */}
-        <div className="bg-gradient-to-b from-black/60 to-black/30 rounded-lg p-4 h-32 flex justify-around items-stretch relative overflow-hidden border border-zinc-800/50 shadow-inner">
-            {/* 4 Strings */}
+        {/* String Visualizer */}
+        <div className="relative h-24 mx-4 mt-4 bg-black/60 rounded-lg border border-amber-900/20 flex justify-around items-stretch p-4 shadow-inner">
             {[0, 1, 2, 3].map(i => {
-                const isActive = activeString === i && config.enabled && audio.isPlaying;
+                const isActive = activeString === i && config.enabled;
                 return (
-                    <div key={i} className="flex flex-col items-center justify-center w-8 relative group">
-                        {/* String Line */}
-                        <div className={`absolute top-0 bottom-0 w-1 rounded-full transition-all duration-100 ${isActive ? 'bg-amber-200 shadow-[0_0_15px_#fcd34d] w-1.5' : 'bg-zinc-700'}`}>
-                             {/* Vibration blur effect */}
-                             {isActive && <div className="absolute inset-0 bg-amber-200 blur-md animate-pulse opacity-50" />}
-                        </div>
-                        {/* String Label */}
-                        <span className={`absolute bottom-2 text-[10px] font-bold font-mono ${isActive ? 'text-amber-200' : 'text-zinc-600'}`}>
-                            {i === 0 ? config.tuning : i === 3 ? 'Sa_L' : 'Sa'}
+                    <div key={i} className="relative flex flex-col items-center justify-center w-10">
+                        {/* String */}
+                        <div className={`w-0.5 h-full rounded-full transition-all duration-75 ${isActive ? 'bg-amber-100 blur-[1px] scale-x-150' : 'bg-amber-800/50'}`} />
+                        {/* Glow */}
+                        {isActive && <div className="absolute inset-0 bg-amber-500/20 blur-xl animate-pulse" />}
+                        <span className="absolute bottom-1 text-[9px] font-bold text-amber-700/50">
+                            {i === 0 ? config.tuning : 'Sa'}
                         </span>
                     </div>
                 )
             })}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col space-y-2">
-                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Key</label>
-                <div className="flex flex-wrap gap-1">
-                    {KEYS.map(k => (
-                        <button 
-                            key={k}
-                            onClick={() => onChange({ ...config, key: k })}
-                            className={`w-6 h-6 text-[10px] rounded font-bold transition-all ${config.key === k ? 'bg-zinc-200 text-black shadow-lg scale-110' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-                        >
-                            {k}
-                        </button>
-                    ))}
+        {/* Controls */}
+        <div className="relative p-6 grid grid-cols-[1fr_2fr] gap-6">
+            <div className="space-y-4">
+                <div>
+                    <label className="text-[9px] text-amber-700 font-bold uppercase mb-1 block">Root Key</label>
+                    <div className="grid grid-cols-4 gap-1">
+                        {KEYS.map(k => (
+                            <button 
+                                key={k}
+                                onClick={() => onChange({ ...config, key: k })}
+                                className={`h-6 text-[9px] rounded font-bold transition-all border ${config.key === k ? 'bg-amber-600 border-amber-500 text-white' : 'bg-black/30 border-amber-900/20 text-amber-800 hover:text-amber-500'}`}
+                            >
+                                {k}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                
+                <div>
+                    <label className="text-[9px] text-amber-700 font-bold uppercase mb-1 block">First String</label>
+                    <div className="flex bg-black/30 rounded border border-amber-900/20 p-0.5">
+                        {['Pa', 'Ma', 'Ni'].map(t => (
+                            <button 
+                                key={t}
+                                onClick={() => onChange({ ...config, tuning: t as any })}
+                                className={`flex-1 py-1 text-[10px] rounded font-bold transition-all ${config.tuning === t ? 'bg-amber-800/80 text-amber-100 shadow-sm' : 'text-amber-800 hover:text-amber-500'}`}
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
 
-            <div className="flex flex-col space-y-2">
-                <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">String 1</label>
-                <div className="flex space-x-1">
-                    {['Pa', 'Ma', 'Ni'].map(t => (
-                        <button 
-                            key={t}
-                            onClick={() => onChange({ ...config, tuning: t as any })}
-                            className={`flex-1 py-1 text-[10px] rounded font-bold transition-all ${config.tuning === t ? 'bg-blue-600 text-white shadow-md' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-                        >
-                            {t}
-                        </button>
-                    ))}
-                </div>
+            <div className="flex justify-around items-center bg-black/20 rounded-lg border border-amber-900/10">
+                <Knob 
+                    label="Speed" 
+                    value={(config.tempo - 30) / 90} 
+                    min={0} max={1}
+                    onChange={(v) => onChange({ ...config, tempo: 30 + (v * 90) })}
+                    color="#d97706"
+                />
+                <Knob 
+                    label="Fine" 
+                    value={((config.fineTune || 0) + 50) / 100}
+                    min={0} max={1}
+                    onChange={(v) => onChange({ ...config, fineTune: (v * 100) - 50 })}
+                    color="#d97706"
+                />
+                <Knob 
+                    label="Level" 
+                    value={config.volume} 
+                    min={0} max={1}
+                    onChange={(v) => onChange({ ...config, volume: v })}
+                    color="#d97706"
+                    size={56}
+                />
             </div>
-        </div>
-
-        <div className="flex justify-around pt-2 bg-zinc-950/30 p-2 rounded-lg border border-zinc-800/30">
-            <Knob 
-                label="Tempo" 
-                value={(config.tempo - 30) / 90} // Range 30-120
-                min={0} max={1}
-                onChange={(v) => onChange({ ...config, tempo: 30 + (v * 90) })}
-            />
-            <Knob 
-                label="Fine Tune" 
-                value={((config.fineTune || 0) + 50) / 100} // Range -50 to 50 cents
-                min={0} max={1}
-                onChange={(v) => onChange({ ...config, fineTune: (v * 100) - 50 })}
-            />
-            <Knob 
-                label="Volume" 
-                value={config.volume} 
-                min={0} max={1}
-                onChange={(v) => onChange({ ...config, volume: v })}
-            />
-        </div>
-        <div className="flex justify-between px-4 text-[10px] text-zinc-500 font-mono">
-            <span>{Math.round(config.tempo)} BPM</span>
-            <span>{Math.round(config.fineTune || 0)} ct</span>
         </div>
     </div>
   );

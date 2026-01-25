@@ -21,7 +21,7 @@ const bitmapPromiseCache = new Map<string, Promise<ImageBitmap | null>>();
 const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, duration, fadeIn = 0, fadeOut = 0, gain = 1.0, speed = 1.0 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isReady, setIsReady] = useState(false); // New state for fade-in
+  const [isReady, setIsReady] = useState(false); 
 
   const getWaveformBitmap = (key: string, buffer: AudioBuffer): Promise<ImageBitmap | null> => {
       const cacheKey = `${key}-${color}`;
@@ -77,26 +77,51 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           let currentSourceTime = (offset * speed) % bufferDuration;
           if (currentSourceTime < 0) currentSourceTime += bufferDuration;
 
-          while (drawnSourceDuration < totalSourceDuration) {
-              const remainingBufferTime = bufferDuration - currentSourceTime;
-              const chunkSourceDuration = Math.min(totalSourceDuration - drawnSourceDuration, remainingBufferTime);
-              
-              if (chunkSourceDuration <= 0) break;
+          // Apply Gradient Tint to the Waveform
+          // Since drawImage doesn't support fillStyle directly, we can use globalCompositeOperation
+          // But our bitmap is pre-colored. 
+          // If we want a dynamic gradient, we should use source-in.
+          
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = targetWidth;
+          tempCanvas.height = targetHeight;
+          const tempCtx = tempCanvas.getContext('2d');
+          
+          if (tempCtx) {
+              // Draw the bitmap sections into temp canvas
+              while (drawnSourceDuration < totalSourceDuration) {
+                  const remainingBufferTime = bufferDuration - currentSourceTime;
+                  const chunkSourceDuration = Math.min(totalSourceDuration - drawnSourceDuration, remainingBufferTime);
+                  
+                  if (chunkSourceDuration <= 0) break;
 
-              const srcX = (currentSourceTime / bufferDuration) * bitmap.width;
-              const srcW = (chunkSourceDuration / bufferDuration) * bitmap.width;
-              
-              const destX = (drawnSourceDuration / totalSourceDuration) * rect.width;
-              const destW = (chunkSourceDuration / totalSourceDuration) * rect.width;
-              
-              // Ensure we don't draw outside bitmap bounds due to floating point precision
-              const safeSrcW = Math.min(srcW, bitmap.width - srcX);
+                  const srcX = (currentSourceTime / bufferDuration) * bitmap.width;
+                  const srcW = (chunkSourceDuration / bufferDuration) * bitmap.width;
+                  
+                  const destX = (drawnSourceDuration / totalSourceDuration) * rect.width;
+                  const destW = (chunkSourceDuration / totalSourceDuration) * rect.width;
+                  
+                  const safeSrcW = Math.min(srcW, bitmap.width - srcX);
 
-              ctx.drawImage(bitmap, srcX, 0, safeSrcW, bitmap.height, destX, 0, destW, rect.height);
-              
-              drawnSourceDuration += chunkSourceDuration;
-              currentSourceTime = 0;
+                  tempCtx.drawImage(bitmap, srcX, 0, safeSrcW, bitmap.height, destX * dpr, 0, destW * dpr, rect.height * dpr);
+                  
+                  drawnSourceDuration += chunkSourceDuration;
+                  currentSourceTime = 0;
+              }
+
+              // Apply Gradient
+              tempCtx.globalCompositeOperation = 'source-in';
+              const gradient = tempCtx.createLinearGradient(0, 0, 0, targetHeight);
+              gradient.addColorStop(0, 'rgba(255,255,255,0.9)'); // Top highlight
+              gradient.addColorStop(0.5, color); // Mid color
+              gradient.addColorStop(1, 'rgba(0,0,0,0.6)'); // Bottom shadow
+              tempCtx.fillStyle = gradient;
+              tempCtx.fillRect(0, 0, targetWidth, targetHeight);
+
+              // Draw final to main canvas
+              ctx.drawImage(tempCanvas, 0, 0, rect.width, rect.height);
           }
+
       } else {
           // Fallback
           ctx.fillStyle = color;
@@ -115,7 +140,7 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.fillRect(0, 0, fadeWidth, rect.height);
           ctx.restore();
           
-          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+          ctx.strokeStyle = 'rgba(255,255,255,0.5)';
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(0, rect.height);
@@ -136,7 +161,7 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.fillRect(startX, 0, fadeWidth, rect.height);
           ctx.restore();
 
-          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+          ctx.strokeStyle = 'rgba(255,255,255,0.5)';
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(startX, 0);
@@ -144,7 +169,6 @@ const Waveform: React.FC<WaveformProps> = memo(({ bufferKey, color, offset = 0, 
           ctx.stroke();
       }
       
-      // Trigger fade in
       setIsReady(true);
   };
 
